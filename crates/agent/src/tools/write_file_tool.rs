@@ -2,7 +2,9 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionOutput, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{
+    AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
+};
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use futures::FutureExt as _;
@@ -21,14 +23,14 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 ///
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
-/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
+/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location. If the parent directory does not exist, create it first with the `create_directory` tool (which creates parent directories recursively) before calling this tool.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// Supported paths outside the project are the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`, outside producer-owned `{server}-mcp/` folders).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
+    /// WARNING: For files in the project, you MUST start each path with one of the project's root directories. Outside the project, paths under the global skills directory or the Kask artifacts directory (`~/Documents/zk-data`, outside `{server}-mcp/`) are also supported.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -45,7 +47,7 @@ pub struct WriteFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To create or overwrite a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: PathBuf,
 
@@ -182,7 +184,7 @@ impl WriteFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: error.to_string(),
+                                error: map_tool_input_error(error),
                                 session,
                             };
                         }
@@ -279,7 +281,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
     use util::path;
     use util::rel_path::{RelPath, rel_path};
 
@@ -345,14 +347,10 @@ mod tests {
         let (write_tool, _project, _action_log, fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .join("SKILL.md");
         let skill_file = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("SKILL.md");
+        let input_path = skill_file.clone();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -590,8 +588,129 @@ mod tests {
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
         assert_eq!(
             result.await.unwrap_err(),
-            "Can't create file: parent directory doesn't exist"
+            "Can't create file: parent directory doesn't exist in the project — create it \
+             with create_directory first (or fall back to terminal mkdir -p)"
         );
+
+        // An out-of-sandbox parent is a refusal, not a missing directory.
+        let result = test_resolve_path(&mode, "/outside/data/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err(),
+            "Can't create file: the parent directory is outside the file-tool sandbox (allowed \
+             roots: project worktrees, global skills, and Kask artifacts outside `{server}-mcp/`); \
+             use `terminal` for scratch paths such as `/tmp`"
+        );
+
+        // A relative path that escapes the worktree is the same refusal, not a
+        // missing directory: `..` traversal must not be able to reach outside
+        // the sandbox through the lexical fallback.
+        let result = test_resolve_path(&mode, "../../outside/data/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err(),
+            "Can't create file: the parent directory is outside the file-tool sandbox (allowed \
+             roots: project worktrees, global skills, and Kask artifacts outside `{server}-mcp/`); \
+             use `terminal` for scratch paths such as `/tmp`"
+        );
+
+        // An absolute path inside the worktree whose parent does not exist is a
+        // missing directory, not a sandbox refusal.
+        let result = test_resolve_path(&mode, "/root/dir/nonexistent_dir/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err(),
+            "Can't create file: parent directory doesn't exist in the project — create it \
+             with create_directory first (or fall back to terminal mkdir -p)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_outside_sandbox_returns_error(cx: &mut TestAppContext) {
+        let (write_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"dir": {}})).await;
+        let result = cx
+            .update(|cx| {
+                write_tool.clone().run(
+                    ToolInput::resolved(WriteFileToolInput {
+                        path: "/outside/data/new_file.txt".into(),
+                        content: "Hello, World!".into(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let Err(EditSessionOutput::Error { error, .. }) = result else {
+            panic!("expected an error for an out-of-sandbox write, got success");
+        };
+        assert!(
+            error.contains("outside the file-tool sandbox"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // When the refused path lives under the artifacts tree, the error names
+    // the MCP server that owns it so the agent can switch tools instead of
+    // retrying the sandboxed write.
+    #[gpui::test]
+    async fn test_streaming_write_outside_sandbox_names_owning_server(cx: &mut TestAppContext) {
+        let (write_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"dir": {}})).await;
+        let artifacts_dir = hkask_types::agent_paths::resolve_artifacts_dir();
+        let path = artifacts_dir
+            .join("corpus-mcp")
+            .join("cache")
+            .join("new_file.txt");
+        let result = cx
+            .update(|cx| {
+                write_tool.clone().run(
+                    ToolInput::resolved(WriteFileToolInput {
+                        path: path.clone(),
+                        content: "Hello, World!".into(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let Err(EditSessionOutput::Error { error, .. }) = result else {
+            panic!("expected an error for an out-of-sandbox write, got success");
+        };
+        assert!(
+            error.contains("The `corpus` MCP server owns this path"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_allows_kask_artifacts_skill_run_dir(cx: &mut TestAppContext) {
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"dir": {}})).await;
+        let run_dir = crate::kask_artifacts_dir()
+            .join("skills")
+            .join("prompt-enhance")
+            .join("2026-11-18-run");
+        fs.create_dir(&run_dir).await.unwrap();
+        let file_path = run_dir.join("review-state.json");
+
+        let result = cx
+            .update(|cx| {
+                write_tool.run(
+                    ToolInput::resolved(WriteFileToolInput {
+                        path: file_path.clone(),
+                        content: "{\"attempts\":[]}\n".into(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "write_file must allow writing under kask_artifacts_dir/skills/...: {result:?}"
+        );
+        assert_eq!(fs.load(&file_path).await.unwrap(), "{\"attempts\":[]}\n");
     }
 
     #[gpui::test]

@@ -3,17 +3,15 @@ use crate::{
     decide_permission_for_path, path_matches_always_confirm,
 };
 use agent_client_protocol::v2::schema as acp;
-use agent_skills::{
-    canonical_global_skills_dir, canonicalize_with_ancestors, is_agents_skills_path,
-};
+use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::paths::component_matches_ignore_ascii_case;
+use util::{paths::component_matches_ignore_ascii_case, paths::normalize_path, rel_path::RelPath};
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -64,10 +62,338 @@ pub async fn canonicalize_worktree_roots<C: gpui::AppContext>(
     canonical_roots
 }
 
+/// Walks up ancestors of `path` to find the deepest one that exists on disk and
+/// can be canonicalized, then reattaches the remaining suffix components.
+///
+/// This is needed for paths where the leaf (or intermediate directories) don't
+/// exist yet but an ancestor may be a symlink. For example, when creating
+/// `.zed/settings.json` where `.zed` is a symlink to an external directory.
+///
+/// Note: intermediate directories *can* be symlinks (not just leaf entries),
+/// so we must walk the full ancestor chain. For example:
+///   `ln -s /external/config /project/.zed`
+/// makes `.zed` an intermediate symlink directory.
+async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let mut current: Option<&Path> = Some(path);
+    let mut suffix_components = Vec::new();
+    loop {
+        match current {
+            Some(ancestor) => match fs.canonicalize(ancestor).await {
+                Ok(canonical) => {
+                    let mut result = canonical;
+                    for component in suffix_components.into_iter().rev() {
+                        result.push(component);
+                    }
+                    return Some(result);
+                }
+                Err(_) => {
+                    if let Some(file_name) = ancestor.file_name() {
+                        suffix_components.push(file_name.to_os_string());
+                    }
+                    current = ancestor.parent();
+                }
+            },
+            None => return None,
+        }
+    }
+}
+
+// zed-kask: D28 — Kask visible artifacts directory override and guards.
+static KASK_ARTIFACTS_DIR_OVERRIDE: parking_lot::Mutex<Option<PathBuf>> =
+    parking_lot::Mutex::new(None);
+
+/// Set the Kask visible artifacts directory override (D28 composition root).
+///
+/// Re-settable at runtime so operator edits to `kask.artifacts_dir` in settings
+/// propagate to the built-in file tools immediately. When `None`, falls back to
+/// [`hkask_types::agent_paths::resolve_artifacts_dir`] (`~/Documents/zk-data`).
+pub fn set_kask_artifacts_dir_override(path: Option<PathBuf>) {
+    *KASK_ARTIFACTS_DIR_OVERRIDE.lock() = path;
+}
+
+/// Returns the active Kask visible artifacts directory (`~/Documents/zk-data`
+/// by default, or the operator's `kask.artifacts_dir` override).
+pub fn kask_artifacts_dir() -> PathBuf {
+    if let Some(path) = KASK_ARTIFACTS_DIR_OVERRIDE.lock().clone() {
+        return path;
+    }
+    hkask_types::agent_paths::resolve_artifacts_dir()
+}
 fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[PathBuf]) -> bool {
     canonical_worktree_roots
         .iter()
         .any(|root| canonical_path.starts_with(root))
+}
+
+fn is_strict_descendant(path: &Path, ancestor: &Path) -> bool {
+    path != ancestor && path.starts_with(ancestor)
+}
+
+pub(crate) fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+
+    let mut components = path.components();
+    let first_component = components.next()?;
+    if !matches!(first_component, Component::Normal(component) if component == "~") {
+        return None;
+    }
+
+    let mut expanded = paths::home_dir().clone();
+    for component in components {
+        match component {
+            Component::Normal(component) => expanded.push(component),
+            Component::CurDir => {}
+            Component::ParentDir => expanded.push(".."),
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(expanded)
+}
+
+pub(crate) fn expand_and_normalize_absolute_path(path: &Path) -> Option<PathBuf> {
+    let expanded_path = expand_home_prefix(path)?;
+    let normalized_path = normalize_path(&expanded_path);
+    normalized_path.is_absolute().then_some(normalized_path)
+}
+
+fn resolve_lexical_in_root(path: &Path, raw_root: &Path) -> Option<PathBuf> {
+    let normalized_path = expand_and_normalize_absolute_path(path)?;
+    let normalized_root = normalize_path(raw_root);
+    normalized_path
+        .starts_with(&normalized_root)
+        .then_some(normalized_path)
+}
+
+async fn resolve_creatable_in_root(
+    path: &Path,
+    raw_root: &Path,
+    fs: &dyn Fs,
+) -> Option<(PathBuf, PathBuf)> {
+    let normalized_path = resolve_lexical_in_root(path, raw_root)?;
+    let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
+    let canonical_root = canonicalize_with_ancestors(raw_root, fs).await?;
+    canonical_path
+        .starts_with(&canonical_root)
+        .then_some((canonical_path, canonical_root))
+}
+
+async fn resolves_to_external_root(path: &Path, raw_root: &Path, fs: &dyn Fs) -> bool {
+    let Some(normalized_path) = resolve_lexical_in_root(path, raw_root) else {
+        return false;
+    };
+    let Some(canonical_path) = canonicalize_with_ancestors(&normalized_path, fs).await else {
+        return false;
+    };
+    let Some(canonical_root) = canonicalize_with_ancestors(raw_root, fs).await else {
+        return false;
+    };
+    canonical_path == canonical_root
+}
+
+async fn restrict_to_root_descendant(
+    canonical_path: Option<PathBuf>,
+    raw_root: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let canonical_path = canonical_path?;
+    let canonical_root = canonicalize_with_ancestors(raw_root, fs).await?;
+    is_strict_descendant(&canonical_path, &canonical_root).then_some(canonical_path)
+}
+
+/// If `path` names the global skills dir or one of its descendants, return the
+/// canonicalized absolute path. Returns `None` for any path that resolves
+/// outside the global skills tree, for relative paths that don't start with
+/// `~`, or if the skills directory itself can't be canonicalized (fail closed).
+pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let skills_root = agent_skills::global_skills_dir();
+    let normalized_path = resolve_lexical_in_root(path, &skills_root)?;
+    let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
+    let canonical_skills_dir = canonicalize_with_ancestors(&skills_root, fs).await?;
+
+    if canonical_path.starts_with(&canonical_skills_dir)
+        || is_in_linked_global_skill_dir(
+            &normalized_path,
+            &canonical_path,
+            &canonical_skills_dir,
+            fs,
+        )
+        .await
+    {
+        Some(canonical_path)
+    } else {
+        None
+    }
+}
+
+async fn is_in_linked_global_skill_dir(
+    path: &Path,
+    canonical_path: &Path,
+    canonical_skills_dir: &Path,
+    fs: &dyn Fs,
+) -> bool {
+    let skills_dir = normalize_path(&agent_skills::global_skills_dir());
+    let Ok(relative_path) = path.strip_prefix(&skills_dir) else {
+        return false;
+    };
+    let Some(Component::Normal(skill_dir_name)) = relative_path.components().next() else {
+        return false;
+    };
+
+    let skill_dir = skills_dir.join(skill_dir_name);
+    let Ok(canonical_skill_dir) = fs.canonicalize(&skill_dir).await else {
+        return false;
+    };
+
+    !canonical_skill_dir.starts_with(canonical_skills_dir)
+        && canonical_path.starts_with(&canonical_skill_dir)
+        && fs
+            .is_file(&skill_dir.join(agent_skills::SKILL_FILE_NAME))
+            .await
+}
+
+/// If `path` names the global skills dir or one of its descendants, return a
+/// canonical absolute path for it whether or not the leaf already exists.
+pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    resolve_creatable_in_root(path, &agent_skills::global_skills_dir(), fs)
+        .await
+        .map(|(canonical_path, _)| canonical_path)
+}
+
+/// Returns whether `path` resolves to the global agent skills directory itself.
+pub async fn resolves_to_global_skills_dir(path: &Path, fs: &dyn Fs) -> bool {
+    resolves_to_external_root(path, &agent_skills::global_skills_dir(), fs).await
+}
+
+/// Like [`resolve_global_skill_path`], but only succeeds for paths strictly
+/// below the global skills dir, not the skills directory itself.
+pub async fn resolve_global_skill_descendant_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let root = agent_skills::global_skills_dir();
+    restrict_to_root_descendant(resolve_global_skill_path(path, fs).await, &root, fs).await
+}
+
+/// Like [`resolve_creatable_global_skill_path`], but only succeeds for paths
+/// strictly below the global skills dir, not the skills directory itself.
+pub async fn resolve_creatable_global_skill_descendant_path(
+    path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let root = agent_skills::global_skills_dir();
+    restrict_to_root_descendant(
+        resolve_creatable_global_skill_path(path, fs).await,
+        &root,
+        fs,
+    )
+    .await
+}
+
+/// If `path` lives inside a `{server}-mcp/` folder under `artifacts_dir`, return
+/// `{server}`. Built-in file tools may read and list `{server}-mcp/` artifacts,
+/// but producer-scoped writes belong to that MCP server's own tools (D28).
+pub fn owning_mcp_server_in_artifacts_dir(path: &Path, artifacts_dir: &Path) -> Option<String> {
+    let normalized_path = normalize_path(path);
+    let normalized_artifacts = normalize_path(artifacts_dir);
+    let relative = normalized_path.strip_prefix(&normalized_artifacts).ok()?;
+    let Component::Normal(first) = relative.components().next()? else {
+        return None;
+    };
+    let first = first.to_string_lossy();
+    let server = first.strip_suffix("-mcp")?;
+    (!server.is_empty()).then(|| server.to_string())
+}
+
+/// Detect whether `path` targets a `{server}-mcp/` subtree under the Kask
+/// visible artifacts directory (checking both lexical and canonical forms so an
+/// intra-artifacts symlink into `{server}-mcp/` cannot bypass producer write
+/// ownership).
+pub async fn detect_mcp_owned_kask_artifacts_path(path: &Path, fs: &dyn Fs) -> Option<String> {
+    let normalized_path = expand_and_normalize_absolute_path(path)?;
+    let artifacts_dir = kask_artifacts_dir();
+    if let Some(server) = owning_mcp_server_in_artifacts_dir(&normalized_path, &artifacts_dir) {
+        return Some(server);
+    }
+    let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
+    let canonical_artifacts_dir = canonicalize_with_ancestors(&artifacts_dir, fs).await?;
+    owning_mcp_server_in_artifacts_dir(&canonical_path, &canonical_artifacts_dir)
+}
+
+/// Format an actionable refusal naming the MCP server that owns `{server}-mcp/`.
+pub fn mcp_owned_artifacts_error(prefix: &str, server: &str) -> String {
+    format!("{prefix} The `{server}` MCP server owns this path; use its tools.")
+}
+
+/// If `path` names the Kask visible artifacts directory (`~/Documents/zk-data`
+/// by default) or one of its existing descendants, return the canonicalized
+/// absolute path. Used for read-only access (`read_file`, `list_directory`,
+/// `copy_path` source), including inspecting `{server}-mcp/` outputs.
+pub async fn resolve_kask_artifacts_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let artifacts_root = kask_artifacts_dir();
+    let normalized_path = resolve_lexical_in_root(path, &artifacts_root)?;
+    let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
+    let canonical_artifacts_dir = canonicalize_with_ancestors(&artifacts_root, fs).await?;
+
+    canonical_path
+        .starts_with(&canonical_artifacts_dir)
+        .then_some(canonical_path)
+}
+
+/// Like [`resolve_kask_artifacts_path`], but only succeeds for paths strictly
+/// below the Kask artifacts directory root.
+pub async fn resolve_kask_artifacts_descendant_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let root = kask_artifacts_dir();
+    restrict_to_root_descendant(resolve_kask_artifacts_path(path, fs).await, &root, fs).await
+}
+
+/// Returns whether `path` resolves to the Kask artifacts directory root itself.
+pub async fn resolves_to_kask_artifacts_dir(path: &Path, fs: &dyn Fs) -> bool {
+    resolves_to_external_root(path, &kask_artifacts_dir(), fs).await
+}
+
+/// If `path` names the Kask artifacts directory or one of its non-MCP-owned
+/// descendants (`skills/{name}/{date}-{run}/`, reports, scratch artifacts
+/// outside `{server}-mcp/`), return its canonical absolute path (whether or not
+/// the leaf already exists on disk).
+pub async fn resolve_creatable_kask_artifacts_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let artifacts_root = kask_artifacts_dir();
+    let normalized_path = resolve_lexical_in_root(path, &artifacts_root)?;
+    if owning_mcp_server_in_artifacts_dir(&normalized_path, &artifacts_root).is_some() {
+        return None;
+    }
+    let (canonical_path, canonical_artifacts_dir) =
+        resolve_creatable_in_root(path, &artifacts_root, fs).await?;
+    owning_mcp_server_in_artifacts_dir(&canonical_path, &canonical_artifacts_dir)
+        .is_none()
+        .then_some(canonical_path)
+}
+
+/// Like [`resolve_creatable_kask_artifacts_path`], but only succeeds for paths
+/// strictly below the Kask artifacts directory root.
+pub async fn resolve_creatable_kask_artifacts_descendant_path(
+    path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let root = kask_artifacts_dir();
+    restrict_to_root_descendant(
+        resolve_creatable_kask_artifacts_path(path, fs).await,
+        &root,
+        fs,
+    )
+    .await
+}
+
+/// Existing strict descendant under the Kask artifacts directory outside
+/// `{server}-mcp/` (used by `delete_path` and `move_path` source).
+pub async fn resolve_writable_kask_artifacts_descendant_path(
+    path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let root = kask_artifacts_dir();
+    let canonical_path = resolve_kask_artifacts_descendant_path(path, fs).await?;
+    let canonical_artifacts_dir = canonicalize_with_ancestors(&root, fs).await?;
+    owning_mcp_server_in_artifacts_dir(&canonical_path, &canonical_artifacts_dir)
+        .is_none()
+        .then_some(canonical_path)
 }
 
 /// The kind for a path that resolved into the project's global skills. Only
@@ -124,7 +450,8 @@ pub async fn sensitive_settings_kind(
         return Some(SensitiveSettingsKind::AgentSkills);
     }
 
-    if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
+    let candidate = expand_home_prefix(path).unwrap_or_else(|| path.to_path_buf());
+    if let Some(canonical_path) = canonicalize_with_ancestors(&candidate, fs).await {
         // Re-check the local protections against the canonical path,
         // restricted to within the project's worktrees, to catch `..`
         // and intra-project-symlink bypasses (see doc comment above).
@@ -147,7 +474,9 @@ pub async fn sensitive_settings_kind(
             break;
         }
 
-        if let Some(canonical_skills_dir) = canonical_global_skills_dir(fs).await {
+        if let Some(canonical_skills_dir) =
+            canonicalize_with_ancestors(&agent_skills::global_skills_dir(), fs).await
+        {
             if canonical_path.starts_with(&canonical_skills_dir) {
                 return Some(SensitiveSettingsKind::AgentSkills);
             }
@@ -270,6 +599,42 @@ pub fn resolve_project_path(
 /// location outside the project. This check is an additional gate after
 /// settings-based deny decisions: even if a tool is configured as "always allow,"
 /// a symlink escape still requires explicit user approval.
+/// Resolve a caller-supplied path to a [`ProjectPath`] WITHOUT requiring the
+/// path to already exist in a worktree snapshot.
+///
+/// `Project::find_project_path` resolves relative paths through the worktree
+/// snapshot's existing entries, so a valid in-project path that does not exist
+/// yet — creation being the calling tools' whole purpose — resolves to `None`,
+/// which the file tools then misclassified as "outside the project" (observed
+/// live 2026-10-24, twice in one session; card 6c88e56d). Absolute in-project
+/// paths already strip the worktree prefix existence-free, so only the relative
+/// case needs the fallback: a relative path belongs to the first visible
+/// worktree (the same iteration order `find_project_path` uses). Returns
+/// `None` only for paths lexically outside every visible worktree.
+pub fn resolve_creatable_project_path(
+    project: &Project,
+    display_path: &str,
+    cx: &App,
+) -> Option<ProjectPath> {
+    // Existing-entry resolution first — accurate whenever the target is
+    // already in the snapshot.
+    if let Some(existing) = project.find_project_path(display_path, cx) {
+        return Some(existing);
+    }
+    // Lexical fallback for not-yet-existing paths. An absolute path that
+    // missed above is genuinely outside every worktree.
+    if Path::new(display_path).is_absolute() {
+        return None;
+    }
+    let worktree = project.visible_worktrees(cx).next()?;
+    let worktree = worktree.read(cx);
+    let rel = RelPath::new(Path::new(display_path), project.path_style(cx)).ok()?;
+    Some(ProjectPath {
+        worktree_id: worktree.id(),
+        path: rel.into_arc(),
+    })
+}
+
 pub fn authorize_symlink_access(
     tool_name: &str,
     display_path: &str,
@@ -424,6 +789,8 @@ pub fn authorize_file_edit(
 
     let settings = agent_settings::AgentSettings::get_global(cx);
     let decision = decide_permission_for_path(tool_name, &path_str, settings);
+    let has_tool_specific_confirm = settings.tool_permissions.tools.contains_key(tool_name)
+        && matches!(decision, ToolPermissionDecision::Confirm);
 
     if let ToolPermissionDecision::Deny(reason) = decision {
         return Task::ready(Err(anyhow!("{}", reason)));
@@ -591,8 +958,19 @@ pub fn authorize_file_edit(
         }
 
         match resolved {
-            Ok(_) => Ok(()),
-            Err(_) => {
+            Ok(_) if !has_tool_specific_confirm => Ok(()),
+            Err(_)
+                if !has_tool_specific_confirm
+                    && resolve_creatable_kask_artifacts_descendant_path(
+                        &path_owned,
+                        fs.as_ref(),
+                    )
+                    .await
+                    .is_some() =>
+            {
+                Ok(())
+            }
+            _ => {
                 let authorize = cx.update(|cx| {
                     let context = ToolPermissionContext::new(
                         &tool_name,
@@ -731,6 +1109,262 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let input_path = agent_skills::global_skills_dir().join("my-skill");
+        let expected_path = agent_skills::global_skills_dir().join("my-skill");
+
+        let resolved = resolve_creatable_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("global skill path should resolve");
+
+        assert_eq!(resolved, expected_path);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        fs.insert_tree(
+            skill_file
+                .parent()
+                .expect("skill file should have a parent"),
+            json!({ "SKILL.md": "---\nname: my-skill\ndescription: test\n---" }),
+        )
+        .await;
+
+        let input_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        let resolved = resolve_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("global skill file should resolve");
+
+        assert_eq!(resolved, skill_file);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_allows_symlinked_skill_dir(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.insert_tree(
+            path!("/external/my-skill"),
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: test\n---",
+                "references": { "guide.md": "details" }
+            }),
+        )
+        .await;
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_symlink(
+            &skills_dir.join("my-skill"),
+            PathBuf::from(path!("/external/my-skill")),
+        )
+        .await
+        .expect("skill directory should be symlinked");
+
+        let input_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("guide.md");
+        let resolved = resolve_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("symlinked global skill resource should resolve");
+
+        assert_eq!(
+            resolved,
+            PathBuf::from(path!("/external/my-skill/references/guide.md"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_rejects_escape_from_symlinked_skill_dir(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.insert_tree(
+            path!("/external/my-skill"),
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: test\n---",
+            }),
+        )
+        .await;
+        fs.insert_tree(path!("/private"), json!({ "secret.txt": "secret" }))
+            .await;
+        fs.create_symlink(
+            &PathBuf::from(path!("/external/my-skill/secret")),
+            PathBuf::from(path!("/private")),
+        )
+        .await
+        .expect("nested symlink should be created");
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_symlink(
+            &skills_dir.join("my-skill"),
+            PathBuf::from(path!("/external/my-skill")),
+        )
+        .await
+        .expect("skill directory should be symlinked");
+
+        let input_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("secret")
+            .join("secret.txt");
+
+        assert!(
+            resolve_global_skill_path(&input_path, fs.as_ref())
+                .await
+                .is_none(),
+            "nested symlinks inside a symlinked skill must not broaden global skill access",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_rejects_other_home_paths(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        let sibling_path = skills_dir.parent().unwrap().join("not-skills");
+        let escaped_path = skills_dir.join("..").join("not-skills");
+
+        assert!(
+            resolve_creatable_global_skill_path(&sibling_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_rejects_symlink_escape(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_dir(path!("/external").as_ref())
+            .await
+            .expect("external directory should be created");
+        fs.create_symlink(&skills_dir.join("link"), PathBuf::from(path!("/external")))
+            .await
+            .expect("symlink should be created");
+
+        let escaped_path = agent_skills::global_skills_dir()
+            .join("link")
+            .join("new-dir");
+
+        assert!(
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_path_resolvers_reject_absolute_paths_when_skills_dir_is_symlink_to_root(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(&agent_skills::global_skills_dir())
+            .await
+            .expect("global skills directory should be created");
+        fs.insert_tree(path!("/tmp"), json!({ "outside.txt": "outside" }))
+            .await;
+
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_symlink(&skills_dir, PathBuf::from(path!("/")))
+            .await
+            .expect("global skills directory should be symlinked to root");
+
+        let outside_path = PathBuf::from(path!("/tmp/outside.txt"));
+        assert!(
+            resolve_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "existing absolute paths outside the lexical global skills tree should not resolve",
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "creatable absolute paths outside the lexical global skills tree should not resolve",
+        );
+
+        let traversed_path = agent_skills::global_skills_dir().join("..").join("outside");
+        assert!(
+            resolve_creatable_global_skill_path(&traversed_path, fs.as_ref())
+                .await
+                .is_none(),
+            "paths that normalize outside the lexical global skills tree should not resolve",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_path_resolvers_reject_absolute_paths_when_skills_dir_is_symlink_to_home(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(&agent_skills::global_skills_dir())
+            .await
+            .expect("global skills directory should be created");
+        fs.insert_tree(
+            paths::home_dir(),
+            json!({
+                "outside.txt": "outside",
+            }),
+        )
+        .await;
+
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_symlink(&skills_dir, paths::home_dir().clone())
+            .await
+            .expect("global skills directory should be symlinked to home");
+
+        let outside_path = paths::home_dir().join("outside.txt");
+        assert!(
+            resolve_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "existing absolute paths outside the lexical global skills tree should not resolve",
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "creatable absolute paths outside the lexical global skills tree should not resolve",
+        );
+    }
+
+    #[gpui::test]
     async fn test_resolve_project_path_safe_for_normal_files(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -771,6 +1405,102 @@ mod tests {
                 resolved
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_kask_artifacts_path_resolvers_allow_skill_artifacts_and_gate_mcp_writes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let artifacts_dir = kask_artifacts_dir();
+        let skill_run_file = artifacts_dir
+            .join("skills")
+            .join("prompt-enhance")
+            .join("2026-11-18-run")
+            .join("review-state.json");
+        let mcp_file = artifacts_dir
+            .join("corpus-mcp")
+            .join("cache")
+            .join("doc.txt");
+
+        fs.insert_tree(
+            skill_run_file.parent().unwrap(),
+            json!({ "review-state.json": "{}" }),
+        )
+        .await;
+        fs.insert_tree(mcp_file.parent().unwrap(), json!({ "doc.txt": "cached" }))
+            .await;
+
+        assert_eq!(
+            resolve_kask_artifacts_path(&skill_run_file, fs.as_ref()).await,
+            Some(skill_run_file.clone())
+        );
+        assert_eq!(
+            resolve_kask_artifacts_path(&mcp_file, fs.as_ref()).await,
+            Some(mcp_file.clone())
+        );
+
+        assert_eq!(
+            resolve_creatable_kask_artifacts_descendant_path(&skill_run_file, fs.as_ref()).await,
+            Some(skill_run_file.clone())
+        );
+        assert!(
+            resolve_creatable_kask_artifacts_path(&mcp_file, fs.as_ref())
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            detect_mcp_owned_kask_artifacts_path(&mcp_file, fs.as_ref()).await,
+            Some("corpus".to_string())
+        );
+
+        fs.create_symlink(
+            &artifacts_dir.join("skills").join("sneaky-link"),
+            artifacts_dir.join("corpus-mcp"),
+        )
+        .await
+        .expect("intra-artifacts symlink should be created");
+        let sneaky_target = artifacts_dir
+            .join("skills")
+            .join("sneaky-link")
+            .join("cache")
+            .join("injected.txt");
+        assert!(
+            resolve_creatable_kask_artifacts_path(&sneaky_target, fs.as_ref())
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            detect_mcp_owned_kask_artifacts_path(&sneaky_target, fs.as_ref()).await,
+            Some("corpus".to_string())
+        );
+
+        fs.insert_tree(path!("/outside"), json!({ "secret.txt": "secret" }))
+            .await;
+        fs.create_symlink(
+            &artifacts_dir.join("escape"),
+            PathBuf::from(path!("/outside")),
+        )
+        .await
+        .expect("escape symlink should be created");
+        assert!(
+            resolve_kask_artifacts_path(
+                &artifacts_dir.join("escape").join("secret.txt"),
+                fs.as_ref()
+            )
+            .await
+            .is_none()
+        );
+        assert!(
+            resolve_creatable_kask_artifacts_path(
+                &artifacts_dir.join("escape").join("new.txt"),
+                fs.as_ref()
+            )
+            .await
+            .is_none()
+        );
     }
 
     #[gpui::test]

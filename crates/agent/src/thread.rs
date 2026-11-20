@@ -1,11 +1,13 @@
 use crate::{
-    ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    ApplyCodeActionTool, AskUserTool, CodeActionStore, CompactSystemPromptTemplate,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, CreateThreadTool, DbLanguageModel,
+    DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool,
+    FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GoalCloseTool, GoalCorrectTool,
+    GrepTool, LeanCheckTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
+    ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UnfoldPlanTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
 use action_log::ActionLog;
@@ -48,7 +50,7 @@ use language_model::{
     ProviderErrorCategory, Role, SelectedModel, Speed, StopReason, TokenUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
-use project::{Project, trusted_worktrees::TrustedWorktrees};
+use project::{AgentId, Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -56,6 +58,7 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
+use sha2::{Digest, Sha256};
 use std::fmt::Write;
 use std::{cell::RefCell, ops::ControlFlow};
 use std::{
@@ -71,9 +74,45 @@ use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
+/// Used when a tool call was interrupted because the model's output reached
+/// the token limit before it finished emitting the tool's input. Distinct from
+/// `TOOL_CANCELED_MESSAGE` (which means the user stopped the turn) so the model
+/// can distinguish "retry with a simpler call" from "the user canceled me."
+const TOOL_TRUNCATED_MESSAGE: &str = "Tool call was interrupted because the model's output reached the token limit before completing the tool input. Try again with a shorter or simpler tool call.";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
+/// zed-kask: false-halt fix (card bd7dbf68) — used when a sibling tool call in
+/// the same batch failed while the stream was still emitting this call's
+/// input, so the call never started. The user canceled nothing: a parallel
+/// sibling's failure interrupted the stream. Distinct from
+/// `TOOL_CANCELED_MESSAGE` (the user stopped the turn) and
+/// `TOOL_TRUNCATED_MESSAGE` (the model's own output hit the token limit), so
+/// the model knows to re-issue the call rather than treat it as user intent.
+const TOOL_INTERRUPTED_BY_SIBLING_FAILURE_MESSAGE: &str = "Tool call was interrupted because a sibling tool call in the same batch failed while the stream was still emitting this call's input; the call never started. The user canceled nothing. Re-issue this tool call.";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
+
+/// The error string `ToolInput::recv()` returns when the channel closes without
+/// a final `Full` payload — i.e. the LLM stream ended before the tool_use input
+/// was complete. Streaming tools (`edit_file`, `write_file`) that call
+/// `input.next()` in a loop receive this as an `Err` and would otherwise pass
+/// the generic string through to the model. `map_tool_input_error` replaces
+/// it with an actionable message so the model knows to retry with a simpler
+/// call instead of treating it as an arbitrary failure.
+pub(crate) const TOOL_INPUT_NOT_FULLY_RECEIVED: &str = "tool input was not fully received";
+
+/// If `error` is the `ToolInput::recv()` channel-closed error, return a
+/// model-facing message that explains the cause and suggests a remedy.
+/// Otherwise return the original error string unchanged. Streaming tools
+/// call this in their `Err(error)` arm so the model can distinguish
+/// stream-truncation from genuine tool failures.
+pub(crate) fn map_tool_input_error(error: impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    if text == TOOL_INPUT_NOT_FULLY_RECEIVED {
+        TOOL_TRUNCATED_MESSAGE.to_string()
+    } else {
+        text
+    }
+}
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
@@ -124,8 +163,47 @@ pub enum SandboxStatusRefresh {
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
 
+/// Upper bound on concurrently in-flight segment summarization calls during
+/// one compaction. Later segments wait for an earlier batch; ordering is
+/// preserved by collecting each batch's summaries in dispatch order.
+const MAX_CONCURRENT_SEGMENT_SUMMARIES: usize = 8;
+
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
+
+/// Tools whose output must never be passed through the `ThreadCondenser`'s
+/// **ingestion** compression (`run_tool`).
+///
+/// These tools return structured content (source code, search results,
+/// directory listings, diagnostics, diffs) where every line is structurally
+/// meaningful. The condenser's line-level elision (joining non-consecutive
+/// selected lines with `...` ellipsis markers) is actively harmful here: the
+/// `...` looks like literal source content, and structurally meaningful lines
+/// (use statements, closing braces, method chains) are dropped because they
+/// score low on word-frequency saliency. The condenser is intended for
+/// verbose terminal/build/test output, not source code.
+///
+/// This list governs only what is stored at ingestion. Compaction planning
+/// (`kask_compaction`) applies its own deterministic pre-shrink to the
+/// summarizer's request copy with NO exemptions — head+tail windowing with
+/// an honest marker cannot corrupt structure the way mid-content ellipsis
+/// can, and the stored history keeps the full text.
+///
+/// `terminal` is intentionally NOT in this list — terminal output (build
+/// logs, test output) is the condenser's intended use case. The condenser's
+/// `classify_tool` now recognizes `terminal` as `ShellCommand` so it routes
+/// to the head/tail `RtkStyleAlgorithm` instead of the ellipsis-based
+/// `FlashrankAlgorithm`.
+pub(crate) const NO_COMPRESS_TOOLS: &[&str] = &[
+    "read_file",
+    "grep",
+    "find_path",
+    "list_directory",
+    "diagnostics",
+    "find_references",
+    "get_code_actions",
+    "edit_file",
+];
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
@@ -138,6 +216,241 @@ impl std::fmt::Display for NoModelConfiguredError {
 }
 
 impl std::error::Error for NoModelConfiguredError {}
+
+// zed-kask: D100 (Seam A) — private-thread routing enforcement. The
+// thread's model IS the dispatch decision, so the enforcement lives at the
+// model-resolution points: the storage gates (`set_model`,
+// `set_summarization_model`, `from_db`'s restore sanitize) and the request
+// gate (`run_turn_internal`). A marked thread runs only models served by
+// Zed's built-in Ollama and llama.cpp providers; the set is fixed
+// (`settings::PRIVATE_THREAD_LOCAL_PROVIDERS`), so neither a thread nor a
+// setting widens it.
+
+/// D100 — may a privacy-marked thread run this model? The one admission
+/// decision lives in `settings::is_private_thread_local_model`: the
+/// provider is Zed's built-in Ollama or llama.cpp provider, and an Ollama
+/// cloud-proxied model (`ollama/glm-5.3:cloud`) is refused like any
+/// public provider.
+pub(crate) fn is_private_leg_model(model: &LanguageModel) -> bool {
+    is_private_leg_model_id(&model.provider_id.0, &model.id.0)
+}
+
+/// D100 — the provider-and-model form of the private-leg predicate, for
+/// surfaces that hold the pair as strings (the agent panel's model list,
+/// whose ids are `{provider}/{model}`).
+pub(crate) fn is_private_leg_model_id(provider_id: &str, model_name: &str) -> bool {
+    settings::is_private_thread_local_model(provider_id, model_name)
+}
+
+/// True when the local provider's configured `api_url` points at this machine
+/// (empty default or loopback host). Prevents a privacy-marked thread from
+/// sending private content to a remote `ollama` or `llama.cpp` server URL.
+///
+/// S111-F02: matches `provider_id` against `PRIVATE_THREAD_LOCAL_PROVIDERS`
+/// FIRST so all non-local providers return `false` regardless of `SettingsStore` state.
+pub(crate) fn is_local_provider_endpoint(provider_id: &str, cx: &App) -> bool {
+    if !settings::PRIVATE_THREAD_LOCAL_PROVIDERS.contains(&provider_id) {
+        return false;
+    }
+    let Some(store) = cx.try_global::<settings::SettingsStore>() else {
+        return true;
+    };
+    let Some(lm) = store.merged_settings().language_models.as_ref() else {
+        return true;
+    };
+    let api_url = match provider_id {
+        "ollama" => lm
+            .ollama
+            .as_ref()
+            .and_then(|s| s.api_url.as_deref())
+            .unwrap_or(""),
+        "llama.cpp" => lm
+            .llama_cpp
+            .as_ref()
+            .and_then(|s| s.api_url.as_deref())
+            .unwrap_or(""),
+        _ => return false,
+    };
+    settings::is_local_provider_api_url(api_url)
+}
+
+/// D100 / S111-F02 — combined admission check: model is on the private leg
+/// AND its provider endpoint points at this machine.
+pub(crate) fn is_admitted_private_model(model: &LanguageModel, cx: &App) -> bool {
+    is_private_leg_model(model) && is_local_provider_endpoint(&model.provider_id.0, cx)
+}
+
+/// S111-F01 — validate a `ResponseModel(reported_model)` stream event against
+/// the active dispatch model's `provider_id` when the thread is privacy-marked.
+/// Rejects any reported model that carries a foreign/cloud provider prefix or
+/// fails `is_private_leg_model_id` instead of stamping `private = true`.
+pub(crate) fn validate_response_model_for_private_thread(
+    private_inference: bool,
+    dispatch_provider_id: &str,
+    reported_model: &str,
+) -> Result<String> {
+    let reported_trimmed = reported_model.trim();
+    if private_inference {
+        if let Some((reported_provider, reported_name)) = reported_trimmed.split_once('/') {
+            if reported_provider != dispatch_provider_id
+                || !is_private_leg_model_id(reported_provider, reported_name)
+            {
+                return Err(anyhow!(PrivateRoutingError {
+                    provider_id: reported_provider.into(),
+                    model_id: reported_name.into(),
+                }));
+            }
+            return Ok(reported_name.to_string());
+        }
+        if !reported_trimmed.is_empty()
+            && !is_private_leg_model_id(dispatch_provider_id, reported_trimmed)
+        {
+            return Err(anyhow!(PrivateRoutingError {
+                provider_id: dispatch_provider_id.into(),
+                model_id: reported_trimmed.into(),
+            }));
+        }
+    }
+    let normalized = reported_trimmed
+        .strip_prefix(&format!("{dispatch_provider_id}/"))
+        .unwrap_or(reported_trimmed)
+        .to_string();
+    Ok(normalized)
+}
+
+/// zed-kask: D107 — a local model whose context window is below this gets
+/// the compact profile. The full request does not fit under it: the system
+/// prompt template alone is about 6,600 tokens, before rules, skills and
+/// the tool schemas.
+#[cfg(test)]
+pub(crate) use crate::harness_profile::COMPACT_PROFILE_MAX_CONTEXT;
+
+/// zed-kask: D107 — the only tools the compact profile offers: reading,
+/// searching and editing project files. Every other built-in tool and every
+/// MCP server tool is withheld, because their schemas are the larger part
+/// of the request. This is a recorded exception to D44's "no per-turn tool
+/// filtering": the cut is fixed per model, not sampled per turn.
+const COMPACT_PROFILE_TOOLS: &[&str] = &[
+    ReadFileTool::NAME,
+    EditFileTool::NAME,
+    WriteFileTool::NAME,
+    GrepTool::NAME,
+    FindPathTool::NAME,
+    ListDirectoryTool::NAME,
+];
+
+/// zed-kask: D107 — does this model run on the compact profile (the compact
+/// system prompt and [`COMPACT_PROFILE_TOOLS`])? True for a model served by
+/// Zed's built-in Ollama or llama.cpp provider, cloud-proxied entries
+/// excluded, whose context window is below [`COMPACT_PROFILE_MAX_CONTEXT`].
+/// It keys on the model, not the thread's privacy mark: a small local model
+/// has the same budget on an unmarked thread.
+pub(crate) fn harness_profile_for_model(
+    model: &LanguageModel,
+) -> crate::harness_profile::HarnessProfileSpec {
+    crate::harness_profile::resolve_harness_profile(
+        &model.id.0,
+        model.max_token_count(),
+        is_private_leg_model(model),
+    )
+}
+
+pub(crate) fn uses_compact_profile(model: &LanguageModel) -> bool {
+    harness_profile_for_model(model).uses_compact_tool_surface
+}
+
+/// D100 (operator ruling 2026-11-05) — the PI-owned private-thread
+/// disabled-server SET, resolved through the one content home
+/// (`resolved_private_thread_disabled_servers`) with the default-const
+/// fallback when the section is absent. `pub` so the thread-header
+/// toggle's tooltip can surface the same resolved set the perimeter
+/// refuses by (the review's F5 — the perimeter is a PI-owned policy; its
+/// decision text belongs next to the lock).
+pub fn private_thread_disabled_servers(cx: &App) -> Vec<String> {
+    const EXTRA_DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] =
+        &["research", "prediction-markets"];
+
+    let section = cx
+        .global::<settings::SettingsStore>()
+        .merged_settings()
+        .kask
+        .as_ref()
+        .and_then(|kask| kask.private_inference.as_ref());
+    match section {
+        Some(section) if section.private_thread_disabled_servers.is_some() => {
+            section.resolved_private_thread_disabled_servers()
+        }
+        _ => {
+            let mut servers: Vec<String> = settings::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+            for &extra in EXTRA_DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS {
+                if !servers.iter().any(|s| s == extra) {
+                    servers.push(extra.to_string());
+                }
+            }
+            servers
+        }
+    }
+}
+
+/// D100 (operator ruling 2026-11-05) — is this MCP server's tool surface
+/// disabled on privacy-marked threads? The named default is the media
+/// server: its analysis passes (vision, STT, OCR) rely on cloud inference
+/// with no local path, so a private thread refuses the tool surface rather
+/// than let it route private content to cloud models. Pinned by
+/// `media_server_tools_are_absent_on_private_threads` and the
+/// settings-content resolution pin.
+pub(crate) fn server_disabled_on_private_threads(server_id: &str, cx: &App) -> bool {
+    private_thread_disabled_servers(cx)
+        .iter()
+        .any(|s| s == server_id)
+}
+
+/// D100 — returned when a privacy-marked thread would resolve or dispatch
+/// inference to a model that is not served locally. The request fails
+/// with this typed error; it never falls back to a public provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoutingError {
+    /// The refused model's provider.
+    pub provider_id: Arc<str>,
+    /// The refused model's id.
+    pub model_id: Arc<str>,
+}
+
+impl std::fmt::Display for PrivateRoutingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "private thread refused model {}/{}: a privacy-marked thread \
+             runs only local models served by Zed's Ollama or llama.cpp \
+             provider",
+            self.provider_id, self.model_id
+        )
+    }
+}
+
+impl std::error::Error for PrivateRoutingError {}
+
+/// D100 — returned when a privacy-marked thread has no resolvable local
+/// model: the turn fails with this typed error instead of falling back
+/// to a public default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateModelUnavailableError;
+
+impl std::fmt::Display for PrivateModelUnavailableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "private thread has no local model selected — choose a model \
+             served by Zed's Ollama or llama.cpp provider; no public \
+             provider serves a privacy-marked thread"
+        )
+    }
+}
+
+impl std::error::Error for PrivateModelUnavailableError {}
 
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -774,6 +1087,9 @@ pub enum AgentMessageContent {
 pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<ProcessOutput>;
+    fn full_output(&self, _cx: &AsyncApp) -> Result<Option<String>> {
+        Ok(None)
+    }
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>>;
     fn kill(&self, cx: &AsyncApp) -> Result<()>;
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
@@ -787,6 +1103,45 @@ pub trait SubagentHandle {
     fn num_entries(&self, cx: &App) -> usize;
     /// Runs a turn for a given message and returns both the response and the index of that output message.
     fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    /// Runs a turn for a given message non-blockingly. Returns a receiver
+    /// that delivers the final tool result when the subagent completes.
+    /// The default implementation delegates to `send` and wraps the result
+    /// into a `LanguageModelToolResult` — blocking the caller. Implementations
+    /// that support non-blocking execution should override this to spawn the
+    /// turn in the background and return immediately.
+    fn send_streaming(
+        &self,
+        message: String,
+        tool_use_id: LanguageModelToolUseId,
+        cx: &AsyncApp,
+    ) -> oneshot::Receiver<Result<LanguageModelToolResult>> {
+        let (tx, rx) = oneshot::channel();
+        let task = self.send(message, cx);
+        cx.spawn(async move |_cx| {
+            let result = task.await;
+            let tool_result = match result {
+                Ok(output) => LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(output))],
+                    output: None,
+                },
+                Err(error) => LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        error.to_string(),
+                    ))],
+                    output: None,
+                },
+            };
+            let _ = tx.send(Ok(tool_result));
+        })
+        .detach();
+        rx
+    }
 }
 
 pub trait ThreadEnvironment {
@@ -862,6 +1217,11 @@ pub struct SiblingThreadRequest {
     /// Git ref (branch, tag, or commit) to base the new worktree on.
     /// Only relevant when `use_new_worktree` is true.
     pub base_ref: Option<String>,
+    /// Host-derived hard ceiling; native environments overwrite caller input.
+    pub delegation_authority: Option<crate::DelegationAuthority>,
+    /// D100 / S111-F04 — host-derived privacy mark from the parent thread.
+    /// Native environments overwrite caller input before forwarding to the host.
+    pub private_inference_marked: bool,
 }
 
 /// Information returned when a sibling thread is successfully created.
@@ -915,7 +1275,15 @@ pub enum ThreadEvent {
     UserMessage(UserMessage),
     AgentText(String),
     AgentThinking(String),
+    AgentProvenance(acp_thread::RequestProvenance),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
+    /// Real-time thinking trace from a tool's execution (e.g. skill execution
+    /// step reasoning). Appended to the tool call's `thoughts` buffer so the
+    /// user sees a live thinking trace, not just a one-line title.
+    ToolCallThinking {
+        tool_call_id: acp_v2::ToolCallId,
+        text: String,
+    },
     ToolCallAuthorization(ToolCallAuthorization),
     ToolCallAuthorizationResolved {
         tool_call_id: acp_v2::ToolCallId,
@@ -1249,6 +1617,14 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
+/// A summarization stream that ended successfully with no text at all —
+/// transient-shaped (a 200 with empty content), distinct from truncation
+/// and refusal. The only typed compaction error: the manual path's
+/// one-shot retry discriminates on exactly this failure.
+#[derive(Debug, thiserror::Error)]
+#[error("Compaction produced an empty summary")]
+struct EmptyCompactionSummary;
+
 pub enum ThreadModel {
     Ready(LanguageModel),
     Unresolved(SelectedModel),
@@ -1296,6 +1672,9 @@ pub(crate) struct StreamingSaveKey {
     thinking_effort: Option<String>,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
+    /// zed-kask: D100 — a mark flip mid-stream is a routing change: it
+    /// must persist promptly, not at stream end.
+    private_inference_marked: bool,
 }
 
 pub struct Thread {
@@ -1316,6 +1695,10 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
+    // Retain the latest pending-message owner even after cancel takes running_turn.
+    // Weak identity prevents stale cleanup from acting on a successor, without
+    // keeping its stream or workers alive.
+    pending_message_owner: std::rc::Weak<RefCell<Vec<oneshot::Receiver<()>>>>,
     /// When set, the current turn ends at the next message boundary instead of
     /// running to completion. The UI sets this to deliver a "steering" queued
     /// message mid-task; by default queued messages wait for the turn to finish.
@@ -1335,6 +1718,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    delegation_authority: Option<crate::DelegationAuthority>,
     /// Whether `profile_id` was downgraded to `minimal` at thread start because
     /// the workspace is restricted. Used purely to surface a warning in the UI.
     profile_downgraded_for_restricted_workspace: bool,
@@ -1363,6 +1747,27 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    // zed-kask: D2/D6/D25 — all kask-specific per-thread state grouped
+    // into one field so upstream rebases touch one struct init instead
+    // of nine field inits. See kask_thread_state.rs for the methods that
+    // encapsulate the kask-specific turn-loop behaviors.
+    pub(crate) kask: crate::kask_thread_state::KaskThreadState,
+}
+
+/// A rendered system prompt cached alongside a digest of its inputs. The
+/// digest is computed from the same fields that feed `SystemPromptTemplate`; if
+/// it matches on the next render request, the cached string is reused.
+pub(crate) struct CachedSystemPrompt {
+    pub(crate) digest: [u8; 32],
+    pub(crate) prompt: SharedString,
+}
+
+/// Cached filtered `ProjectContext` with a digest of the filtering inputs.
+/// When the digest matches, the cached context is reused — avoiding the
+/// `ProjectContext::clone` + `filter_conditional_rules` cost on every render.
+pub(crate) struct CachedFilteredContext {
+    pub(crate) filter_digest: [u8; 32],
+    pub(crate) context: ProjectContext,
 }
 
 impl Thread {
@@ -1400,13 +1805,38 @@ impl Thread {
             depth: parent_thread.read(cx).depth() + 1,
             outcomes: Vec::new(),
         });
+        // zed-kask: D6 — inherit the parent thread's agent_id so
+        // curator-spawned subagents route their turns to the curator's
+        // sovereign DB for memory ingestion and context recall. Without
+        // this, a curator subagent's turns are ingested as user-perspective
+        // records and the curator has no first-person memory of the
+        // delegated work.
+        thread.kask =
+            crate::kask_thread_state::KaskThreadState::inherit_from(&parent_thread.read(cx).kask);
         thread.inherit_parent_settings(parent_thread, cx);
-        let model_selection = model_selection
-            .cloned()
-            .or_else(|| AgentSettings::get_global(cx).subagent_model.clone());
-        if let Some(model_selection) = model_selection {
+        thread.delegation_authority = Some(parent_thread.read(cx).delegation_for_child(cx));
+        let selected_model = model_selection.cloned().or_else(|| {
+            // S111-F03 / S106-F02: on privacy-marked threads, ignore global
+            // non-local `AgentSettings.subagent_model` so the subagent keeps
+            // the parent's local model.
+            let configured = AgentSettings::get_global(cx).subagent_model.clone()?;
+            if thread.kask.is_private_inference()
+                && (!is_private_leg_model_id(&configured.provider.0, &configured.model)
+                    || !is_local_provider_endpoint(&configured.provider.0, cx))
+            {
+                log::warn!(
+                    target: "agent.thread",
+                    "private subagent ignored global non-local subagent_model {}/{} — keeping parent's local model",
+                    configured.provider.0,
+                    configured.model
+                );
+                return None;
+            }
+            Some(configured)
+        });
+        if let Some(subagent_model) = selected_model {
             thread.inherits_parent_model_settings = false;
-            thread.apply_model_selection(&model_selection, cx);
+            thread.apply_model_selection(&subagent_model, cx);
         }
         thread
     }
@@ -1442,14 +1872,14 @@ impl Thread {
         let settings = AgentSettings::get_global(cx);
         let (profile_id, profile_downgraded_for_restricted_workspace) =
             Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
+        let thinking_effort = settings.default_model.as_ref().and_then(|m| {
+            m.enable_thinking
+                .then(|| m.effort.clone().unwrap_or_else(|| "default".to_string()))
+        });
         let enable_thinking = settings
             .default_model
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
         let speed = settings
             .default_model
             .as_ref()
@@ -1464,6 +1894,7 @@ impl Thread {
         Self {
             id: acp_v2::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
+            thinking_enabled: enable_thinking,
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
@@ -1474,6 +1905,7 @@ impl Thread {
             retained_history_revision: 0,
             user_store: project.read(cx).user_store(),
             running_turn: None,
+            pending_message_owner: std::rc::Weak::new(),
             end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -1490,12 +1922,12 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            delegation_authority: None,
             profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: enable_thinking,
             speed,
             thinking_effort,
             prompt_capabilities_tx,
@@ -1509,6 +1941,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            kask: crate::kask_thread_state::KaskThreadState::new(),
         }
     }
 
@@ -1519,7 +1952,6 @@ impl Thread {
     fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
         let parent = parent_thread.read(cx);
         self.speed = parent.speed;
-        self.thinking_enabled = parent.thinking_enabled;
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
@@ -1540,6 +1972,16 @@ impl Thread {
             );
             return;
         };
+        if self.kask.is_private_inference() && !is_admitted_private_model(&model, cx) {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused subagent model selection {}/{} — only local Ollama or llama.cpp models on a local endpoint are admitted",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            return;
+        }
 
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
@@ -1588,10 +2030,18 @@ impl Thread {
     ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream::new(tx);
+        let mut pending_replay_provenance: Option<acp_thread::RequestProvenance> = None;
         for (message_ix, message) in self.messages.iter().enumerate() {
             match &**message {
-                Message::User(user_message) => stream.send_user_message(user_message),
+                Message::User(user_message) => {
+                    pending_replay_provenance =
+                        self.kask.request_provenance_for(&user_message.id).cloned();
+                    stream.send_user_message(user_message);
+                }
                 Message::Agent(assistant_message) => {
+                    if let Some(provenance) = pending_replay_provenance.as_ref() {
+                        stream.send_provenance(provenance);
+                    }
                     for content in &assistant_message.content {
                         match content {
                             AgentMessageContent::Text(text) => stream.send_text(text),
@@ -1723,7 +2173,7 @@ impl Thread {
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
             let (_cancellation_tx, cancellation_rx) = watch::channel(false);
-            let tool_event_stream = ToolCallEventStream::new(
+            let mut tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 tool_call_id.clone(),
                 stream.clone(),
@@ -1731,8 +2181,20 @@ impl Thread {
                 cancellation_rx,
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
+                Some(native_thread_calling_actor(self.id())),
+                hkask_types::InferenceProvenance::from_private_flag(
+                    self.kask.is_private_inference(),
+                ),
             );
-            tool.replay(input, output, tool_event_stream, cx).log_err();
+            tool_event_stream.calling_session_id = Some(self.id().to_string());
+            if let Err(error) = tool.replay(input, output, tool_event_stream, cx) {
+                // Replay deserialization can fail when the persisted model output
+                // violates the tool's current input schema (e.g. a model emitted
+                // `timeout_ms` as a string, or omitted a required field). The raw
+                // output is still displayed via the update_tool_call_fields call
+                // below, so this only degrades the rich tool-specific rendering.
+                log::warn!("Failed to replay tool {}: {error:#}", tool_use.name);
+            }
         }
 
         stream.update_tool_call_fields(&tool_call_id, |update| {
@@ -1830,6 +2292,51 @@ impl Thread {
                 .map_or(ThreadModel::Unset, ThreadModel::Ready),
         };
 
+        // zed-kask: D100 (Seam A) — restore the persisted privacy mark (the
+        // D28 metadata blob), then the storage gate's restore leg: a marked
+        // thread never loads holding a public-leg model (a mark applied
+        // after a public model was selected, a blob from before the gates
+        // existed, or a hand-edited blob). The public model is dropped to
+        // `Unset`; the request path fails typed until a local model is
+        // selected — never a public fallback. Pinned by
+        // `private_mark_round_trips_through_db` and
+        // `a_marked_thread_never_loads_holding_a_public_model`.
+        let mut kask = crate::kask_thread_state::KaskThreadState::new();
+        if db_thread.private_inference_marked {
+            kask.set_private_inference(true);
+        }
+        kask.restore_request_provenance(db_thread.request_provenance);
+        rehydrate_spillover_vault_from_db_messages(&kask, &db_thread.messages);
+        let model = if kask.is_private_inference() {
+            match &model {
+                ThreadModel::Ready(m) if !is_admitted_private_model(m, cx) => {
+                    log::warn!(
+                        target: "agent.thread",
+                        "private thread {} dropped restored non-local model at load — \
+                         the mark allows only local Ollama or llama.cpp models on a local endpoint",
+                        id
+                    );
+                    ThreadModel::Unset
+                }
+                ThreadModel::Unresolved(sel)
+                    if !is_private_leg_model_id(&sel.provider.0, &sel.model.0)
+                        || !is_local_provider_endpoint(&sel.provider.0, cx) =>
+                {
+                    log::warn!(
+                        target: "agent.thread",
+                        "private thread {} dropped restored unresolved non-local model {}/{} at load",
+                        id,
+                        sel.provider.0,
+                        sel.model.0
+                    );
+                    ThreadModel::Unset
+                }
+                _ => model,
+            }
+        } else {
+            model
+        };
+
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_model()));
 
@@ -1853,6 +2360,7 @@ impl Thread {
             retained_history_revision: 0,
             user_store: project.read(cx).user_store(),
             running_turn: None,
+            pending_message_owner: std::rc::Weak::new(),
             end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -1864,14 +2372,15 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            delegation_authority: db_thread.delegation_authority,
             profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: db_thread.thinking_enabled,
-            thinking_effort: db_thread.thinking_effort,
+            thinking_effort: db_thread.thinking_effort.clone(),
             speed: db_thread.speed,
+            thinking_enabled: db_thread.thinking_enabled,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1889,6 +2398,7 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
+            kask,
         }
     }
 
@@ -1975,6 +2485,7 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: (&self.model).into(),
             profile: Some(self.profile_id.clone()),
+            delegation_authority: self.delegation_authority.clone(),
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
@@ -1988,6 +2499,8 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            private_inference_marked: self.kask.is_private_inference(),
+            request_provenance: self.kask.request_provenance_map().clone(),
         };
 
         cx.background_spawn(async move {
@@ -2014,6 +2527,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            private_inference_marked: self.kask.is_private_inference(),
         }
     }
 
@@ -2090,7 +2604,76 @@ impl Thread {
         }
     }
 
+    /// Set static context appended to the system prompt's `## Session Context`
+    /// section (e.g., Curator overlay, Steer panel overlay). This is NOT an
+    /// override — the system prompt template is still rendered. Delegates to
+    /// `KaskThreadState::set_static_context`.
+    pub fn set_static_context(&mut self, context: SharedString, cx: &mut Context<Self>) {
+        self.kask.set_static_context(context);
+        cx.notify();
+    }
+
+    /// Set the agent ID that owns this thread (e.g., `CURATOR_AGENT_ID`).
+    ///
+    /// Called by `NativeAgent::new_session` when the agent is the Curator (or
+    /// any other non-default native agent). `None` leaves the thread in the
+    /// default (Zed Agent) state — the memory ingestion path treats `None` as
+    /// the user agent and writes to the user's `memory.db`.
+    ///
+    /// This is stored separately from `agent_static_context` (on
+    /// `KaskThreadState`) because it is a
+    /// routing key, not a prompt fragment. The memory port (D6) and context
+    /// injector dispatch (D8) both read it to select the correct
+    /// perspective-scoped store.
+    pub fn set_agent_id(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
+        self.kask.set_agent_id(agent_id);
+        cx.notify();
+    }
+
+    /// The agent ID that owns this thread. Always set — `ZED_AGENT_ID` by
+    /// construction, overridden by the curator overlay; subagents inherit
+    /// from their parent (D6).
+    pub fn agent_id(&self) -> &AgentId {
+        self.kask.agent_id()
+    }
+
+    /// The invoker stamped on skill outcomes and skill-failure records.
+    ///
+    /// Single-sourced from the thread's own agent identity so the SkillTool
+    /// registration (`register_session`) and the failure-recording path
+    /// (`run_tool`) can never attribute to different invokers — including
+    /// subagent threads whose identity is inherited rather than re-derivable
+    /// from the owning agent's context. Do not add a second derivation.
+    pub fn skill_invoker(&self) -> SharedString {
+        self.kask.agent_id().0.clone()
+    }
+
+    /// The agent-set static context (e.g., the curator overlay's combined
+    /// base + per-tab prompt), if any. Distinct from the memory-injected
+    /// `static_context` — this is the agent's own contribution.
+    pub fn agent_static_context(&self) -> Option<&SharedString> {
+        self.kask.static_context()
+    }
+
     pub fn set_model(&mut self, model: LanguageModel, cx: &mut Context<Self>) {
+        // zed-kask: D100 (Seam A) — the storage gate: a privacy-marked
+        // thread can never hold a model that is not served locally.
+        // The public model is refused — not stored, no `ModelChanged` — and
+        // the attempt is logged; the turn path then fails typed
+        // (`PrivateModelUnavailableError`) rather than dispatching. Pinned
+        // by `private_thread_refuses_a_public_model_at_the_storage_gate`.
+        if self.kask.is_private_inference() && !is_admitted_private_model(&model, cx) {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused non-local model {}/{} — only local \
+                 Ollama or llama.cpp models on a local endpoint serve a marked thread",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            cx.notify();
+            return;
+        }
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_model());
@@ -2112,6 +2695,108 @@ impl Thread {
         }
 
         cx.notify()
+    }
+
+    /// zed-kask: D100 (Seam A) — mark or unmark this thread for private
+    /// inference routing. The PI's surface (the thread-header
+    /// toggle) calls this; no agent-callable tool does (unmarking widens
+    /// exposure, so it lives on PI-owned surfaces). Marking clears any held non-local
+    /// model and summarization model — the storage gate could not have
+    /// admitted them on a marked thread, and the request path then fails
+    /// typed (`PrivateModelUnavailableError`) until a local model is
+    /// selected: never a public fallback. Curator sessions mark and route
+    /// identically (PI ruling 2026-10-30 — the enforcement reads this flag,
+    /// never the agent identity). Pinned by
+    /// `private_thread_refuses_a_public_model_at_the_storage_gate` (the
+    /// storage leg: set-before-mark accepted, the mark-time clear, re-set
+    /// refused, unmark re-admits — the review's F3 correction: the two pin
+    /// names this comment previously cited do not exist).
+    pub fn set_private_inference(&mut self, private: bool, cx: &mut Context<Self>) {
+        if self.kask.is_private_inference() == private {
+            return;
+        }
+        // S109-F01: monotonic one-way latch once any private turn or private
+        // memory recall has touched the thread.
+        if !private
+            && self.kask.is_private_inference()
+            && (!self.messages.is_empty() || self.kask.has_private_history())
+        {
+            log::warn!(
+                target: "agent.thread",
+                "S109-F01: private thread {} refused unmark after private history",
+                self.id
+            );
+            return;
+        }
+        self.kask.set_private_inference(private);
+
+        if private {
+            let should_clear_model = match &self.model {
+                ThreadModel::Ready(model) => !is_admitted_private_model(model, cx),
+                ThreadModel::Unresolved(sel) => {
+                    !is_private_leg_model_id(&sel.provider.0, &sel.model.0)
+                        || !is_local_provider_endpoint(&sel.provider.0, cx)
+                }
+                ThreadModel::Unset => false,
+            };
+            if should_clear_model {
+                let old_usage = self.latest_token_usage();
+                self.model = ThreadModel::Unset;
+                self.prompt_capabilities_tx
+                    .send(Self::prompt_capabilities(None))
+                    .log_err();
+                let new_usage = self.latest_token_usage();
+                if old_usage != new_usage {
+                    cx.emit(TokenUsageUpdated(new_usage));
+                }
+                cx.emit(ModelChanged);
+                log::warn!(
+                    target: "agent.thread",
+                    "private thread {} cleared non-local model at mark time",
+                    self.id
+                );
+            }
+            if let Some(model) = self.summarization_model.clone()
+                && !is_admitted_private_model(&model, cx)
+            {
+                self.summarization_model = None;
+                log::warn!(
+                    target: "agent.thread",
+                    "private thread {} cleared non-local summarization model {}/{} \
+                     at mark time",
+                    self.id,
+                    model.provider_id.0,
+                    model.id.0
+                );
+            }
+        }
+        // S111-F03: propagate privacy mark across all running subagents.
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_private_inference(private, cx);
+                })
+                .ok();
+        }
+        cx.notify();
+    }
+
+    /// zed-kask: D100 (Seam A) — whether this thread is privacy-marked for
+    /// private-inference routing. The thread-header toggle renders from
+    /// this; the ingest seams read it to stamp FR-4's provenance mark.
+    pub fn is_private_inference(&self) -> bool {
+        self.kask.is_private_inference()
+    }
+
+    pub fn latest_request_provenance(&self) -> Option<&acp_thread::RequestProvenance> {
+        self.kask.latest_request_provenance()
+    }
+
+    pub fn request_provenance_for(
+        &self,
+        id: &ClientUserMessageId,
+    ) -> Option<&acp_thread::RequestProvenance> {
+        self.kask.request_provenance_for(id)
     }
 
     /// Re-selects this thread's model from its provider when that provider's
@@ -2147,6 +2832,27 @@ impl Thread {
         model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
+        // zed-kask: D100 (Seam A) — the storage gate covers the
+        // summarization slot too: title generation and summarization
+        // dispatch thread content through this model, so a marked thread
+        // must never hold a public summarization model (the falsifier is
+        // any private-thread content reaching a public provider — this
+        // path included). Pinned by
+        // `private_thread_refuses_a_public_summarization_model`.
+        if let Some(model) = model.as_ref()
+            && self.kask.is_private_inference()
+            && !is_admitted_private_model(model, cx)
+        {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused non-local summarization model {}/{}",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            cx.notify();
+            return;
+        }
         self.summarization_model = model.clone();
 
         for subagent in &self.running_subagents {
@@ -2229,6 +2935,30 @@ impl Thread {
         }
     }
 
+    /// zed-kask: false-halt fix (card bd7dbf68) — test-support accessor: the
+    /// most recent stored agent message whose content carries a tool use with
+    /// this id. The message that owns an interrupted batch's tool uses is not
+    /// necessarily the thread's last message (a continuation round may have
+    /// followed), so tests locate it by tool-use ownership.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn find_agent_message_with_tool_use(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+    ) -> Option<&AgentMessage> {
+        self.messages.iter().rev().find_map(|message| {
+            message.as_agent_message().and_then(|agent_message| {
+                agent_message
+                    .content
+                    .iter()
+                    .any(|content| match content {
+                        AgentMessageContent::ToolUse(tool_use) => tool_use.id == *tool_use_id,
+                        _ => false,
+                    })
+                    .then_some(agent_message)
+            })
+        })
+    }
+
     pub fn add_default_tools(
         &mut self,
         environment: Rc<dyn ThreadEnvironment>,
@@ -2274,8 +3004,15 @@ impl Thread {
             environment.clone(),
         ));
         self.add_tool(WebSearchTool);
+        self.add_tool(LispEvalTool);
+        self.add_tool(LeanCheckTool::new(self.project.clone()));
+        self.add_tool(OntoAnchorTool);
+        self.add_tool(RenderTemplateTool);
+        self.add_tool(UnfoldPlanTool);
 
         self.add_tool(AskUserTool);
+        self.add_tool(GoalCloseTool);
+        self.add_tool(GoalCorrectTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
 
@@ -2303,6 +3040,12 @@ impl Thread {
         // `Thread::enabled_tools`.
         self.add_tool(CreateThreadTool::new(environment.clone()));
         self.add_tool(ListAgentsAndModelsTool::new(environment));
+        // zed-kask: D44 — the discovery meta-tool. The model's visible tool
+        // list can be smaller than the registered surface (profile allowlists,
+        // server scope, curator gating); this tool lets it enumerate the full
+        // surface on demand — the pull mechanism that replaced the removed
+        // LazyToolRouter's per-turn push.
+        self.add_tool(ListMcpToolsTool::new(self.context_server_registry.clone()));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -2393,13 +3136,13 @@ impl Thread {
             return Task::ready(());
         };
 
-        let prompt_id = running_turn.prompt_id.clone();
+        let event_stream = running_turn.event_stream.clone();
         let turn_task = running_turn.cancel();
 
         cx.spawn(async move |this, cx| {
             turn_task.await;
             this.update(cx, |this, cx| {
-                if this.prompt_id == prompt_id {
+                if this.owns_pending_message(&event_stream) {
                     this.flush_pending_message(cx);
                 }
             })
@@ -2422,37 +3165,11 @@ impl Thread {
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
-        let previous_accounted_usage = self.current_request_token_usage;
-        let current_accounted_usage = TokenUsage {
-            input_tokens: previous_accounted_usage
-                .input_tokens
-                .max(update.input_tokens),
-            output_tokens: previous_accounted_usage
-                .output_tokens
-                .max(update.output_tokens),
-            cache_creation_input_tokens: previous_accounted_usage
-                .cache_creation_input_tokens
-                .max(update.cache_creation_input_tokens),
-            cache_read_input_tokens: previous_accounted_usage
-                .cache_read_input_tokens
-                .max(update.cache_read_input_tokens),
-        };
-        self.current_request_token_usage = current_accounted_usage;
-        self.cumulative_token_usage = self.cumulative_token_usage
-            + TokenUsage {
-                input_tokens: current_accounted_usage
-                    .input_tokens
-                    .saturating_sub(previous_accounted_usage.input_tokens),
-                output_tokens: current_accounted_usage
-                    .output_tokens
-                    .saturating_sub(previous_accounted_usage.output_tokens),
-                cache_creation_input_tokens: current_accounted_usage
-                    .cache_creation_input_tokens
-                    .saturating_sub(previous_accounted_usage.cache_creation_input_tokens),
-                cache_read_input_tokens: current_accounted_usage
-                    .cache_read_input_tokens
-                    .saturating_sub(previous_accounted_usage.cache_read_input_tokens),
-            };
+        accumulate_request_usage(
+            &mut self.current_request_token_usage,
+            &mut self.cumulative_token_usage,
+            update,
+        );
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -2691,6 +3408,15 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        // zed-kask: D100 (Seam A) — the turn-entry gate: a privacy-marked
+        // thread with no model fails with the private-thread named error,
+        // not the generic no-model error (the operator must see the
+        // boundary, not a missing configuration). The request gate inside
+        // run_turn_internal is the belt for paths that bypass this entry.
+        // Pinned by `private_thread_turn_entry_fails_typed_with_no_model`.
+        if self.kask.is_private_inference() && self.model().is_none() {
+            return Err(anyhow!(PrivateModelUnavailableError));
+        }
         let model = self
             .model()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
@@ -2752,22 +3478,63 @@ impl Thread {
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream::new(events_tx);
+        self.pending_message_owner = Rc::downgrade(&event_stream.lisp_completions);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
             let prompt_id = self.prompt_id.clone();
             let event_stream = event_stream.clone();
             async move |this, cx| {
                 let result = if let Some((model, request)) = compaction {
-                    Self::stream_compaction(
+                    // zed-kask: an empty-but-successful summary stream is
+                    // transient-shaped (a 200 with empty content; observed
+                    // live 2026-10-30 as two failed manual compactions six
+                    // seconds apart) — retry the summarization once before
+                    // failing the compaction. A refusal is permanent for
+                    // the same request and is never retried; the threshold
+                    // path already retries through the turn loop and the
+                    // PromptTooLarge rescue retries transient failures
+                    // internally, so the retry is scoped to the manual
+                    // path. Pinned by
+                    // test_manual_compact_retries_once_on_an_empty_summary.
+                    let attempt = Self::stream_compaction(
                         &this,
                         &event_stream,
                         cancellation_rx.clone(),
-                        model,
-                        request,
-                        CompactionInsertion::Manual { marker_id: id },
+                        model.clone(),
+                        request.clone(),
+                        CompactionInsertion::Manual {
+                            marker_id: id.clone(),
+                        },
+                        None,
                         cx,
                     )
-                    .await
+                    .await;
+                    match attempt {
+                        Err(error) if error.downcast_ref::<EmptyCompactionSummary>().is_some() => {
+                            log::info!(
+                                "Manual compaction produced an empty summary; retrying once"
+                            );
+                            this.update(cx, |this, _| {
+                                if let Some(telemetry) = this.pending_compaction_telemetry.as_mut()
+                                {
+                                    telemetry.retries += 1;
+                                }
+                            })
+                            .log_err();
+                            Self::stream_compaction(
+                                &this,
+                                &event_stream,
+                                cancellation_rx.clone(),
+                                model,
+                                request,
+                                CompactionInsertion::Manual { marker_id: id },
+                                None,
+                                cx,
+                            )
+                            .await
+                        }
+                        result => result,
+                    }
                 } else {
                     Ok(ControlFlow::Continue(()))
                 };
@@ -2806,7 +3573,6 @@ impl Thread {
             }
         });
         self.running_turn = Some(RunningTurn::new(
-            self.prompt_id.clone(),
             event_stream,
             BTreeMap::default(),
             cancellation_tx,
@@ -2868,14 +3634,15 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        // Flush the old pending message synchronously before cancelling,
-        // to avoid a race where the detached cancel task might flush the NEW
-        // turn's pending message instead of the old one.
+        // Flush the old message before transferring pending-message ownership.
+        // Deferred cancellation cleanup is identity-guarded and must not flush
+        // the successor's message.
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream::new(events_tx);
+        self.pending_message_owner = Rc::downgrade(&event_stream.lisp_completions);
         let message_ix = self.messages.len().saturating_sub(1);
         self.clear_summary();
         let tools = self.enabled_tools(cx);
@@ -2887,7 +3654,7 @@ impl Thread {
             async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result = Self::run_turn_internal(
+                let mut turn_result = Self::run_turn_internal(
                     &this,
                     &event_stream,
                     &prompt_id,
@@ -2896,6 +3663,12 @@ impl Thread {
                     cx,
                 )
                 .await;
+                // zed-kask: D1 (H6) — join pending lisp-eval worker completions
+                // before the turn result is consumed, so a still-running
+                // worker's teardown receipt is never lost.
+                if let Err(error) = event_stream.join_lisp_completions().await {
+                    turn_result = Err(error);
+                }
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -2911,9 +3684,164 @@ impl Thread {
                     Ok(()) => {
                         log::debug!("Turn execution completed");
                         event_stream.send_stop(acp_v2::StopReason::EndTurn);
+
+                        // zed-kask: native-first-rate sensor (spec D) — record
+                        // the completed turn's instrument summary for the
+                        // regulation loop. Only completed turns count; failed
+                        // turns (the Err branch below) are not evidence about
+                        // drift. Runs regardless of the memory port: the sensor
+                        // must work even when memory ingestion is unwired. An
+                        // unwired hook (non-kask embedders) drops the record
+                        // with a debug log — best-effort telemetry.
+                        {
+                            let summary = this.update(cx, |thread, cx| {
+                                let context_server_tool_names: std::collections::HashSet<String> =
+                                    thread
+                                        .context_server_registry
+                                        .read(cx)
+                                        .servers()
+                                        .flat_map(|(_, tools)| tools.keys())
+                                        .map(|name| name.to_string())
+                                        .collect();
+                                crate::kask_thread_state::turn_instrument_summary(
+                                    &thread.messages[message_ix.min(thread.messages.len())..],
+                                    &context_server_tool_names,
+                                )
+                            });
+                            if let Ok(summary) = summary {
+                                crate::record_agent_turn_native_first(
+                                    summary.substantive,
+                                    summary.native_first,
+                                );
+                                // zed-kask: D94 — spec B's observing gate (v1):
+                                // on the drift population the sensor counts
+                                // (substantive + native-first), detect
+                                // instrument-shaped claims in the delivered
+                                // text — percentages without deterministic
+                                // verification, citations without the research
+                                // ledger. v1 records (target `reg.gate`); the
+                                // corrective re-prompt (v2) is armed once the
+                                // readings calibrate the checker's precision.
+                                if summary.substantive && summary.native_first {
+                                    let findings = this.update(cx, |thread, _| {
+                                        crate::kask_thread_state::claim_gate_findings(
+                                            &thread.messages
+                                                [message_ix.min(thread.messages.len())..],
+                                        )
+                                    });
+                                    if let Ok(findings) = findings {
+                                        if !findings.is_empty() {
+                                            crate::record_claim_gate_findings(&findings);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // D6: Ingest the completed turn into hKask memory.
+                        // Fire-and-forget — the memory system handles classification
+                        // and consolidation asynchronously. When no memory port is
+                        // injected (upstream zed, or before composition root runs),
+                        // this is a no-op — but we log it so the operator can see
+                        // that turns are being dropped (the feedback-gap trap:
+                        // silent no-ops make the system appear to remember when it
+                        // doesn't).
+                        let thread_id_for_log = this
+                            .read_with(cx, |thread, _| thread.id().to_string())
+                            .unwrap_or_default();
+                        if let Some(port) = crate::memory_port() {
+                            let record = this.update(cx, |thread, _cx| crate::ThreadTurnRecord {
+                                thread_id: thread.id().to_string(),
+                                user_input: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::User(user_msg) = &**msg {
+                                            Some(user_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                agent_response: thread
+                                    .messages
+                                    .iter()
+                                    .rev()
+                                    .find_map(|msg| {
+                                        if let crate::thread::Message::Agent(agent_msg) = &**msg {
+                                            Some(agent_msg.to_markdown())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                                model: thread
+                                    .model()
+                                    .map(|m| m.name().0.to_string())
+                                    .unwrap_or_default(),
+                                thread_title: thread.title().map(|t| t.to_string()),
+                                agent_id: Some(thread.agent_id().clone()),
+                                // zed-kask: D100/FR-4 — the producing thread's
+                                // routing state rides the record: content from a
+                                // privacy-marked thread is stamped PrivateInference
+                                // at the ingest seam, never by a model-facing surface.
+                                private_inference: thread.is_private_inference(),
+                            });
+                            if let Ok(record) = record {
+                                let port = port.clone();
+                                let is_private_record = record.private_inference;
+                                let thread_id = record.thread_id.clone();
+
+                                cx.background_spawn(async move {
+                                    if let Err(e) = port.ingest_turn(record).await {
+                                        if is_private_record {
+                                            log::error!(
+                                                target: "reg.memory",
+                                                "Private turn ingestion into curator-private.db failed (thread {thread_id}): {e}"
+                                            );
+                                        } else {
+                                            log::warn!("Memory ingestion failed: {e}");
+                                        }
+                                    }
+                                })
+                                .detach();
+                            }
+                        } else {
+                            log::warn!(
+                                target: "reg.memory",
+                                "turn ingest skipped (thread {thread_id_for_log}) — \
+                                 memory port not yet wired (pre-login). \
+                                 This turn will not be remembered."
+                            );
+                        }
                     }
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
+                        // zed-kask: D43 — `ProviderRejection`'s Display is the
+                        // provider's wire message only; the status, code and
+                        // category the variant preserves for diagnostics reach
+                        // no log (the 2026-09-10 "Provider returned error"
+                        // failures were unrootable from the log alone). Surface
+                        // them so credit exhaustion, rate limiting, upstream
+                        // outage and statusless mid-stream rejections are
+                        // distinguishable.
+                        if let Some(rejection_detail) = error
+                            .downcast_ref::<LanguageModelCompletionError>()
+                            .and_then(
+                                crate::kask_thread_state::KaskThreadState::
+                                    provider_rejection_turn_end_warning,
+                            )
+                        {
+                            let thread_id = this
+                                .read_with(cx, |thread, _| thread.id().to_string())
+                                .unwrap_or_default();
+                            log::error!(
+                                target: "agent.thread",
+                                "[thread {thread_id}] {rejection_detail}"
+                            );
+                        }
+
                         match error.downcast::<CompletionError>() {
                             Ok(CompletionError::Refusal(_)) => {
                                 event_stream.send_stop(acp_v2::StopReason::Refusal);
@@ -2921,6 +3849,40 @@ impl Thread {
                                     .update(cx, |this, _| this.remove_messages_from(message_ix));
                             }
                             Ok(CompletionError::MaxTokens) => {
+                                // zed-kask: D43 — upstream sends the stop with no
+                                // operator-visible signal; threads appear to
+                                // "just stop". Warn so the log carries the
+                                // signature (root cause of the 2026-08-30
+                                // silent-turn-stop incident: a hardcoded
+                                // reasoning budget mapped to MaxTokens).
+                                let (thread_id, model_name, produced_content) = this
+                                    .read_with(cx, |thread, _| {
+                                        (
+                                            thread.id().to_string(),
+                                            thread
+                                                .model()
+                                                .map(|m| m.name().0.to_string())
+                                                .unwrap_or_default(),
+                                            thread.messages.iter().skip(message_ix + 1).any(
+                                                |msg| {
+                                                    matches!(
+                                                        &**msg,
+                                                        crate::thread::Message::Agent(_)
+                                                    )
+                                                },
+                                            ),
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                                log::warn!(
+                                    target: "agent.thread",
+                                    "[thread {thread_id}] {}",
+                                    crate::kask_thread_state::KaskThreadState::
+                                        max_tokens_turn_end_warning(
+                                            &model_name,
+                                            produced_content,
+                                        )
+                                );
                                 event_stream.send_stop(acp_v2::StopReason::MaxTokens);
                             }
                             Ok(CompletionError::Other(error)) | Err(error) => {
@@ -2933,13 +3895,7 @@ impl Thread {
                 _ = this.update(cx, |this, _| this.running_turn.take());
             }
         });
-        self.running_turn = Some(RunningTurn::new(
-            self.prompt_id.clone(),
-            event_stream,
-            tools,
-            cancellation_tx,
-            task,
-        ));
+        self.running_turn = Some(RunningTurn::new(event_stream, tools, cancellation_tx, task));
         Ok(events_rx)
     }
 
@@ -2953,12 +3909,36 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
+        // zed-kask: D8 — a PromptTooLarge rejection is rescued by one forced
+        // compaction per turn at most (see `perform_prompt_too_large_rescue`).
+        let mut prompt_too_large_rescue_used = false;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<LanguageModel> = None;
+        let mut explicit_memory_handled = false;
+        let mut turn_memory_status: Option<SharedString> = None;
+        let mut explicit_memory_system_note: Option<String> = None;
         loop {
             if *cancellation_rx.borrow() {
                 return Ok(());
             }
+            // S111-F02: run the D100 request gate BEFORE `perform_compaction_if_needed`
+            // so a private thread with an invalid/non-local model or endpoint
+            // never dispatches a compaction request before failing closed.
+            this.update(cx, |this, cx| {
+                let candidate = refusal_fallback_model
+                    .clone()
+                    .or_else(|| this.model().cloned());
+                match (this.kask.is_private_inference(), candidate) {
+                    (true, Some(model)) if !is_admitted_private_model(&model, cx) => {
+                        Err(anyhow!(PrivateRoutingError {
+                            provider_id: model.provider_id.0.into(),
+                            model_id: model.id.0.into(),
+                        }))
+                    }
+                    (true, None) => Err(anyhow!(PrivateModelUnavailableError)),
+                    _ => Ok(()),
+                }
+            })??;
             match Self::perform_compaction_if_needed(
                 this,
                 event_stream,
@@ -3045,21 +4025,207 @@ impl Thread {
             if *cancellation_rx.borrow() {
                 return Ok(());
             }
+
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, provider, request) = this.update(cx, |this, cx| {
-                let model = refusal_fallback_model
+            let (model, provider, mut request) = this.update(cx, |this, cx| {
+                let candidate = refusal_fallback_model
                     .clone()
-                    .or_else(|| this.model().cloned())
-                    .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+                    .or_else(|| this.model().cloned());
+                // zed-kask: D100 (Seam A) — the request gate: the last
+                // enforcement point before a provider request leaves the
+                // thread. A marked thread dispatches only to a local
+                // model; with none selected the turn fails typed
+                // (`PrivateModelUnavailableError`) — never a public
+                // default. The refused-model arm is defense-in-depth: the
+                // storage gates and the mark-time clear make a held public
+                // model unreachable through public API; it stays so a
+                // bypass (a future resolution path, a hand-edited blob)
+                // fails closed here instead of dispatching. Pinned by
+                // `private_thread_turn_fails_typed_with_no_public_dispatch`.
+                let model = match (this.kask.is_private_inference(), candidate) {
+                    (true, Some(model))
+                        if !is_private_leg_model(&model)
+                            || !is_local_provider_endpoint(&model.provider_id.0, cx) =>
+                    {
+                        return Err(anyhow!(PrivateRoutingError {
+                            provider_id: model.provider_id.0.into(),
+                            model_id: model.id.0.into(),
+                        }));
+                    }
+                    (true, None) => {
+                        return Err(anyhow!(PrivateModelUnavailableError));
+                    }
+                    (_, Some(model)) => model,
+                    (_, None) => return Err(anyhow!(NoModelConfiguredError)),
+                };
                 let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
+                this.kask.reset_truncation_flag(); // zed-kask: D25
+                // zed-kask: false-halt fix (card bd7dbf68)
+                this.kask.reset_batch_interruption_flag();
                 anyhow::Ok((model, provider, request))
             })??;
+
+            let (private_context, thread_id_for_turn) = this.read_with(cx, |this, _| {
+                (this.kask.is_private_inference(), this.id.to_string())
+            })?;
+
+            // Explicit private-memory persistence: when a locked thread's user
+            // prompt explicitly asks to remember a preference or note, write it
+            // synchronously into `curator-private.db` BEFORE generation and
+            // surface the verified success/failure outcome in both UI
+            // provenance and the prompt context.
+            if private_context && !explicit_memory_handled && intent == CompletionIntent::UserPrompt
+            {
+                explicit_memory_handled = true;
+                let latest_user_text = request
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::User)
+                    .map(|m| m.string_contents())
+                    .unwrap_or_default();
+                if let Some(memory_note) =
+                    crate::tool_input_validation::extract_explicit_memory_request(&latest_user_text)
+                {
+                    let write_outcome = match crate::memory_port() {
+                        Some(port) => {
+                            port.store_private_memory(&thread_id_for_turn, &memory_note)
+                                .await
+                        }
+                        None => Err(
+                            "memory port is not initialized — could not write to curator-private.db"
+                                .to_string(),
+                        ),
+                    };
+                    match write_outcome {
+                        Ok(()) => {
+                            turn_memory_status =
+                                Some("private_memory=saved (curator-private.db)".into());
+                            explicit_memory_system_note = Some(format!(
+                                "[Private memory write status: SUCCESS — saved to curator-private.db: {:?}. Confirm clearly to the user that this preference was saved to private memory.]",
+                                memory_note
+                            ));
+                        }
+                        Err(err) => {
+                            turn_memory_status =
+                                Some(format!("private_memory=failed ({err})").into());
+                            explicit_memory_system_note = Some(format!(
+                                "[Private memory write status: FAILED — could not write to curator-private.db: {err}. Inform the user clearly that saving to private memory failed; do not claim it was saved.]"
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let provenance = acp_thread::RequestProvenance {
+                provider: model.provider_id().0.clone(),
+                model: model.id().0.clone(),
+                private: private_context,
+                memory_status: turn_memory_status.clone(),
+            };
+            this.update(cx, |this, _| {
+                this.kask
+                    .record_request_provenance(user_message_id, provenance.clone());
+            })?;
+            event_stream.send_provenance(&provenance);
+
+            if let Some(status_note) = explicit_memory_system_note.as_ref() {
+                let insert_at = usize::from(!request.messages.is_empty());
+                request.messages.insert(
+                    insert_at,
+                    LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(status_note.clone())],
+                        cache: false,
+                        reasoning_details: None,
+                    },
+                );
+            }
+
+            // D8: Context injection — retrieve salient memories and inject
+            // them into the prompt after the system prompt, before the
+            // conversation history. Only for UserPrompt and Subagent intents
+            // (not for ThreadSummarization — would cause infinite recursion).
+            // Locked (`private_context`) threads ALWAYS run recall against
+            // `curator-private.db`, even on compact-profile local models.
+            if matches!(
+                intent,
+                CompletionIntent::UserPrompt | CompletionIntent::Subagent
+            ) && (!uses_compact_profile(&model) || private_context)
+            {
+                // zed-kask: D6 — context injection dispatches by agent_id
+                let agent_id = this
+                    .read_with(cx, |this, _| this.kask.agent_id().clone())
+                    .ok();
+                let user_prompt = request
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::User)
+                    .and_then(|m| {
+                        m.content.iter().find_map(|c| match c {
+                            MessageContent::Text(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                    })
+                    .unwrap_or_default();
+                if let Some(injector) = crate::context_injector_for(agent_id.as_ref())
+                    && !user_prompt.is_empty()
+                {
+                    let mut injected = injector
+                        .inject_context(&thread_id_for_turn, &user_prompt, private_context)
+                        .await;
+                    if uses_compact_profile(&model) {
+                        injected.retain(|msg| {
+                            !msg.string_contents()
+                                .starts_with("No relevant memory found for this query.")
+                        });
+                    }
+                    if !injected.is_empty() {
+                        let insert_at = usize::from(!request.messages.is_empty());
+                        request.messages.splice(insert_at..insert_at, injected);
+                        log::debug!("Injected {} context messages", request.messages.len() - 1);
+                    }
+                }
+
+                // zed-kask: D94 — spec B: per-turn instrument-affordance
+                // injection. Strictly skipped on `private_context` and compact
+                // profiles because the affordance injector embeds through the
+                // configured cloud embedding port.
+                if !uses_compact_profile(&model) && !private_context {
+                    let affordance_input = this
+                        .read_with(cx, |_, cx| {
+                            let enabled = cx
+                                .global::<settings::SettingsStore>()
+                                .merged_settings()
+                                .kask
+                                .as_ref()
+                                .and_then(|kask| kask.affordance.as_ref())
+                                .and_then(|affordance| affordance.enabled)
+                                .unwrap_or(false);
+                            enabled.then(|| crate::affordance_catalog(cx))
+                        })
+                        .ok()
+                        .flatten();
+                    if let (Some(catalog), Some(affordance)) =
+                        (affordance_input, crate::affordance_injector())
+                        && !catalog.is_empty()
+                        && !user_prompt.is_empty()
+                    {
+                        let block = affordance.inject_affordance(&catalog, &user_prompt).await;
+                        if !block.is_empty() {
+                            request.messages.extend(block);
+                            log::debug!("Appended instrument-affordance block to the request tail");
+                        }
+                    }
+                }
+            }
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -3102,6 +4268,7 @@ impl Thread {
                     tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
                         let (owning_message_ix, tool_result) = tool_result;
                         let is_error = tool_result.is_error;
+                        let failing_tool_name = tool_result.tool_name.clone();
                         let is_still_streaming = this
                             .read_with(cx, |this, _cx| {
                                 this.running_turn
@@ -3118,7 +4285,33 @@ impl Thread {
                         // but we are no longer streaming its input (i.e. there
                         // are parallel tool calls) we want to continue
                         // processing those tool inputs.
+                        //
+                        // zed-kask: false-halt fix (card bd7dbf68) — this break
+                        // abandons any tool calls the model was still emitting
+                        // (never-started siblings in the pending message). Mark
+                        // the batch interrupted so `flush_pending_message`
+                        // reports them as interrupted-by-sibling-failure
+                        // instead of falsely as canceled by the user. The turn
+                        // continues (drain-and-continue): the failing result and
+                        // the interruption message are delivered to the model in
+                        // a continuation request so it can re-issue the
+                        // abandoned call — this is not a turn end, so no stop
+                        // reason is sent; the warn is the operator-visible label
+                        // (the D43 `max_tokens_turn_end_warning` precedent: a
+                        // stop with no visible signal reads as a silent halt).
                         if is_error && is_still_streaming {
+                            let thread_id = this
+                                .read_with(cx, |thread, _| thread.id().to_string())
+                                .unwrap_or_default();
+                            log::warn!(
+                                target: "agent.thread",
+                                "[thread {thread_id}] Parallel tool batch interrupted: tool '{}' failed while its (or a sibling's) input was still streaming; never-started sibling calls are reported as interrupted (not user-canceled) and the turn continues so the model can re-issue them",
+                                failing_tool_name
+                            );
+                            this.update(cx, |this, _| {
+                                this.kask.on_tool_failure_interrupted_batch();
+                            })
+                            .ok();
                             break;
                         }
                         continue;
@@ -3145,6 +4338,7 @@ impl Thread {
                             Ok(event) => {
                                 match this.handle_completion_event(
                                     event,
+                                    &model.provider_id.0,
                                     event_stream,
                                     cancellation_rx.clone(),
                                     cx,
@@ -3158,6 +4352,19 @@ impl Thread {
                                 }
                             }
                             Err(err) => {
+                                // zed-kask: D36 — a stream that ends
+                                // mid-tool-call is truncation, not
+                                // cancellation: mark the completion
+                                // truncated (D25) so pending partial tool
+                                // input is reported as truncated when the
+                                // turn is flushed.
+                                if crate::kask_thread_state::KaskThreadState::is_tool_call_truncation(&err) {
+                                    log::warn!(
+                                        target: "agent.thread",
+                                        "tool-call stream truncated mid-JSON: {err}"
+                                    );
+                                    this.kask.on_completion_truncated();
+                                }
                                 batch_error = Some(err.into());
                                 break;
                             }
@@ -3227,7 +4434,11 @@ impl Thread {
                         .read(cx)
                         .available_models(cx)
                         .find(|m| {
-                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
+                            m.provider_id() == provider_id
+                                && m.id().0.as_ref() == fallback_id
+                                && (!this.kask.is_private_inference()
+                                    || (is_private_leg_model(m)
+                                        && is_local_provider_endpoint(&m.provider_id.0, cx)))
                         });
                     if found.is_none() {
                         log::info!(
@@ -3272,6 +4483,7 @@ impl Thread {
                     cx,
                     owning_message_ix,
                     tool_result,
+                    &mut cancellation_rx,
                 )?;
             }
             while let Some((owning_message_ix, tool_result)) = tool_results.next().await {
@@ -3283,11 +4495,12 @@ impl Thread {
                     cx,
                     owning_message_ix,
                     tool_result,
+                    &mut cancellation_rx,
                 )?;
             }
 
             this.update(cx, |this, cx| {
-                if &this.prompt_id == prompt_id {
+                if this.owns_pending_message(event_stream) {
                     this.flush_pending_message(cx);
                     if this.title.is_none()
                         && AgentSettings::get_global(cx).auto_generate_thread_titles
@@ -3303,6 +4516,50 @@ impl Thread {
             }
 
             if let Some(error) = error {
+                // zed-kask: D8 — a PromptTooLarge rejection is permanent for
+                // the request but recoverable for the thread: one forced
+                // compaction changes the request. Bounded to one rescue per
+                // turn; a second rejection after a rescue falls through to
+                // the normal (fatal) error path.
+                let prompt_too_large = matches!(
+                    &error,
+                    LanguageModelCompletionError::ProviderRejection {
+                        category: ProviderErrorCategory::PromptTooLarge { .. },
+                        ..
+                    }
+                );
+                // The rejection's reported input-token count (when the
+                // provider parses it into the error) is the exact calibration
+                // datum for the rescue compaction's planning.
+                let reported_input_tokens = match &error {
+                    LanguageModelCompletionError::ProviderRejection {
+                        category: ProviderErrorCategory::PromptTooLarge { tokens },
+                        ..
+                    } => *tokens,
+                    _ => None,
+                };
+                if prompt_too_large && !prompt_too_large_rescue_used {
+                    prompt_too_large_rescue_used = true;
+                    match Self::perform_prompt_too_large_rescue(
+                        this,
+                        event_stream,
+                        cancellation_rx.clone(),
+                        reported_input_tokens,
+                        cx,
+                    )
+                    .await
+                    {
+                        Ok(PromptTooLargeRescue::Compacted) => {
+                            attempt += 1;
+                            continue;
+                        }
+                        Ok(PromptTooLargeRescue::Cancelled) => return Ok(()),
+                        Ok(PromptTooLargeRescue::NotApplicable) => {}
+                        Err(rescue_error) => {
+                            log::error!("PromptTooLarge rescue compaction failed: {rescue_error}");
+                        }
+                    }
+                }
                 attempt += 1;
                 match Self::retry_completion_error(
                     this,
@@ -3403,9 +4660,159 @@ impl Thread {
             model,
             request,
             CompactionInsertion::Auto { insertion_ix },
+            None,
             cx,
         )
         .await
+    }
+
+    /// zed-kask: D8 — PromptTooLarge rescue. A turn request rejected because
+    /// input + output reserve exceeds the model's context can never succeed on
+    /// retry — the same request gets the same answer — but a compacted history
+    /// changes the request. The threshold check
+    /// (`compaction_message_target_ix`) keys off the last completed request's
+    /// usage, so one round whose growth exceeds the remaining headroom sails
+    /// past it and dies as a permanent rejection (observed live 2026-09-29: a
+    /// request at 917,786 input tokens against a 917,504-token effective
+    /// ceiling — the 1,048,576-token window minus the 131,072-token output
+    /// reserve — over by 282 tokens). This rescue runs one forced compaction —
+    /// the manual flow's unconditional target, so it summarizes the in-flight
+    /// turn's messages too — and the turn loop then rebuilds the request from
+    /// the compacted history. Gated on auto-compaction being enabled: when
+    /// the operator disabled auto-compact, manual Compact stays the recovery
+    /// path.
+    ///
+    /// The rejection's reported input-token count (`reported_input_tokens`)
+    /// is the calibration denominator for the rescue compaction's planning:
+    /// at rescue time the last completed request's usage predates the growth
+    /// that caused the rejection, and the 2.0 bytes/token fallback can
+    /// over-budget token-dense content — planning a summarization request
+    /// that is itself rejected, killing the turn at the moment recovery
+    /// matters most.
+    ///
+    /// Transient failures of the rescue compaction retry inside this
+    /// function, bounded by the shared `RetryStrategy` machinery: the
+    /// threshold path retries its compaction through the turn loop, but the
+    /// rescue cannot — the loop-top check will not re-fire (the usage that
+    /// would trigger it is exactly what the rescue is recovering from), and
+    /// routing through the loop would re-send the known-oversized request on
+    /// every cycle. Permanent errors fail the rescue immediately. The whole
+    /// episode — initial attempt plus transient retries — is the turn's one
+    /// rescue.
+    async fn perform_prompt_too_large_rescue(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        reported_input_tokens: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Result<PromptTooLargeRescue> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            if !this.auto_compaction_enabled(cx) {
+                return None;
+            }
+            if this.forced_compaction_target_ix().is_none() {
+                return None;
+            }
+            let insertion_ix = this.trailing_user_aware_insertion_ix();
+            let model = this.compaction_model(cx)?;
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            this.current_request_token_usage = TokenUsage::default();
+            if this.pending_compaction_telemetry.is_none() {
+                this.pending_compaction_telemetry =
+                    this.build_compaction_telemetry("rescue", &model, cx);
+            }
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(PromptTooLargeRescue::NotApplicable);
+        };
+
+        // No `mark_token_limit_exceeded` here: the synthesized usage would
+        // re-fire the threshold check at the top of the next loop iteration
+        // (a second compaction over the just-compacted window). The marking
+        // is dead-turn UI honesty — every fall-through path still marks via
+        // `handle_completion_error`, and a successful rescue refreshes the
+        // indicator with the retry's real usage report.
+
+        log::warn!(
+            "PromptTooLarge rejection rescued by forced compaction; retrying with the compacted history"
+        );
+        let mut cancellation_rx = cancellation_rx;
+        let mut attempt = 0u8;
+        loop {
+            match Self::stream_compaction(
+                this,
+                event_stream,
+                cancellation_rx.clone(),
+                model.clone(),
+                request.clone(),
+                CompactionInsertion::Auto { insertion_ix },
+                reported_input_tokens,
+                cx,
+            )
+            .await
+            {
+                Ok(ControlFlow::Continue(())) => return Ok(PromptTooLargeRescue::Compacted),
+                Ok(ControlFlow::Break(())) => {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })?;
+                    return Ok(PromptTooLargeRescue::Cancelled);
+                }
+                Err(error) => {
+                    // The retry machinery classifies
+                    // LanguageModelCompletionError; anything else (e.g. a
+                    // planner error or an empty summary) is not
+                    // transient-retryable — fail the rescue immediately.
+                    let completion_error = match error.downcast::<LanguageModelCompletionError>() {
+                        Ok(completion_error) => completion_error,
+                        Err(error) => {
+                            let message = error.to_string();
+                            this.update(cx, |this, _| {
+                                this.emit_compaction_telemetry_outcome("failed", Some(message))
+                            })?;
+                            return Err(error);
+                        }
+                    };
+                    let Some(strategy) = Self::retry_strategy_for(&completion_error) else {
+                        let message = completion_error.to_string();
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome("failed", Some(message))
+                        })?;
+                        return Err(completion_error.into());
+                    };
+                    attempt += 1;
+                    let Some(delay) = strategy.delay_after(&completion_error, attempt) else {
+                        let message = completion_error.to_string();
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome("failed", Some(message))
+                        })?;
+                        return Err(completion_error.into());
+                    };
+                    let delay = crate::jitter_retry_delay(delay);
+                    this.update(cx, |this, _| {
+                        if let Some(telemetry) = this.pending_compaction_telemetry.as_mut() {
+                            telemetry.retries += 1;
+                        }
+                    })?;
+                    log::warn!(
+                        "PromptTooLarge rescue compaction failed transiently (attempt {attempt}): {completion_error}; retrying in {delay:?}"
+                    );
+                    let timer = cx.background_executor().timer(delay);
+                    futures::select! {
+                        _ = timer.fuse() => {}
+                        _ = cancellation_rx.changed().fuse() => {
+                            if *cancellation_rx.borrow() {
+                                this.update(cx, |this, _| {
+                                    this.emit_compaction_telemetry_outcome("canceled", None)
+                                })?;
+                                return Ok(PromptTooLargeRescue::Cancelled);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async fn stream_compaction(
@@ -3415,6 +4822,12 @@ impl Thread {
         model: LanguageModel,
         request: LanguageModelRequest,
         insertion: CompactionInsertion,
+        // The provider's reported input-token count for this history, when
+        // the caller holds a fresher or more exact datum than the last
+        // completed request's usage — a PromptTooLarge rejection parses the
+        // exact count from the error. `None` reads the last completed
+        // request's usage (the threshold and manual paths).
+        reported_input_tokens: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         if *cancellation_rx.borrow() {
@@ -3428,9 +4841,177 @@ impl Thread {
             acp_thread::ContextCompactionStatus::InProgress,
         );
         let result: Result<ControlFlow<()>> = async {
-            let provider =
-                cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
-            let stream = futures::select_biased! {
+            // The async arm owns its own receiver clone; the select's cancel
+            // arm borrows the outer one mutably.
+            let summary_cancellation_rx = cancellation_rx.clone();
+            let summary = futures::select! {
+                result = async {
+                    // The compaction model serves every summarization request,
+                    // so its limits define the per-request budget the planner
+                    // fits segments into.
+                    let input_capacity = compaction_input_capacity(
+                        model.max_input_tokens(),
+                        model.max_total_tokens(),
+                        model.max_output_tokens(),
+                    );
+                    // Calibrate the byte budget with the provider's own count
+                    // of roughly this same history: the caller's reported
+                    // count when it has one (a PromptTooLarge rejection
+                    // carries the exact input token count — at rescue time
+                    // the last completed request's usage predates the growth
+                    // that caused the rejection, and the 2.0 fallback can
+                    // over-budget token-dense content), else the last
+                    // completed request's input tokens (cache reads included).
+                    let last_input_tokens = match reported_input_tokens {
+                        Some(tokens) => Some(tokens),
+                        None => this.update(cx, |thread, _| {
+                            thread
+                                .latest_request_token_usage()
+                                .map(total_input_tokens)
+                        })?,
+                    };
+                    let (request, planned) = cx.background_spawn(async move {
+                        let planned = crate::kask_compaction::plan_compaction(
+                            &request,
+                            input_capacity,
+                            last_input_tokens,
+                        )?;
+                        anyhow::Ok((request, planned))
+                    }).await?;
+                    let shrink = &planned.shrink;
+                    if shrink.original_bytes > shrink.shrunk_bytes {
+                        log::info!(
+                            "Compaction deterministic pre-shrink: {} -> {} bytes ({:.0}% reduction; {} results, cap {} bytes, {} result texts; windowed: {} results / {} bytes; runs collapsed: {} runs / {} bytes)",
+                            shrink.original_bytes,
+                            shrink.shrunk_bytes,
+                            shrink.reduction_pct(),
+                            shrink.windowed_results,
+                            shrink.result_cap_bytes,
+                            shrink.result_texts,
+                            shrink.windowed_results,
+                            shrink.windowed_bytes,
+                            shrink.collapsed_runs,
+                            shrink.collapsed_bytes,
+                        );
+                    }
+                    match planned.plan {
+                        crate::kask_compaction::CompactionPlan::Single(request) => {
+                            Self::collect_compaction_summary(
+                                this,
+                                &model,
+                                request,
+                                Some((event_stream, &compaction_id)),
+                                summary_cancellation_rx.clone(),
+                                cx.clone(),
+                            )
+                            .await
+                        }
+                        crate::kask_compaction::CompactionPlan::Segments(mut segments) => {
+                            log::info!(
+                                "Compacting {} chronological segments concurrently, then merging",
+                                segments.len()
+                            );
+                            let mut summaries = Vec::with_capacity(segments.len());
+                            while !segments.is_empty() {
+                                let batch_len = segments.len().min(MAX_CONCURRENT_SEGMENT_SUMMARIES);
+                                let batch: Vec<_> = segments.drain(..batch_len).collect();
+                                let batch_summaries = futures::future::try_join_all(
+                                    batch.into_iter().map(|segment| {
+                                        Self::collect_compaction_summary(
+                                            this,
+                                            &model,
+                                            segment,
+                                            None,
+                                            summary_cancellation_rx.clone(),
+                                            cx.clone(),
+                                        )
+                                    }),
+                                )
+                                .await?;
+                                for summary in batch_summaries {
+                                    let Some(summary) = summary else {
+                                        return Ok(None);
+                                    };
+                                    summaries.push(summary);
+                                }
+                            }
+                            // zed-kask (Stage-3 F4, d8-compaction-retirement
+                            // 2026-10-31): bound the reduce the same way the
+                            // map is bounded — merge in ordered budget-fitting
+                            // batches until one final flat merge fits. A zero
+                            // budget (Single plans, no-budget paths) keeps the
+                            // existing single flat merge unchanged.
+                            let merge_budget_bytes = planned.merge_budget_bytes;
+                            if merge_budget_bytes > 0 {
+                                loop {
+                                    let batches = crate::kask_compaction::merge_batches(
+                                        &summaries,
+                                        merge_budget_bytes,
+                                    );
+                                    if batches.len() <= 1
+                                        || batches.iter().all(|batch| batch.len() == 1)
+                                    {
+                                        break;
+                                    }
+                                log::info!(
+                                    "Compaction batched merge round: {} summaries -> {} batches",
+                                    summaries.len(),
+                                    batches.len()
+                                );
+                                let mut merged = Vec::with_capacity(batches.len());
+                                for batch in batches {
+                                    let batch_summaries: Vec<String> =
+                                        summaries[batch.clone()].to_vec();
+                                    let batch_result =
+                                        Self::collect_compaction_summary_with_usage(
+                                            this,
+                                            &model,
+                                            crate::kask_compaction::merge_request(
+                                                request.clone(),
+                                                &batch_summaries,
+                                            ),
+                                            None,
+                                            summary_cancellation_rx.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    let Some((batch_summary, _)) = batch_result else {
+                                        return Ok(None);
+                                    };
+                                    merged.push(batch_summary);
+                                }
+                                summaries = merged;
+                                }
+                            }
+                            let request =
+                                crate::kask_compaction::merge_request(request, &summaries);
+                            // The merge call's token cost is surfaced from the
+                            // same usage accounting the summary calls already
+                            // run (operator-approved Decision 1): the
+                            // bytes-vs-tokens trade of segment plans is
+                            // measurable from the log.
+                            let summary_count = summaries.len();
+                            let merge_result =
+                                Self::collect_compaction_summary_with_usage(
+                                    this,
+                                    &model,
+                                    request,
+                                    Some((event_stream, &compaction_id)),
+                                    summary_cancellation_rx.clone(),
+                                    cx.clone(),
+                                )
+                                .await?;
+                            let Some((merge_summary, merge_input_tokens)) = merge_result else {
+                                return Ok(None);
+                            };
+                            log::info!(
+                                "Compaction merge call: {} summaries merged; merge-call input tokens: {}",
+                                summary_count, merge_input_tokens
+                            );
+                            Ok(Some(merge_summary))
+                        }
+                    }
+                }.fuse() => result,
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
                         log::debug!("Compaction cancelled before request started");
@@ -3438,74 +5019,22 @@ impl Thread {
                     }
                     return Ok(ControlFlow::Continue(()));
                 }
-                result = provider.stream_completion(&model, request, cx).fuse() => result,
             };
-            let mut stream = stream?;
-
-            let mut summary = String::new();
-            loop {
-                let event = futures::select_biased! {
-                    _ = cancellation_rx.changed().fuse() => {
-                        if *cancellation_rx.borrow() {
-                            log::debug!("Compaction cancelled while summarizing");
-                            return Ok(ControlFlow::Break(()));
-                        }
-                        continue;
-                    }
-                    event = stream.next().fuse() => event,
-                };
-
-                if *cancellation_rx.borrow() {
-                    return Ok(ControlFlow::Break(()));
-                }
-                let Some(event) = event else {
-                    break;
-                };
-
-                match event? {
-                    LanguageModelCompletionEvent::Text(text) => {
-                        summary.push_str(&text);
-                        event_stream.send_context_compaction_update(compaction_id.clone(), &text);
-                    }
-                    LanguageModelCompletionEvent::UsageUpdate(usage) => {
-                        this.update(cx, |this, _cx| {
-                            this.accumulate_token_usage(usage);
-                        })?;
-                    }
-                    LanguageModelCompletionEvent::Stop(_)
-                    | LanguageModelCompletionEvent::Started
-                    | LanguageModelCompletionEvent::Queued { .. }
-                    | LanguageModelCompletionEvent::Thinking { .. }
-                    | LanguageModelCompletionEvent::RedactedThinking { .. }
-                    | LanguageModelCompletionEvent::ReasoningDetails(_)
-                    | LanguageModelCompletionEvent::InputTransformations(_)
-                    | LanguageModelCompletionEvent::ToolUse(_)
-                    | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                    | LanguageModelCompletionEvent::StartMessage { .. }
-                    | LanguageModelCompletionEvent::Compaction(_) => {}
-                }
-            }
+            let Some(summary) = summary? else {
+                // zed-kask: D8 — cancelled mid-summary — buffered usage was not
+                // applied and no summary is stored.
+                return Ok(ControlFlow::Break(()));
+            };
 
             if *cancellation_rx.borrow() {
                 log::debug!("Compaction cancelled after summarizing");
                 return Ok(ControlFlow::Break(()));
             }
 
-            let summary = summary.trim().to_string();
-            if summary.is_empty() {
-                log::warn!("Compaction produced an empty summary");
-                return Err(anyhow::anyhow!("Compaction produced an empty summary"));
-            }
-
             log::debug!("Compaction succeeded:\n{summary}");
-            event_stream.update_context_compaction_status(
-                compaction_id.clone(),
-                acp_thread::ContextCompactionStatus::Completed,
-            );
 
             this.update(cx, |this, cx| {
-                let compaction =
-                    Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
+                let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
                 match insertion {
                     CompactionInsertion::Auto { insertion_ix } => {
                         if insertion_ix <= this.messages.len() {
@@ -3523,28 +5052,158 @@ impl Thread {
                 cx.notify();
             })?;
 
-            Ok(ControlFlow::Continue(()))
-        }
-        .await;
-
-        if result.is_err() {
             event_stream.update_context_compaction_status(
+                compaction_id.clone(),
+                acp_thread::ContextCompactionStatus::Completed,
+            );
+            Ok(ControlFlow::Continue(()))
+        }.await;
+        match &result {
+            Err(_) => event_stream.update_context_compaction_status(
                 compaction_id,
                 acp_thread::ContextCompactionStatus::Failed,
-            );
+            ),
+            Ok(ControlFlow::Break(())) => event_stream.update_context_compaction_status(
+                compaction_id,
+                acp_thread::ContextCompactionStatus::Canceled,
+            ),
+            Ok(ControlFlow::Continue(())) => {}
         }
         result
     }
 
+    async fn collect_compaction_summary(
+        this: &WeakEntity<Self>,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        progress: Option<(&ThreadEventStream, &acp_thread::ContextCompactionId)>,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: AsyncApp,
+    ) -> Result<Option<String>> {
+        let Some((summary, _)) = Self::collect_compaction_summary_with_usage(
+            this,
+            model,
+            request,
+            progress,
+            cancellation_rx,
+            cx,
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(summary))
+    }
+
+    /// Summarize one request, returning the summary and the call's observed
+    /// input tokens (cache reads included) — the per-call usage the merge-call
+    /// observability (operator-approved Decision 1) reads without new
+    /// accounting machinery.
+    async fn collect_compaction_summary_with_usage(
+        this: &WeakEntity<Self>,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        progress: Option<(&ThreadEventStream, &acp_thread::ContextCompactionId)>,
+        mut cancellation_rx: watch::Receiver<bool>,
+        mut cx: AsyncApp,
+    ) -> Result<Option<(String, u64)>> {
+        let provider =
+            cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(model))?;
+        let mut stream = provider.stream_completion(model, request, &cx).await?;
+        let mut summary = String::new();
+        let mut usage = TokenUsage::default();
+        let mut truncated = false;
+        let mut refused = false;
+        while let Some(event) = stream.next().await {
+            // zed-kask: check cancellation before processing each buffered
+            // event so a queued usage update from a cancelled compaction is
+            // never applied to the thread's cumulative usage (upstream's
+            // per-event cancel poll; pinned by
+            // test_native_compaction_cancellation_is_bridged_before_stop).
+            if *cancellation_rx.borrow() {
+                return Ok(None);
+            }
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => {
+                    summary.push_str(&text);
+                    if let Some((events, id)) = progress {
+                        events.send_context_compaction_update(id.clone(), &text);
+                    }
+                }
+                LanguageModelCompletionEvent::UsageUpdate(update) => {
+                    this.update(&mut cx, |this, _| {
+                        accumulate_request_usage(
+                            &mut usage,
+                            &mut this.cumulative_token_usage,
+                            update,
+                        );
+                        if progress.is_some() {
+                            this.current_request_token_usage = usage;
+                        }
+                    })?;
+                }
+                LanguageModelCompletionEvent::ResponseModel(reported_model) => {
+                    let is_private = this
+                        .read_with(&cx, |this, _| this.kask.is_private_inference())
+                        .unwrap_or(false);
+                    validate_response_model_for_private_thread(
+                        is_private,
+                        &model.provider_id.0,
+                        &reported_model,
+                    )?;
+                }
+                LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
+                    truncated = true;
+                }
+                LanguageModelCompletionEvent::Stop(StopReason::Refusal(_)) => {
+                    refused = true;
+                }
+                _ => {}
+            }
+        }
+        // zed-kask: classify the stream's own verdict before the empty check
+        // — a provider refusal is a refusal (permanent for the same
+        // request), never a generic "empty summary". Pinned by
+        // test_manual_compact_refusal_is_classified_and_not_retried.
+        anyhow::ensure!(
+            !refused,
+            "The model refused the compaction request; no summary was saved"
+        );
+        anyhow::ensure!(
+            !truncated,
+            "Compaction reached the model's output limit; no summary was saved"
+        );
+        let summary = summary.trim().to_string();
+        if summary.is_empty() {
+            return Err(EmptyCompactionSummary.into());
+        }
+        let input_tokens = usage.input_tokens + usage.cache_read_input_tokens;
+        Ok(Some((summary, input_tokens)))
+    }
+
+    /// Enqueue a tool result that will be delivered asynchronously. The task
+    /// is polled on each outer-loop iteration; once it completes, the result is
+    /// injected as a synthetic user message containing the tool result.
     fn process_tool_result(
         this: &WeakEntity<Thread>,
         event_stream: &ThreadEventStream,
-        prompt_id: &PromptId,
+        // zed-kask: D1 (H6) — the fork gates on event-stream ownership, not
+        // upstream's prompt-id comparison.
+        _prompt_id: &PromptId,
         user_message_id: Option<&ClientUserMessageId>,
         cx: &mut AsyncApp,
         owning_message_ix: usize,
-        tool_result: LanguageModelToolResult,
+        mut tool_result: LanguageModelToolResult,
+        cancellation_rx: &mut watch::Receiver<bool>,
     ) -> Result<(), anyhow::Error> {
+        // Results can sit buffered after the worker finishes. Fence the actual
+        // publication, not just evaluation, using this result's old turn watch.
+        if tool_result.tool_name.as_ref() == LispEvalTool::NAME && *cancellation_rx.borrow() {
+            let error = hkask_lisp::LispError::Cancelled.to_string();
+            tool_result.is_error = true;
+            tool_result.content = vec![error.clone().into()];
+            tool_result.output = Some(serde_json::json!({"error": error}));
+        }
         log::debug!("Tool finished {:?}", tool_result);
 
         event_stream.update_tool_call_fields(
@@ -3563,8 +5222,9 @@ impl Thread {
             },
         );
         this.update(cx, |this, cx| {
-            // A cancelled turn can finish its tools after a successor has started.
-            if &this.prompt_id == prompt_id {
+            // zed-kask: D1 (H6) — the event-stream ownership gate; upstream's
+            // late-terminal-output path below handles the not-owned case.
+            if this.owns_pending_message(event_stream) {
                 this.pending_message()
                     .tool_results
                     .insert(tool_result.tool_use_id.clone(), tool_result);
@@ -3664,6 +5324,7 @@ impl Thread {
     fn handle_completion_event(
         &mut self,
         event: LanguageModelCompletionEvent,
+        dispatch_provider_id: &str,
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
@@ -3675,6 +5336,22 @@ impl Thread {
             StartMessage { .. } => {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
+            }
+            ResponseModel(reported_model) => {
+                let normalized = validate_response_model_for_private_thread(
+                    self.kask.is_private_inference(),
+                    dispatch_provider_id,
+                    &reported_model,
+                )?;
+                if !normalized.is_empty() {
+                    let user_id = self.last_user_message_id();
+                    if let Some(updated) = self
+                        .kask
+                        .update_latest_provenance_model(user_id.as_ref(), normalized.into())
+                    {
+                        event_stream.send_provenance(&updated);
+                    }
+                }
             }
             Text(new_text) => self.handle_text_event(new_text, event_stream),
             Thinking { text, signature } => {
@@ -3736,7 +5413,10 @@ impl Thread {
             Stop(StopReason::Refusal(details)) => {
                 return Err(CompletionError::Refusal(details).into());
             }
-            Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
+            Stop(StopReason::MaxTokens) => {
+                self.kask.on_completion_truncated(); // zed-kask: D25
+                return Err(CompletionError::MaxTokens.into());
+            }
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } | Compaction(_) | InputTransformations(_) => {}
         }
@@ -3806,10 +5486,49 @@ impl Thread {
             kind = tool.kind();
         }
 
+        // Belt-and-suspenders local-model tool guard: block unsolicited tool
+        // execution on plain conversational prompts or unsupported sub-3B local
+        // models even if a model hallucinates a tool call without an offered
+        // schema.
+        if let Some(model) = self.model()
+            && is_private_leg_model(model)
+            && ((settings::is_unsupported_small_local_tool_model(&model.id.0, None)
+                && !model.supports_tools())
+                || !self.current_turn_allows_local_tools())
+        {
+            let content = format!(
+                "Tool '{}' blocked before execution: this request does not require tools or the local model '{}' has tool calling disabled.",
+                tool_use.name, model.id.0
+            );
+            let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use.id);
+            self.send_or_update_tool_use(&tool_use, title, kind, owning_message_ix, event_stream);
+            event_stream.update_tool_call_fields(&tool_call_id, |update| {
+                update
+                    .status(acp_v2::ToolCallStatus::Failed)
+                    .content(vec![content.clone().into()])
+            });
+            return Some(Task::ready((
+                owning_message_ix,
+                LanguageModelToolResult {
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    output: None,
+                },
+            )));
+        }
+
         self.send_or_update_tool_use(&tool_use, title, kind, owning_message_ix, event_stream);
 
         let Some(tool) = tool else {
             let content = format!("No tool named {} exists", tool_use.name);
+            let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use.id);
+            event_stream.update_tool_call_fields(&tool_call_id, |update| {
+                update
+                    .status(acp_v2::ToolCallStatus::Failed)
+                    .content(vec![content.clone().into()])
+            });
             return Some(Task::ready((
                 owning_message_ix,
                 LanguageModelToolResult {
@@ -3824,15 +5543,20 @@ impl Thread {
 
         // Agent tools are JSON-schema tools. Custom text-tool deltas are rejected
         // before considering partial-vs-complete input for these local tools.
-        let input = match tool_use.input.clone().into_json() {
+        let mut input = match tool_use.input.clone().into_json() {
             Ok(input) => input,
             Err(error) => {
+                let err_msg = error.to_string();
+                let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use.id);
+                event_stream.update_tool_call_fields(&tool_call_id, |update| {
+                    update
+                        .status(acp_v2::ToolCallStatus::Failed)
+                        .content(vec![err_msg.clone().into()])
+                });
                 return Some(Task::ready((
                     owning_message_ix,
                     LanguageModelToolResult {
-                        content: vec![LanguageModelToolResultContent::Text(Arc::from(
-                            error.to_string(),
-                        ))],
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(err_msg))],
                         tool_use_id: tool_use.id,
                         tool_name: tool_use.name,
                         is_error: true,
@@ -3844,6 +5568,15 @@ impl Thread {
 
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
+                // [DIAG-T0001] Streaming path: tool supports input streaming and
+                // the provider sent a partial delta. The tool starts now and
+                // holds the ToolInput receiver; if the stream ends before
+                // is_input_complete=true, the drain at stream-end drops this
+                // sender and recv() returns "tool input was not fully received".
+                log::debug!(
+                    "[DIAG-T0001] tool {} entered streaming path (is_input_complete=false, supports_streaming=true)",
+                    tool_use.name
+                );
                 let running_turn = self.running_turn.as_mut()?;
                 if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
                     sender.send_partial(input);
@@ -3851,6 +5584,7 @@ impl Thread {
                 }
 
                 let (mut sender, tool_input) = ToolInputSender::channel();
+                let input_for_tracking = input.clone();
                 sender.send_partial(input);
                 running_turn
                     .streaming_tool_inputs
@@ -3867,8 +5601,19 @@ impl Thread {
                     event_stream,
                     cancellation_rx,
                     cx,
+                    input_for_tracking,
+                    None,
                 ));
             } else {
+                // [DIAG-T0002] Non-streaming path: tool does not support input
+                // streaming, but the provider sent a partial delta. No tool
+                // starts. If the stream later ends without is_input_complete=true,
+                // flush_pending_message inserts TOOL_TRUNCATED_MESSAGE (for
+                // MaxTokens) or TOOL_CANCELED_MESSAGE (for user cancel).
+                log::debug!(
+                    "[DIAG-T0002] tool {} partial input ignored (is_input_complete=false, supports_streaming=false)",
+                    tool_use.name
+                );
                 return None;
             }
         }
@@ -3883,8 +5628,154 @@ impl Thread {
             return None;
         }
 
+        // Pre-execution schema validation & bounded syntactic repair: every
+        // complete tool invocation is validated against `tool.input_schema()`
+        // BEFORE `run_tool` executes the tool or sets `InProgress`.
+        match crate::tool_input_validation::validate_and_repair_tool_input(
+            tool_use.name.as_ref(),
+            &tool.input_schema(),
+            input.clone(),
+        ) {
+            Ok(repaired) => {
+                input = repaired;
+            }
+            Err(validation_error) => {
+                log::warn!(
+                    target: "agent.thread",
+                    "Rejected malformed tool call '{}' before execution: {validation_error}",
+                    tool_use.name
+                );
+                self.kask
+                    .retry_tracker_handle()
+                    .borrow()
+                    .record_failure_for_message(tool_use.name.as_ref(), &input, owning_message_ix);
+                let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use.id);
+                event_stream.update_tool_call_fields(&tool_call_id, |update| {
+                    update
+                        .status(acp_v2::ToolCallStatus::Failed)
+                        .content(vec![validation_error.clone().into()])
+                });
+                return Some(Task::ready((
+                    owning_message_ix,
+                    LanguageModelToolResult {
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                            validation_error,
+                        ))],
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        output: None,
+                    },
+                )));
+            }
+        }
+
+        // Tool retry cap — enforcement of the agent-loop retry limit.
+        // After 3 failed assistant messages, warn the agent to switch tools.
+        // After 5 failures of the same (tool, input) pair, hard-refuse that
+        // input. Sibling calls in one message count once in the per-input and
+        // per-tool trackers, preserving a corrected next attempt while
+        // preventing the zero-gain retry death spiral (Ashby variety-deficit).
+        let tool_name_str = tool_use.name.as_ref();
+        // zed-kask: .rules — tool retry death spiral prevention
+        let retry_warning: Option<String> = match self.kask.check_tool_retry(tool_name_str, &input)
+        {
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
+                let content = crate::tool_retry_tracker::format_refusal(tool_name_str, attempt);
+                log::warn!(
+                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}) — refusing"
+                );
+                return Some(Task::ready((
+                    owning_message_ix,
+                    LanguageModelToolResult {
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        output: None,
+                    },
+                )));
+            }
+            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning {
+                attempt,
+                consecutive,
+                probability,
+            } => {
+                let warning = crate::tool_retry_tracker::format_warning(
+                    tool_name_str,
+                    attempt,
+                    consecutive,
+                    probability,
+                    crate::tool_retry_tracker::hard_cap_for(tool_name_str),
+                );
+                log::warn!(
+                    "Tool '{tool_name_str}' retry warning (attempt {attempt}, consecutive {consecutive}, P(success)={:.0}%)",
+                    probability * 100.0
+                );
+                Some(warning)
+            }
+            crate::tool_retry_tracker::RetryVerdict::Allow => None,
+        };
+
+        // Success-repetition guard — the complement of the failure cap
+        // above: back-to-back identical SUCCESSFUL executions of this
+        // (tool, input) pair with no other dispatch in between
+        // (reset-on-distinct: a different call breaks the chain, so the
+        // edit → verify → edit → verify loop never accumulates). The
+        // failure side cannot see this class
+        // (`record_success_for_message` resets it); measured on the source system, 71%
+        // of budget-exhausted sub-agents died inside runs of ten or more
+        // consecutive byte-identical calls. Same ladder as the failure
+        // side: hint after 3 prior identical successes, refuse after the
+        // per-tool hard cap. A key can never hold both a failure count and
+        // a success streak (each outcome resets the other), so at most one
+        // of the two warnings is present.
+        let repeat_hint: Option<String> = match self.kask.check_repetition(tool_name_str, &input) {
+            crate::tool_retry_tracker::RepeatVerdict::Refuse { streak } => {
+                let content =
+                    crate::tool_retry_tracker::format_repeat_refusal(tool_name_str, streak);
+                log::warn!(
+                    "Tool '{tool_name_str}' repetition cap reached \
+                     ({streak} consecutive identical successes) — refusing"
+                );
+                return Some(Task::ready((
+                    owning_message_ix,
+                    LanguageModelToolResult {
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        output: None,
+                    },
+                )));
+            }
+            crate::tool_retry_tracker::RepeatVerdict::Hint { streak } => {
+                let hint = crate::tool_retry_tracker::format_repeat_hint(tool_name_str, streak);
+                log::warn!(
+                    "Tool '{tool_name_str}' repetition hint \
+                     ({streak} consecutive identical successes)"
+                );
+                Some(hint)
+            }
+            crate::tool_retry_tracker::RepeatVerdict::Allow => None,
+        };
+        let retry_warning = retry_warning.or(repeat_hint);
+
         log::debug!("Running tool {}", tool_use.name);
-        let tool_input = ToolInput::ready(input);
+
+        // Skill step tracker — record every tool call made during a skill
+
+        // [DIAG-T0003] Non-streaming complete path: is_input_complete=true,
+        // tool does not support streaming (or no prior partial was sent).
+        // ToolInput::ready() sends Full synchronously, so recv() should
+        // always succeed. If this log appears but the tool later fails with
+        // "tool input was not fully received", the channel was corrupted
+        // between ready() and recv() — a race condition worth investigating.
+        log::debug!(
+            "[DIAG-T0003] tool {} entered non-streaming complete path (is_input_complete=true)",
+            tool_use.name
+        );
+        let tool_input = ToolInput::ready(input.clone());
         Some(self.run_tool(
             tool,
             tool_input,
@@ -3894,6 +5785,8 @@ impl Thread {
             event_stream,
             cancellation_rx,
             cx,
+            input,
+            retry_warning,
         ))
     }
 
@@ -3907,7 +5800,24 @@ impl Thread {
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
+        input_for_tracking: serde_json::Value,
+        retry_warning: Option<String>,
     ) -> Task<(usize, LanguageModelToolResult)> {
+        // Recheck the hard ceiling even for calls cached or streamed before narrowing.
+        if !self.delegation_allows(tool.as_ref()) {
+            return Task::ready((
+                owning_message_ix,
+                LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name,
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        "tool is outside this thread's delegation authority",
+                    ))],
+                    output: None,
+                },
+            ));
+        }
         // A workspace can become restricted after a thread has already started.
         // Tools that aren't allowed in restricted workspaces must never run in
         // that state, even though they were exposed to the model earlier.
@@ -3933,7 +5843,7 @@ impl Thread {
 
         let fs = self.project.read(cx).fs().clone();
         let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use_id);
-        let tool_event_stream = ToolCallEventStream::new(
+        let mut tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             tool_call_id,
             event_stream.clone(),
@@ -3941,13 +5851,67 @@ impl Thread {
             cancellation_rx,
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
+            Some(native_thread_calling_actor(self.id())),
+            hkask_types::InferenceProvenance::from_private_flag(self.kask.is_private_inference()),
         );
+        tool_event_stream.calling_session_id = Some(self.id().to_string());
+        let elicitation_reservation =
+            crate::kask_thread_state::is_unconditionally_interactive_tool(tool_name.as_ref()).then(
+                || {
+                    self.kask
+                        .elicitation_barrier()
+                        .reserve_for_interactive_tool()
+                },
+            );
+        tool_event_stream
+            .set_elicitation_barrier(self.kask.elicitation_barrier(), elicitation_reservation);
+        let spillover_vault = self.kask.spillover_vault();
+        let calling_provenance_for_spillover = tool_event_stream.calling_provenance();
+        tool_event_stream.set_spillover_vault(spillover_vault.clone());
         tool_event_stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::InProgress));
         let supports_images = self.model().is_some_and(|model| model.supports_images());
-        let tool_result = tool.run(tool_input, tool_event_stream, cx);
+        let tool_result =
+            if crate::kask_thread_state::is_mutating_tool(tool_name.as_ref(), tool.kind()) {
+                let barrier = self.kask.elicitation_barrier();
+                cx.spawn(async move |_this, cx| {
+                    crate::kask_thread_state::yield_once().await;
+                    barrier.wait_while_held().await;
+                    let task = cx.update(|cx| tool.run(tool_input, tool_event_stream, cx));
+                    task.await
+                })
+            } else {
+                tool.run(tool_input, tool_event_stream, cx)
+            };
+        let retry_tracker = self.kask.retry_tracker_handle(); // zed-kask: .rules
+        let tool_name_for_tracking = tool_name.clone();
+        // zed-kask: D59 — mechanical skill-use issue capture (observe stage of
+        // the skill learning loop, DIAG-ARCH-LEARNING-LOOP-001).
+        let active_skill = self.kask.active_skill_handle();
+        let skill_invoker = self.skill_invoker();
+        let activated_skill = (tool_name.as_ref() == crate::SkillTool::NAME)
+            .then(|| {
+                input_for_tracking
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            })
+            .flatten();
         cx.foreground_executor().spawn(async move {
             let (is_error, output) = match tool_result.await {
                 Ok(mut output) => {
+                    if let Some(name) = activated_skill {
+                        *active_skill.borrow_mut() = Some(name.into());
+                    }
+                    // Record success — resets the failure counters for this
+                    // key AND advances the consecutive-success streak for the
+                    // identical (tool, input) pair, deduped per assistant
+                    // message (sibling identical calls in one batch count
+                    // once — the same dedup as the failure side).
+                    retry_tracker.borrow().record_success_for_message(
+                        &tool_name_for_tracking,
+                        &input_for_tracking,
+                        owning_message_ix,
+                    );
                     let contains_image = output
                         .llm_output
                         .iter()
@@ -3986,7 +5950,71 @@ impl Thread {
                         (false, output)
                     }
                 }
-                Err(output) => (true, output),
+                Err(output) => {
+                    // Record one failure per assistant message. Parallel sibling
+                    // failures must not consume every retry before the model can
+                    // correct its input; repeated failed messages still warn at
+                    // 3 and refuse at 5 before tool.run() is called.
+                    // zed-kask: authorization failures (missing credential,
+                    // `[permission_denied]` prefix) are deterministic — no
+                    // identical retry can fix them, so counting them only
+                    // produces bogus Bayesian "switch tools" statistics while
+                    // the model already sees the named env var to set.
+                    if !crate::tool_retry_tracker::is_authorization_error(&output) {
+                        retry_tracker.borrow().record_failure_for_message(
+                            &tool_name_for_tracking,
+                            &input_for_tracking,
+                            owning_message_ix,
+                        );
+                        if let Some(skill) = active_skill.borrow().as_ref()
+                            && tool_name_for_tracking.as_ref() != crate::SkillTool::NAME
+                        {
+                            crate::record_skill_tool_failure(
+                                skill,
+                                &skill_invoker,
+                                &tool_name_for_tracking,
+                                &tool_failure_text(&output),
+                            );
+                        }
+                    }
+                    (true, output)
+                }
+            };
+
+            // D8: Compress tool result text before storing in message history.
+            // When a ThreadCondenser is wired, tool output text is compressed
+            // to fit within the configured token budget. Non-text content
+            // (images) is passed through unchanged.
+            //
+            // Code-reading tools (read_file, grep, list_directory, diagnostics,
+            // edit_file, etc.) are bypassed: their output is structurally
+            // meaningful and line-level elision (the `...` ellipsis markers
+            // the condenser inserts) is actively harmful — it looks like
+            // literal source content and drops structurally meaningful lines
+            // (use statements, closing braces, method chains). The condenser
+            // is intended for verbose terminal/build/test output, not source.
+            let content = if let Some(condenser) = crate::thread_condenser() {
+                condense_tool_output_with_spillover(
+                    condenser.as_ref(),
+                    &tool_name,
+                    output.llm_output,
+                    &spillover_vault,
+                    calling_provenance_for_spillover,
+                )
+            } else {
+                output.llm_output
+            };
+
+            // Inject the retry warning (if any) into the tool result so the
+            // agent sees it in the model context, not just in the logs. The
+            // warning carries the Bayesian probability of success and a
+            // directive to switch tools.
+            let content = if let Some(warning) = retry_warning {
+                let mut content = content;
+                content.push(LanguageModelToolResultContent::Text(Arc::from(warning)));
+                content
+            } else {
+                content
             };
 
             (
@@ -3995,7 +6023,7 @@ impl Thread {
                     tool_use_id,
                     tool_name,
                     is_error,
-                    content: output.llm_output,
+                    content,
                     output: Some(output.raw_output),
                 },
             )
@@ -4045,7 +6073,45 @@ impl Thread {
             )));
         };
 
-        let error_message = format!("Error parsing input JSON: {json_parse_error}");
+        // zed-kask: D36 funnel — an EOF-classified parse error is a
+        // transport cut (the same discriminator the provider doors use:
+        // `parse_tool_arguments` + `Category::Eof`). Doors that classify never
+        // dispatch the cut; a door that has not classified it still lands
+        // here, and the bare parse error gives the model nothing to act on —
+        // the 2026-09-27 storm retried an identical cut payload 10+ times.
+        // Name the cut and the remedy; non-EOF malformed JSON keeps the
+        // plain parse error.
+        let is_eof_cut = language_model::parse_tool_arguments(&raw_input)
+            .err()
+            .is_some_and(|err| err.classify() == serde_json::error::Category::Eof);
+        let error_message = if is_eof_cut {
+            format!(
+                "Tool call arguments were cut off mid-JSON ({json_parse_error}); \
+                 the call was not executed. Resend the whole call with a shorter \
+                 payload — pass file paths instead of file contents, or split the \
+                 work into smaller calls."
+            )
+        } else {
+            format!("Error parsing input JSON: {json_parse_error}")
+        };
+
+        // A parse failure that reaches this handler means the stream
+        // reported a completed tool-call turn with malformed JSON — either
+        // model fault (syntax-error JSON under a finish_reason
+        // "tool_calls" or stop-remapped turn) or a provider whose mapper
+        // has not classified the cut (non-Chat-Completions APIs). A
+        // Chat-Completions argument fragment that ended mid-JSON (an
+        // EOF-classified parse error, under any finish reason) is
+        // classified as ToolCallTruncated at the shared mapper and never
+        // reaches this handler (D36). Warn with
+        // the raw-input length so the operator can distinguish malformed
+        // model output from a large payload the model should split.
+        log::warn!(
+            "Tool '{}' arguments failed to parse (malformed JSON on a completed tool-call turn): {} (raw input {} chars)",
+            tool_use.name,
+            json_parse_error,
+            raw_input.len()
+        );
 
         if tool.supports_input_streaming()
             && let Some(mut sender) = self
@@ -4069,6 +6135,8 @@ impl Thread {
             event_stream,
             cancellation_rx,
             cx,
+            serde_json::Value::Null,
+            None,
         ))
     }
 
@@ -4147,6 +6215,17 @@ impl Thread {
             log::error!("No summarization model available");
             return Task::ready(None).shared();
         };
+        if self.kask.is_private_inference() && !is_admitted_private_model(&model, cx) {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused summary dispatch to non-local model {}/{}",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            return Task::ready(None).shared();
+        }
+        let is_private = self.kask.is_private_inference();
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
@@ -4176,6 +6255,17 @@ impl Thread {
                 while let Some(event) = messages.next().await {
                     let event = event.log_err()?;
                     let text = match event {
+                        LanguageModelCompletionEvent::ResponseModel(reported_model) => {
+                            if let Err(err) = validate_response_model_for_private_thread(
+                                is_private,
+                                &model.provider_id.0,
+                                &reported_model,
+                            ) {
+                                log::error!("Summary response rejected by D100 gate: {err}");
+                                return None;
+                            }
+                            continue;
+                        }
                         LanguageModelCompletionEvent::Text(text) => text,
                         _ => continue,
                     };
@@ -4239,14 +6329,39 @@ impl Thread {
         on_generated_title: Option<Box<dyn FnOnce(SharedString, &mut Context<Self>)>>,
         cx: &mut Context<Self>,
     ) {
+        if self.kask.is_private_inference() && !is_admitted_private_model(&model, cx) {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused title generation on non-local model {}/{}",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            return;
+        }
+        let is_private = self.kask.is_private_inference();
         self.title_generation_error = None;
         log::debug!("Generating title with model: {:?}", model.name());
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
-        let request = build_thread_title_request(&self.id, &self.messages, temperature);
+        let mut request = build_thread_title_request(&self.id, &self.messages, temperature);
+
+        // zed-kask: D37 — respect reasoning-model requirements for thread
+        // title generation. Upstream's `build_thread_title_request` leaves
+        // `thinking_allowed` at its default (`false`). When the summarization
+        // model is a reasoning-only model (e.g. GLM 5.2, gpt-5, o3), the
+        // provider rejects the request with a 400 `InvalidRequest` because
+        // reasoning cannot be disabled. Mirror the D37 commit-message guard:
+        // allow thinking when the model supports it, with low effort to
+        // minimize tokens. `stream_thread_title` adds a self-healing retry
+        // for models whose `supports_thinking()` returns false but the
+        // endpoint still mandates reasoning.
+        let supports_thinking = model.supports_thinking();
+        request.thinking_allowed = supports_thinking;
+        request.thinking_effort = supports_thinking.then(|| "low".to_string());
 
         let title_generation = cx.spawn(async move |_this, cx| {
-            stream_thread_title(model, request, cx)
+            stream_thread_title_with_privacy(model, request, is_private, cx)
                 .await
                 .context("failed to generate thread title")
                 .map(SharedString::from)
@@ -4301,6 +6416,49 @@ impl Thread {
             })
     }
 
+    /// Collect absolute paths of files currently open in the editor.
+    /// Used by conditional-rules scoping.
+    fn collect_open_file_paths(&self, cx: &App) -> Vec<String> {
+        self.project
+            .read(cx)
+            .opened_buffers(cx)
+            .into_iter()
+            .filter_map(|buffer| {
+                buffer.read(cx).file().and_then(|file| {
+                    file.as_local()
+                        .map(|local| local.abs_path(cx).to_string_lossy().into_owned())
+                })
+            })
+            .collect()
+    }
+
+    /// Collect file paths mentioned in the latest user message (via
+    /// `UserMessageContent::Mention` with `MentionUri::File`).
+    fn collect_mentioned_paths(&self) -> Vec<String> {
+        self.last_user_message()
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|content| match content {
+                        UserMessageContent::Mention { uri, .. } => match uri {
+                            MentionUri::File { abs_path } => {
+                                Some(abs_path.to_string_lossy().into_owned())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn owns_pending_message(&self, event_stream: &ThreadEventStream) -> bool {
+        self.pending_message_owner
+            .ptr_eq(&Rc::downgrade(&event_stream.lisp_completions))
+    }
+
     fn pending_message(&mut self) -> &mut AgentMessage {
         self.pending_message.get_or_insert_default()
     }
@@ -4323,15 +6481,24 @@ impl Thread {
             };
 
             if !message.tool_results.contains_key(&tool_use.id) {
+                let cancel_message = if self.kask.last_completion_truncated() {
+                    // zed-kask: D25
+                    TOOL_TRUNCATED_MESSAGE
+                } else if self.kask.batch_interrupted_by_tool_failure() {
+                    // zed-kask: false-halt fix (card bd7dbf68) — the batch
+                    // broke on a sibling's mid-stream failure; this call
+                    // never started, and the user canceled nothing.
+                    TOOL_INTERRUPTED_BY_SIBLING_FAILURE_MESSAGE
+                } else {
+                    TOOL_CANCELED_MESSAGE
+                };
                 message.tool_results.insert(
                     tool_use.id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name.clone(),
                         is_error: true,
-                        content: vec![LanguageModelToolResultContent::Text(
-                            TOOL_CANCELED_MESSAGE.into(),
-                        )],
+                        content: vec![LanguageModelToolResultContent::Text(cancel_message.into())],
                         output: None,
                     },
                 );
@@ -4345,7 +6512,7 @@ impl Thread {
     }
 
     pub(crate) fn build_completion_request(
-        &self,
+        &mut self,
         completion_intent: CompletionIntent,
         cx: &App,
     ) -> Result<LanguageModelRequest> {
@@ -4358,7 +6525,8 @@ impl Thread {
 
         let model = self
             .model()
-            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?
+            .clone();
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             build_request_tools(&turn.tools, cx)
         } else {
@@ -4387,10 +6555,15 @@ impl Thread {
             tools,
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AgentSettings::temperature_for_model(model, cx),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
             // Models that can't run with thinking disabled ignore the
             // toggle state, which may be stale from a previously selected
             // model that could.
+            // zed-kask: D42 — the fork's `thinking_effort` field naming, with
+            // upstream's mandatory-reasoning guard (the D37 class): a model
+            // that cannot disable thinking at this effort keeps thinking
+            // allowed even when the toggle is off. The toggle itself is
+            // `thinking_enabled` (the merged Thread carries both fields).
             thinking_allowed: self.thinking_enabled
                 || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
@@ -4403,10 +6576,60 @@ impl Thread {
         Ok(request)
     }
 
+    /// Narrow the persisted ceiling independently of mutable profile settings.
+    pub fn restrict_delegation(
+        &mut self,
+        authority: crate::DelegationAuthority,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.delegation_authority {
+            Some(existing) => existing.intersect(&authority),
+            None => self.delegation_authority = Some(authority),
+        }
+        self.refresh_turn_tools(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn delegation_for_child(&self, cx: &App) -> crate::DelegationAuthority {
+        crate::DelegationAuthority::from_identities(
+            self.enabled_tools(cx)
+                .values()
+                .map(|tool| tool.delegation_identity()),
+        )
+    }
+
+    fn delegation_allows(&self, tool: &dyn AnyAgentTool) -> bool {
+        // The MCP child has a server grant, not this initiating thread's grant.
+        // Until invocation identity is carried end-to-end (P2), native agents
+        // delegate through create_thread/spawn_agent rather than this ambient route.
+        if matches!(tool.delegation_identity(), crate::DelegatedToolIdentity::Mcp { server, tool }
+            if server == "kata-kanban" && tool == "kanban_task_spawn")
+        {
+            return false;
+        }
+        self.delegation_authority
+            .as_ref()
+            .is_none_or(|authority| authority.allows(&tool.delegation_identity()))
+    }
+
+    fn current_turn_allows_local_tools(&self) -> bool {
+        match self.last_user_message() {
+            Some(user_message) => crate::tool_input_validation::prompt_requires_tools(user_message),
+            None => true,
+        }
+    }
+
     fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
         let Some(model) = self.model() else {
             return BTreeMap::new();
         };
+        if is_private_leg_model(model)
+            && ((settings::is_unsupported_small_local_tool_model(&model.id.0, None)
+                && !model.supports_tools())
+                || !self.current_turn_allows_local_tools())
+        {
+            return BTreeMap::new();
+        }
         let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
             return BTreeMap::new();
         };
@@ -4424,6 +6647,7 @@ impl Thread {
         let mut tools = self
             .tools
             .iter()
+            .filter(|(_, tool)| self.delegation_allows(tool.as_ref()))
             .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
@@ -4456,12 +6680,43 @@ impl Thread {
             .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
             .collect::<BTreeMap<_, _>>();
 
+        // zed-kask: D107 — the compact profile: a small local model is
+        // offered only the file and search tools, and no MCP server tools.
+        // Pinned by `small_local_model_gets_the_compact_prompt_and_tools`.
+        if uses_compact_profile(model) {
+            tools.retain(|tool_name, _| COMPACT_PROFILE_TOOLS.contains(&tool_name.as_ref()));
+            return tools;
+        }
+
         let mut context_server_tools = Vec::new();
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
-        for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+        let registry = self.context_server_registry.read(cx);
+        for (server_id, server_tools) in registry.servers() {
+            // zed-kask: D100 / S113-F01 / S113-F02 — the private-thread tool
+            // perimeter: external/store-registered ContextServerStore servers
+            // are denied by default, and disabled built-in Kask servers
+            // (including research and prediction-markets by default) are
+            // withheld at the offer point.
+            if self.kask.is_private_inference()
+                && (!registry.is_kask_server(server_id)
+                    || server_disabled_on_private_threads(&server_id.0, cx))
+            {
+                continue;
+            }
+            // zed-kask: D6 — the curator memory-edit tools (memory_insert,
+            // memory_update, memory_resolve_contradiction) were gated to
+            // curator threads until 2026-09-01. Removed by operator
+            // decision: models cannot reliably emit calls to tools absent
+            // from their visible list (observed 4/4 announce-then-stop
+            // failures on GLM 5.3), so the gate turned operator-approved
+            // memory writes into silent no-effect stops. The write
+            // invariants (evidence citation, 0.5 confidence floor) live in
+            // the curator server.
             for (tool_name, tool) in server_tools {
-                if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
+                if self.delegation_allows(tool.as_ref())
+                    && profile.is_context_server_tool_enabled(&server_id.0, &tool_name)
+                {
                     let tool_name: SharedString =
                         provider_compatible_tool_name(tool_name.as_ref()).into();
                     if !seen_tools.insert(tool_name.clone()) {
@@ -4494,6 +6749,18 @@ impl Thread {
             }
         }
 
+        // zed-kask: D44 — no per-turn tool filtering. The LazyToolRouter that
+        // once pruned the MCP surface here was removed (2026-08-30): its
+        // within-domain sampling gave sessions incoherent slices of a
+        // server's toolset, its per-turn selection busted provider prompt
+        // caching, and the visibility gap it created produced false
+        // "tool unavailable" reports (an agent denied `web_ping` existed
+        // because that turn's routing hadn't selected it). The full
+        // registered surface is presented every turn; tools hidden by the
+        // remaining layers (profile allowlists and feature flags) are named by the
+        // system-prompt visibility marker (`mcp_tools_hidden`), and the
+        // `list_mcp_tools` meta-tool lets the model enumerate the registered
+        // surface on demand.
         tools
     }
 
@@ -4508,9 +6775,25 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
+    // zed-kask: D100 — used by `marking_mid_turn_re_scopes_the_running_turns_tool_map`.
+    #[cfg(test)]
+    pub(crate) fn has_tool(&self, name: &str) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|turn| turn.tools.contains_key(name))
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_registered_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
+    }
+
+    /// All names in the thread's registered tool map (the `add_tool` set,
+    /// before any visibility filtering). Test-support surface for pinning
+    /// the construction sites against the `tools!` macro's name list.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn registered_tool_names(&self) -> Vec<&str> {
+        self.tools.keys().map(|name| name.as_ref()).collect()
     }
 
     pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
@@ -4578,11 +6861,9 @@ impl Thread {
 
     pub(crate) fn auto_compaction_enabled(&self, cx: &App) -> bool {
         AgentSettings::get_global(cx).auto_compact.enabled
-            && self.input_token_capacity().is_some_and(|max_input_tokens| {
-                // Models with a small context window don't leave enough headroom for a
-                // compaction pass; the UI warns the user about the token limit instead.
-                max_input_tokens >= MIN_COMPACTION_CONTEXT_WINDOW
-            })
+            && self
+                .input_token_capacity()
+                .is_some_and(|max_input_tokens| max_input_tokens >= MIN_COMPACTION_CONTEXT_WINDOW)
     }
 
     pub(crate) fn subagent_partial_output(&self) -> String {
@@ -4590,7 +6871,7 @@ impl Thread {
     }
 
     fn build_request_messages(
-        &self,
+        &mut self,
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> Vec<LanguageModelRequestMessage> {
@@ -4601,11 +6882,16 @@ impl Thread {
             messages.extend(message.to_request());
         }
 
+        // Place cache breakpoints after pending-message extension so the
+        // breakpoints land on the final request shape (which may end with a
+        // pending tool result, not a stored message).
+        set_cache_breakpoints(&mut messages);
+
         messages
     }
 
     fn build_request_messages_until(
-        &self,
+        &mut self,
         available_tools: Vec<SharedString>,
         end_ix: usize,
         cx: &App,
@@ -4613,36 +6899,186 @@ impl Thread {
         let end_ix = end_ix.min(self.messages.len());
         log::trace!("Building request messages from {} thread messages", end_ix);
 
-        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
-        let system_prompt = SystemPromptTemplate {
-            project: self.project_context.read(cx),
-            available_tools,
-            model_name: self.model().map(|m| m.name().0.to_string()),
-            date: Local::now().format("%Y-%m-%d").to_string(),
-            user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
-                self.project.read(cx),
-                cx,
-            ),
-            is_linux: cfg!(target_os = "linux"),
-            is_windows: cfg!(target_os = "windows"),
-        }
-        .render(&self.templates)
-        .context("failed to build system prompt")
-        .expect("Invalid template");
+        let system_prompt = self.render_system_prompt(available_tools, cx);
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
-            content: vec![system_prompt.into()],
+            content: vec![system_prompt.to_string().into()],
             cache: false,
             reasoning_details: None,
         }];
         self.extend_request_history_until(&mut messages, end_ix);
 
-        if let Some(last_message) = messages.last_mut() {
-            last_message.cache = true;
+        messages
+    }
+
+    /// Render the system prompt, reusing a cached render when the inputs
+    /// (available_tools, model_name, date, user_agents_md, sandboxing, project
+    /// context) have not changed since the last render. This keeps the
+    /// system-prompt bytes byte-stable across consecutive requests so the
+    /// provider's prefix cache hits, and avoids the handlebars render cost.
+    /// When the digest changes, the new render is cached and a telemetry event
+    /// is emitted so cache-bust events are observable.
+    fn render_system_prompt(
+        &mut self,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+    ) -> SharedString {
+        let date = Local::now().format("%Y-%m-%d").to_string();
+
+        // zed-kask: D107 + C1 — local models route through their declarative
+        // HarnessProfile (`compact-local`, `qwen-code`, `deepseek-tui`,
+        // `minimal`) rather than the ~18 KB frontier system prompt.
+        if let Some((model, spec)) = self
+            .model()
+            .map(|m| (m, harness_profile_for_model(m)))
+            .filter(|(_, spec)| spec.uses_local_harness_template())
+        {
+            let provider_id = model.provider_id.0.to_string();
+            let model_id = model.id.0.to_string();
+            let private_inference = self.kask.is_private_inference();
+            let is_compact_local = matches!(
+                spec.profile,
+                crate::harness_profile::HarnessProfile::CompactLocal
+            );
+            return CompactSystemPromptTemplate {
+                project: self.project_context.read(cx),
+                available_tools,
+                provider_id,
+                model_id,
+                private_inference,
+                date,
+                harness_profile_id: (!is_compact_local).then_some(spec.id),
+                harness_dialect_rules: spec.dialect_rules,
+            }
+            .render(&self.templates)
+            .context("failed to build local harness system prompt")
+            .expect("Invalid template")
+            .into();
         }
 
-        messages
+        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let private_inference = self.kask.is_private_inference();
+        let model_name = self.model().map(|m| {
+            format!(
+                "{} (provider={}, model={}, private={})",
+                m.name().0,
+                m.provider_id.0,
+                m.id.0,
+                private_inference
+            )
+        });
+        let sandboxing =
+            crate::sandboxing::sandboxing_enabled_for_project(self.project.read(cx), cx);
+        let is_linux = cfg!(target_os = "linux");
+        let is_windows = cfg!(target_os = "windows");
+
+        // Agent static context (e.g., Curator overlay, Steer panel overlay)
+        // is rendered in the system prompt's "Session Context" section.
+        // Memory recall is per-turn via `inject_context` (Role::System message).
+        let static_context = self.kask.static_context().cloned(); // zed-kask: D2
+
+        // Apply conditional-rules scoping: filter out rules files whose
+        // frontmatter specifies `alwaysApply: false` with globs that don't
+        // match any open file or mentioned path. This is done on a clone of
+        // the ProjectContext so the stored entity is unchanged — the filter
+        // is per-render, reflecting the current open-file state.
+        //
+        // Optimization: compute a cheap digest of the filtering inputs
+        // (open-file paths + mentioned paths) and reuse the cached filtered
+        // context when they haven't changed. This avoids the
+        // `ProjectContext::clone` + `filter_conditional_rules` cost on
+        // every render when the open-file set is stable.
+        let open_paths = self.collect_open_file_paths(cx);
+        let mentioned_paths = self.collect_mentioned_paths();
+        let filter_digest = filter_inputs_digest(&open_paths, &mentioned_paths);
+        let filtered_project_context =
+            if let Some(cached) = self.kask.cached_filtered_context(&filter_digest) {
+                cached.clone()
+            } else {
+                let context = self.project_context.read(cx);
+                let all_paths: Vec<&str> = open_paths
+                    .iter()
+                    .map(|s| s.as_str())
+                    .chain(mentioned_paths.iter().map(|s| s.as_str()))
+                    .collect();
+                let filtered = filter_conditional_rules(context.clone(), &all_paths);
+                self.kask
+                    .cache_filtered_context(filter_digest, filtered.clone());
+                filtered
+            };
+
+        // zed-kask: D44 — count MCP tools registered but absent from this
+        // turn's available set. Without this count in the prompt, the model
+        // reads the filtered list as the
+        // complete toolset and reports registered tools as "unavailable"
+        // (observed live: an agent denied `web_ping` existed because a filter
+        // layer hadn't selected it). Registry names not present in
+        // `available_tools` are hidden; disambiguated duplicates
+        // (server-prefixed names) count as hidden, which is honest — the
+        // model cannot invoke them under the plain name either.
+        let mcp_tools_hidden = {
+            let registry = self.context_server_registry.read(cx);
+            let available: std::collections::HashSet<&str> =
+                available_tools.iter().map(|name| name.as_ref()).collect();
+            count_hidden_mcp_tools(
+                registry.servers().flat_map(|(_, tools)| tools.keys()),
+                &available,
+            )
+        };
+
+        // Compute a digest of the inputs that affect the rendered system
+        // prompt. If it matches the cached digest, reuse the cached string.
+        let digest = system_prompt_digest(
+            &filtered_project_context,
+            &available_tools,
+            model_name.as_deref(),
+            &date,
+            user_agents_md.as_deref(),
+            static_context.as_deref(),
+            sandboxing,
+            is_linux,
+            is_windows,
+            mcp_tools_hidden,
+        );
+
+        if let Some(cached) = self.kask.cached_system_prompt(&digest) {
+            return cached;
+        }
+
+        // Digest changed (or first render): re-render and cache.
+        let system_prompt = SystemPromptTemplate {
+            project: &filtered_project_context,
+            available_tools,
+            model_name,
+            date,
+            user_agents_md,
+            static_context,
+            sandboxing,
+            is_linux,
+            is_windows,
+            mcp_tools_hidden,
+        }
+        .render(&self.templates)
+        .context("failed to build system prompt")
+        .expect("Invalid template");
+
+        let system_prompt: SharedString = system_prompt.into();
+
+        // Emit a telemetry event when the system-prompt digest changes across
+        // turns. This makes cache-bust events observable: if the prefix cache
+        // stops hitting, the operator can correlate it with a digest change.
+        telemetry::event!(
+            "Agent System Prompt Cache Bust",
+            thread_id = self.id.to_string(),
+            prompt_id = self.prompt_id.to_string(),
+            model = self.model().map(|m| m.telemetry_id()),
+            model_provider = self.model().map(|m| m.provider_id().to_string()),
+            prompt_bytes = system_prompt.len(),
+        );
+
+        self.kask.cache_system_prompt(digest, system_prompt.clone());
+
+        system_prompt
     }
 
     fn extend_request_history_until(
@@ -4695,6 +7131,24 @@ impl Thread {
         }
     }
 
+    /// Insertion index that keeps a trailing not-yet-answered user message
+    /// (the prompt that started the current turn) verbatim after the summary
+    /// instead of summarizing it away. Shared by the threshold path and the
+    /// PromptTooLarge rescue — one rule, one home.
+    fn trailing_user_aware_insertion_ix(&self) -> usize {
+        match self.messages.last() {
+            Some(message)
+                if matches!(
+                    &**message,
+                    Message::User(UserMessage { id, .. }) if !self.request_token_usage.contains_key(id)
+                ) =>
+            {
+                self.messages.len().saturating_sub(1)
+            }
+            _ => self.messages.len(),
+        }
+    }
+
     fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
         if !self.auto_compaction_enabled(cx) {
             return None;
@@ -4702,27 +7156,40 @@ impl Thread {
 
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_input_tokens = self.input_token_capacity()?;
-        let usage = self.context_usage?;
-        let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
-        let compaction_threshold =
-            auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
-        if active_tokens < compaction_threshold {
+        let (usage_ix, usage) = {
+            let this = &self;
+            this.messages
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, message)| {
+                    let Message::User(user_message) = &**message else {
+                        return None;
+                    };
+                    this.request_token_usage
+                        .get(&user_message.id)
+                        .copied()
+                        .map(|usage| (ix, usage))
+                })
+        }?;
+        if latest_compaction_message_ix_before(&self.messages, self.messages.len())
+            .is_some_and(|compaction_ix| compaction_ix > usage_ix)
+        {
             return None;
         }
 
-        // Even with usage (reported before the stream failed), a trailing prompt has no reply yet, so keep it out of the summary.
-        let insertion_ix = match self.messages.last().map(|message| &**message) {
-            Some(Message::User(_)) => self.messages.len().saturating_sub(1),
-            _ => self.messages.len(),
-        };
-        if insertion_ix == 0 {
+        // Preserve the cost-driven threshold for cached context, but never
+        // let its cheaper billing hide a context-window overflow. Cache reads
+        // are still input tokens for the provider's admission limit.
+        let billed_tokens = billed_input_tokens(usage).saturating_add(usage.output_tokens);
+        let gross_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
+        let compaction_threshold =
+            auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
+        if billed_tokens < compaction_threshold && gross_tokens < max_input_tokens {
             return None;
         }
-        log::info!(
-            "Auto-compacting thread {}: {active_tokens} tokens used, threshold is {compaction_threshold} of {max_input_tokens}",
-            self.id
-        );
-        Some(insertion_ix)
+
+        Some(self.trailing_user_aware_insertion_ix())
     }
 
     /// Insertion point for a manually-triggered compaction.
@@ -4753,13 +7220,29 @@ impl Thread {
     }
 
     fn compaction_model(&self, cx: &App) -> Option<LanguageModel> {
-        LanguageModelRegistry::read_global(cx)
-            .compaction_model()
+        // zed-kask: D8 — try_read_global: a harness that never wires the
+        // registry global must not panic here; the thread's own model is
+        // the documented fallback either way.
+        // zed-kask: D100 (Seam A) — a privacy-marked thread compacts only
+        // on its own local model: the registry's global compaction model (a
+        // settings-set model that is public by default) is refused
+        // wholesale; the thread's own — gate-enforced local — model is
+        // the only compaction model a marked thread may use (the
+        // falsifier is any private-thread content reaching a public
+        // provider, and compaction dispatches thread content).
+        if self.kask.is_private_inference() {
+            return self
+                .model()
+                .filter(|model| is_admitted_private_model(model, cx))
+                .cloned();
+        }
+        LanguageModelRegistry::try_read_global(cx)
+            .and_then(|registry| registry.compaction_model())
             .or_else(|| self.model().cloned())
     }
 
     fn build_compaction_request(
-        &self,
+        &mut self,
         insertion_ix: usize,
         model: &LanguageModel,
         cx: &App,
@@ -4789,7 +7272,10 @@ impl Thread {
                 self.thinking_effort.clone(),
             )
         } else {
-            (false, None)
+            // zed-kask: D37 — helper requests must not implicitly disable a
+            // reasoning model: a reasoning-only compaction model would reject
+            // a thinking-disabled request with 400 InvalidRequest.
+            (model.supports_thinking, None)
         };
 
         let mut request = LanguageModelRequest {
@@ -4879,6 +7365,11 @@ impl Thread {
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
+            // zed-kask: D36 — a stream cut mid-tool-call re-sends the same
+            // request and gets cut again at the same output-length boundary;
+            // the remedy is the model splitting its payload, which the
+            // error message instructs. Never retried.
+            ToolCallTruncated { .. } => None,
             // Retrying won't help until the thread picks another model.
             ModelUnavailable { .. } => None,
             // `Other` includes mid-stream mapping failures that can be caused by
@@ -4889,6 +7380,34 @@ impl Thread {
             }),
         }
     }
+}
+
+// Per-request high-water marks must stay separate for concurrent half-summaries.
+fn accumulate_request_usage(
+    current: &mut TokenUsage,
+    cumulative: &mut TokenUsage,
+    update: TokenUsage,
+) {
+    let previous = *current;
+    current.input_tokens = previous.input_tokens.max(update.input_tokens);
+    current.output_tokens = previous.output_tokens.max(update.output_tokens);
+    current.cache_creation_input_tokens = previous
+        .cache_creation_input_tokens
+        .max(update.cache_creation_input_tokens);
+    current.cache_read_input_tokens = previous
+        .cache_read_input_tokens
+        .max(update.cache_read_input_tokens);
+    *cumulative = *cumulative
+        + TokenUsage {
+            input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
+            output_tokens: current.output_tokens.saturating_sub(previous.output_tokens),
+            cache_creation_input_tokens: current
+                .cache_creation_input_tokens
+                .saturating_sub(previous.cache_creation_input_tokens),
+            cache_read_input_tokens: current
+                .cache_read_input_tokens
+                .saturating_sub(previous.cache_read_input_tokens),
+        };
 }
 
 fn subagent_partial_output_from_messages(
@@ -4935,13 +7454,6 @@ fn subagent_partial_output_from_messages(
     text_messages.join("\n\n")
 }
 
-fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
-    usage
-        .input_tokens
-        .saturating_add(usage.cache_creation_input_tokens)
-        .saturating_add(usage.cache_read_input_tokens)
-}
-
 fn build_request_tools(
     tools: &BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     cx: &App,
@@ -4952,6 +7464,24 @@ fn build_request_tools(
         .map(|(tool_name, tool)| {
             log::trace!("Including tool: {}", tool_name);
             let mut description = tool.description().to_string();
+            // zed-kask: D44 — retain UTF-8-safe description truncation.
+            if description.len() > 200 {
+                // Truncate at the first sentence boundary within 200
+                // chars. Use a char-boundary-safe cutoff: byte index
+                // 200 may land inside a multi-byte UTF-8 code point
+                // (em-dash, CJK, emoji), and both `str` slicing and
+                // `String::truncate` panic on non-boundary indices.
+                let mut cutoff = 200;
+                while !description.is_char_boundary(cutoff) {
+                    cutoff -= 1;
+                }
+                if let Some(pos) = description[..cutoff].find(". ") {
+                    description.truncate(pos + 1);
+                } else {
+                    description.truncate(cutoff);
+                    description.push_str("...");
+                }
+            }
             let mut schema = tool.input_schema();
             // TEMPORARY (sandboxing feature flag): with the flag off,
             // the fetch and create_directory descriptions/schemas must
@@ -4965,13 +7495,16 @@ fn build_request_tools(
                 if tool_name.as_ref() == FetchTool::NAME {
                     description = "Fetches a URL and returns the content as Markdown.".to_string();
                 } else if tool_name.as_ref() == CreateDirectoryTool::NAME {
+                    // zed-kask: D28 — global skills live under the kask
+                    // data root, and visible artifacts live under ~/Documents/zk-data.
                     description = "Creates a new directory at the specified path within \
-                        the project. Returns confirmation that the directory was \
-                        created.\n\nThis tool creates a directory and all necessary \
-                        parent directories. It should be used whenever you need to \
-                        create new directories within the project.\nThe only supported \
-                        path outside the project is `~/.agents/skills` or a descendant, \
-                        for global agent skills."
+                            the project. Returns confirmation that the directory was \
+                            created.\n\nThis tool creates a directory and all necessary \
+                            parent directories. It should be used whenever you need to \
+                            create new directories within the project.\nOutside the project, \
+                            supported paths are the global skills directory and the Kask \
+                            visible artifacts directory (`~/Documents/zk-data`, outside \
+                            producer-owned `{server}-mcp/` folders)."
                         .to_string();
                     if let Some(properties) = schema
                         .get_mut("properties")
@@ -5000,6 +7533,233 @@ fn compaction_input_capacity(
     combined_limit.map_or(input_limit, |combined| {
         input_limit.min(combined.saturating_sub(output_limit.unwrap_or(0)))
     })
+}
+
+fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+        .saturating_add(usage.cache_read_input_tokens)
+}
+
+/// Billed input tokens — what the provider actually charges for at full or
+/// cache-write rates. Excludes `cache_read_input_tokens` because those are
+/// served from the prompt cache at ~0.1x cost and re-sending the same prefix
+/// is nearly free. Use this for *cost-driven* decisions like compaction
+/// triggering; use `total_input_tokens` for *context-window* decisions like
+/// overflow warnings, since the model still consumes the full window regardless
+/// of caching.
+fn billed_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+}
+
+/// Place cache breakpoints on the final request message list. Two breakpoints
+/// mirror Kilocode's default cache policy (`tools + system + latest-user-message`):
+///
+///   1. The latest *user* message — the high-value boundary for agentic tool
+///      loops. The user message stays fixed while a single turn explodes into
+///      many assistant/tool round-trips, so caching at this boundary lets every
+///      intra-turn request hit the prefix up to and including the user's
+///      instruction.
+///   2. The last message overall — covers the case where the thread ends on a
+///      tool result or assistant turn, and satisfies the `any_message_wants_cache`
+///      gate for Anthropic's automatic top-level cache_control.
+///
+/// Both are marked because the Anthropic automatic-mode lowering places the
+/// conversation-tail breakpoint on the last cacheable block, and marking the
+/// latest user message ensures the breakpoint lands on the semantically
+/// meaningful boundary rather than whichever tool result happens to be last.
+fn set_cache_breakpoints(messages: &mut [LanguageModelRequestMessage]) {
+    if let Some(last_user_message) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.role == Role::User)
+    {
+        last_user_message.cache = true;
+    }
+    if let Some(last_message) = messages.last_mut() {
+        last_message.cache = true;
+    }
+}
+
+/// Filter conditional rules from a `ProjectContext` clone. Rules files
+/// whose frontmatter specifies `alwaysApply: false` with non-empty `globs`
+/// are excluded unless a path in `active_paths` matches one of the globs.
+///
+/// `alwaysApply: true` rules and rules without frontmatter are always
+/// included. When frontmatter is absent (upstream Zed), all rules pass
+/// through unchanged. When frontmatter is present with `alwaysApply: false`,
+/// the rule is filtered by glob match — this is new behavior not present
+/// in upstream Zed.
+///
+/// Glob matching uses `globset` for correctness with patterns like `**/*.rs`.
+/// Compute a cheap SHA-256 digest of the conditional-rules filtering
+/// inputs (open-file paths + mentioned paths). Used to avoid re-cloning
+/// and re-filtering `ProjectContext` when the inputs haven't changed.
+fn filter_inputs_digest(open_paths: &[String], mentioned_paths: &[String]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"open_paths:");
+    for path in open_paths {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.update(b"mentioned_paths:");
+    for path in mentioned_paths {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.finalize().into()
+}
+
+fn filter_conditional_rules(mut context: ProjectContext, active_paths: &[&str]) -> ProjectContext {
+    // Build a globset for each conditional rule. If any active path matches,
+    // the rule is kept; otherwise it's filtered out.
+    for worktree in context.worktrees.iter_mut() {
+        let rules_file = &mut worktree.rules_file;
+        let Some(rules) = rules_file.as_ref() else {
+            continue;
+        };
+        let Some(frontmatter) = &rules.frontmatter else {
+            continue;
+        };
+        // always_apply: true (or no frontmatter) → always include.
+        if frontmatter.always_apply {
+            continue;
+        }
+        // No globs → always include (defensive — shouldn't happen with valid frontmatter).
+        if frontmatter.globs.is_empty() {
+            continue;
+        }
+
+        // Compute paths relative to this worktree's root, so that
+        // user-authored relative globs (e.g. `src/**/*.rs`) match.
+        // Absolute globs (e.g. `**/*.rs`) also match relative paths.
+        let worktree_abs = worktree.abs_path.as_ref();
+        let relative_paths: Vec<String> = active_paths
+            .iter()
+            .filter_map(|abs| {
+                std::path::Path::new(abs)
+                    .strip_prefix(worktree_abs)
+                    .ok()
+                    .map(|rel| rel.to_string_lossy().into_owned())
+            })
+            .collect();
+
+        // Check if any path (absolute or relative) matches any glob.
+        let matched = frontmatter.globs.iter().any(|pattern| {
+            if let Ok(matcher) = globset::Glob::new(pattern) {
+                let matcher = matcher.compile_matcher();
+                // Match against both absolute and relative paths.
+                active_paths.iter().any(|path| matcher.is_match(path))
+                    || relative_paths.iter().any(|rel| matcher.is_match(rel))
+            } else {
+                log::warn!("Invalid glob pattern in rules frontmatter: {pattern}");
+                false
+            }
+        });
+
+        if !matched {
+            *rules_file = None;
+        }
+    }
+    // Recompute `has_rules` after filtering — if all conditional rules
+    // were filtered out, the flag must be false so the template doesn't
+    // render an empty rules section.
+    context.has_rules = context
+        .worktrees
+        .iter()
+        .any(|worktree| worktree.rules_file.is_some());
+    context
+}
+
+/// Compute a SHA-256 digest of the inputs that determine the rendered system
+/// prompt. If this digest is stable across consecutive requests, the rendered
+/// system-prompt bytes are identical and the provider's prefix cache hits.
+///
+/// The digest covers every field of `SystemPromptTemplate` that varies at
+/// runtime: the project context (worktrees, rules files, skills), the available
+/// tools list, the model name, the date, the user's global AGENTS.md, the
+/// sandboxing flag, and the platform flags. Stable across Rust versions
+/// (SHA-256, not `DefaultHasher`).
+fn system_prompt_digest(
+    project: &ProjectContext,
+    available_tools: &[SharedString],
+    model_name: Option<&str>,
+    date: &str,
+    user_agents_md: Option<&str>,
+    static_context: Option<&str>,
+    sandboxing: bool,
+    is_linux: bool,
+    is_windows: bool,
+    mcp_tools_hidden: usize,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    // Project context: worktrees (root_name, abs_path), rules files (path +
+    // text), skills (name + description + location). Serialized via serde for
+    // determinism — `ProjectContext` derives `Serialize`.
+    if let Ok(bytes) = serde_json::to_vec(project) {
+        hasher.update(b"project:");
+        hasher.update(&bytes);
+    }
+    hasher.update(b"\ntools:");
+    for tool in available_tools {
+        hasher.update(tool.as_bytes());
+        hasher.update(b"\n");
+    }
+    hasher.update(b"\nmodel:");
+    hasher.update(model_name.unwrap_or("").as_bytes());
+    hasher.update(b"\ndate:");
+    hasher.update(date.as_bytes());
+    hasher.update(b"\nuser_agents_md:");
+    hasher.update(user_agents_md.unwrap_or("").as_bytes());
+    hasher.update(b"\nstatic_context:");
+    hasher.update(static_context.unwrap_or("").as_bytes());
+    hasher.update(b"\nsandboxing:");
+    hasher.update([sandboxing as u8]);
+    hasher.update(b"\nis_linux:");
+    hasher.update([is_linux as u8]);
+    hasher.update(b"\nis_windows:");
+    hasher.update([is_windows as u8]);
+    // zed-kask: D44 — the hidden-tool count is prompt content (the visibility
+    // marker renders it), so it must participate in the digest or a registry
+    // change that alters only the count would serve a stale cached prompt.
+    hasher.update(b"\nmcp_tools_hidden:");
+    hasher.update(mcp_tools_hidden.to_be_bytes());
+    hasher.finalize().into()
+}
+
+/// zed-kask: D44 — count registered MCP tools absent from this session's
+/// `available_tools`. The system prompt renders this count as a visibility
+/// marker so the model knows the visible list is a selection, not the whole
+/// surface. Pinned by `count_hidden_mcp_tools_excludes_visible_and_counts_hidden`.
+/// First 500 bytes of a failed tool's model-facing text (char-boundary safe),
+/// for the skill tool-failure record.
+fn tool_failure_text(output: &AgentToolOutput) -> String {
+    let text: String = output
+        .llm_output
+        .iter()
+        .filter_map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+            LanguageModelToolResultContent::Image(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut end = text.len().min(500);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+fn count_hidden_mcp_tools<'a>(
+    registered_names: impl Iterator<Item = &'a SharedString>,
+    available_tools: &std::collections::HashSet<&str>,
+) -> usize {
+    registered_names
+        .filter(|name| !available_tools.contains(name.as_ref()))
+        .count()
 }
 
 fn auto_compact_threshold_token_count(
@@ -5142,6 +7902,13 @@ fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Op
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// A tool result that will be delivered asynchronously, after the current
+/// tool-result slot has been flushed. Used by non-blocking tools (e.g.
+/// `spawn_agent`) that return an immediate placeholder and deliver the real
+/// result later.
+///
+/// The outer turn loop drains completed deferred results at the top of each
+/// iteration (after compaction, before `build_completion_request`) and injects
 /// Describes where a streamed compaction summary should land in the thread
 /// once it completes successfully.
 enum CompactionInsertion {
@@ -5152,8 +7919,20 @@ enum CompactionInsertion {
     Manual { marker_id: ClientUserMessageId },
 }
 
+/// zed-kask: D8 — the outcome of a PromptTooLarge rescue attempt
+/// ([`Thread::perform_prompt_too_large_rescue`]).
+enum PromptTooLargeRescue {
+    /// The forced compaction inserted a summary; the turn loop retries with
+    /// the compacted history.
+    Compacted,
+    /// The rescue compaction was cancelled; the turn ends without an error.
+    Cancelled,
+    /// The rescue does not apply (auto-compaction disabled, or nothing new
+    /// to summarize); the original rejection stands.
+    NotApplicable,
+}
+
 struct RunningTurn {
-    prompt_id: PromptId,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
@@ -5174,14 +7953,12 @@ struct RunningTurn {
 
 impl RunningTurn {
     fn new(
-        prompt_id: PromptId,
         event_stream: ThreadEventStream,
         tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cancellation_tx: watch::Sender<bool>,
         task: Task<()>,
     ) -> Self {
         Self {
-            prompt_id,
             _task: task,
             event_stream,
             tools,
@@ -5335,21 +8112,81 @@ pub async fn stream_thread_title(
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> Result<String> {
+    stream_thread_title_with_privacy(model, request, false, cx).await
+}
+
+pub(crate) async fn stream_thread_title_with_privacy(
+    model: LanguageModel,
+    request: LanguageModelRequest,
+    private_inference: bool,
+    cx: &AsyncApp,
+) -> Result<String> {
+    let thinking_was_allowed = request.thinking_allowed;
+    match stream_thread_title_once(model.clone(), request.clone(), private_inference, cx).await {
+        Ok(title) => Ok(title),
+        Err(error) => {
+            if !thinking_was_allowed && is_reasoning_required_title_error(&error) {
+                let mut retry_request = request;
+                retry_request.thinking_allowed = true;
+                retry_request.thinking_effort = Some("low".to_string());
+                stream_thread_title_once(model, retry_request, private_inference, cx).await
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+async fn stream_thread_title_once(
+    model: LanguageModel,
+    request: LanguageModelRequest,
+    private_inference: bool,
+    cx: &AsyncApp,
+) -> Result<String> {
     let mut title = String::new();
     let provider =
         cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(&model))?;
     let mut events = provider.stream_completion(&model, request, cx).await?;
     while let Some(event) = events.next().await {
-        let LanguageModelCompletionEvent::Text(text) = event? else {
-            continue;
-        };
-        if let Some(newline_ix) = text.find(|ch| ch == '\n' || ch == '\r') {
-            title.push_str(&text[..newline_ix]);
-            break;
+        match event? {
+            LanguageModelCompletionEvent::ResponseModel(reported_model) => {
+                validate_response_model_for_private_thread(
+                    private_inference,
+                    &model.provider_id.0,
+                    &reported_model,
+                )?;
+            }
+            LanguageModelCompletionEvent::Text(text) => {
+                if let Some(newline_ix) = text.find(|ch| ch == '\n' || ch == '\r') {
+                    title.push_str(&text[..newline_ix]);
+                    break;
+                }
+                title.push_str(&text);
+            }
+            _ => continue,
         }
-        title.push_str(&text);
     }
     Ok(title)
+}
+
+// zed-kask: D37 — classifies whether a title-generation error looks like a
+// reasoning-required rejection, so the self-healing retry knows when to
+// re-attempt with thinking enabled. Mirrors `GitPanel::is_reasoning_required_error`
+// (D37). The error arrives as an `anyhow::Error` because `stream_thread_title`
+// is called through `.context("failed to generate thread title")`, so we
+// downcast to `LanguageModelCompletionError` to inspect the category.
+fn is_reasoning_required_title_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<LanguageModelCompletionError>()
+        .is_some_and(|err| {
+            matches!(
+                err,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::InvalidRequest,
+                    ..
+                }
+            )
+        })
 }
 
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
@@ -5420,7 +8257,13 @@ impl<T: DeserializeOwned> ToolInput<T> {
                 Ok(ToolInputPayload::InvalidJson { error_message }) => {
                     return Err(anyhow!(error_message));
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // zed-kask: the sender was dropped before sending Full.
+                    // This usually means the LLM stream ended (MaxTokens,
+                    // error, or refusal) before the tool_use input was complete.
+                    log::warn!("ToolInput::recv() returned no final input: {e:#}");
+                    return Err(e);
+                }
             }
         }
     }
@@ -5520,6 +8363,11 @@ where
 
     fn kind() -> acp_v2::ToolKind;
 
+    /// Optional title from raw input, avoiding typed decoding for display only.
+    fn raw_initial_title(&self, _input: &serde_json::Value) -> Option<SharedString> {
+        None
+    }
+
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(
         &self,
@@ -5565,6 +8413,13 @@ where
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>>;
 
+    /// Decode saved arguments independently of the current model-facing contract.
+    /// Tools whose wire format changed can migrate a replay copy here; live
+    /// execution continues to deserialize `Self::Input` directly.
+    fn deserialize_replay_input(input: serde_json::Value) -> Result<Self::Input> {
+        Ok(serde_json::from_value(input)?)
+    }
+
     /// Emits events for a previous execution of the tool.
     fn replay(
         &self,
@@ -5604,6 +8459,8 @@ impl From<anyhow::Error> for AgentToolOutput {
 
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
+    /// Trusted implementation identity, never the provider-facing alias.
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity;
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp_v2::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
@@ -5641,6 +8498,10 @@ where
         T::NAME.into()
     }
 
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Builtin(T::NAME.to_owned())
+    }
+
     fn description(&self) -> SharedString {
         T::description()
     }
@@ -5654,6 +8515,9 @@ where
     }
 
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
+        if let Some(title) = self.0.raw_initial_title(&input) {
+            return title;
+        }
         let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
         self.0.initial_title(parsed_input, _cx)
     }
@@ -5711,7 +8575,7 @@ where
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()> {
-        let input = serde_json::from_value(input)?;
+        let input = T::deserialize_replay_input(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
     }
@@ -5738,6 +8602,7 @@ pub(crate) fn scoped_tool_call_id(
 struct ThreadEventStream {
     sender: mpsc::UnboundedSender<Result<ThreadEvent>>,
     active_compaction: Rc<RefCell<Option<acp_thread::ContextCompactionId>>>,
+    lisp_completions: Rc<RefCell<Vec<oneshot::Receiver<()>>>>,
 }
 
 impl ThreadEventStream {
@@ -5745,7 +8610,24 @@ impl ThreadEventStream {
         Self {
             sender,
             active_compaction: Rc::default(),
+            lisp_completions: Rc::default(),
         }
+    }
+
+    // Receipts outlive result tasks dropped by provider early-exit paths.
+    async fn join_lisp_completions(&self) -> Result<()> {
+        let completions = std::mem::take(&mut *self.lisp_completions.borrow_mut());
+        let mut closed = false;
+        for completion in completions {
+            if completion.await.is_err() {
+                log::error!(
+                    "Lisp worker completion receipt closed without cleanup acknowledgement"
+                );
+                closed = true;
+            }
+        }
+        anyhow::ensure!(!closed, "Lisp cleanup acknowledgement missing");
+        Ok(())
     }
 
     fn send_user_message(&self, message: &UserMessage) {
@@ -5763,6 +8645,12 @@ impl ThreadEventStream {
     fn send_thinking(&self, text: &str) {
         self.sender
             .unbounded_send(Ok(ThreadEvent::AgentThinking(text.to_string())))
+            .ok();
+    }
+
+    fn send_provenance(&self, provenance: &acp_thread::RequestProvenance) {
+        self.sender
+            .unbounded_send(Ok(ThreadEvent::AgentProvenance(provenance.clone())))
             .ok();
     }
 
@@ -5926,6 +8814,7 @@ pub(crate) enum SandboxFallbackDecision {
 
 #[derive(Clone)]
 pub struct ToolCallEventStream {
+    calling_session_id: Option<String>,
     tool_use_id: LanguageModelToolUseId,
     /// The ACP-facing id for this tool call (see [`scoped_tool_call_id`]).
     /// Distinct from `tool_use_id`, which is the raw, provider-issued id.
@@ -5939,12 +8828,155 @@ pub struct ToolCallEventStream {
     /// sandbox grant is recorded so it survives reopening. `None` in tests and
     /// for streams not tied to a live thread.
     thread: Option<WeakEntity<Thread>>,
+    /// zed-kask: D68 — the initiating actor for this tool call, captured at
+    /// construction from `Thread::id()`. It cannot be read on demand through
+    /// the `thread` handle: `Thread::run_tool` (the production constructor)
+    /// executes inside `handle_completion_event`'s `update`, where a
+    /// `WeakEntity` read of the leased Thread double-lease-panics (BH-001).
+    calling_actor: Option<hkask_types::WebID>,
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance, captured at construction from its D100 mark
+    /// (`KaskThreadState::is_private_inference`). Same capture discipline as
+    /// `calling_actor` (D68): read once where `self` is available inside the
+    /// tool-dispatch update, never through the `thread` handle, never from
+    /// model-supplied tool arguments — the mark rides the MCP call envelope's
+    /// parent-set `_meta` (M5), so a tool call can never claim it.
+    calling_provenance: hkask_types::InferenceProvenance,
+    elicitation_barrier: crate::kask_thread_state::ElicitationHoldBarrier,
+    pending_elicitation_reservation: std::sync::Arc<
+        std::sync::Mutex<Option<crate::kask_thread_state::PendingElicitationReservation>>,
+    >,
+    spillover_vault: hkask_condenser::spillover::SpilloverVault,
+}
+
+pub(crate) fn condense_tool_output_with_spillover(
+    condenser: &dyn crate::ThreadCondenser,
+    tool_name: &str,
+    llm_output: Vec<LanguageModelToolResultContent>,
+    spillover_vault: &hkask_condenser::spillover::SpilloverVault,
+    calling_provenance: hkask_types::InferenceProvenance,
+) -> Vec<LanguageModelToolResultContent> {
+    if NO_COMPRESS_TOOLS.contains(&tool_name) {
+        return llm_output;
+    }
+    let privacy = crate::kask_thread_state::provenance_to_spillover_privacy(calling_provenance);
+    let mut out = Vec::with_capacity(llm_output.len() + 1);
+    let mut notices = Vec::new();
+    for part in llm_output {
+        match part {
+            LanguageModelToolResultContent::Text(text) => {
+                let compressed = condenser.compress_tool_result(tool_name, &text);
+                let (primary, notice) = hkask_condenser::spillover::condense_text_with_spillover(
+                    spillover_vault,
+                    tool_name,
+                    &text,
+                    compressed,
+                    privacy,
+                );
+                out.push(LanguageModelToolResultContent::Text(Arc::from(primary)));
+                if let Some(notice) = notice {
+                    notices.push(LanguageModelToolResultContent::Text(Arc::from(notice)));
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out.extend(notices);
+    out
+}
+
+pub(crate) fn rehydrate_spillover_vault_from_db_messages(
+    kask: &crate::kask_thread_state::KaskThreadState,
+    messages: &[Arc<Message>],
+) {
+    let any_private_history = kask.is_private_inference()
+        || kask
+            .request_provenance_map()
+            .values()
+            .any(|prov| prov.private);
+    let privacy =
+        hkask_condenser::spillover::SpilloverPrivacy::from_private_flag(any_private_history);
+    let vault = kask.spillover_vault();
+
+    for message in messages {
+        let Message::Agent(agent_msg) = message.as_ref() else {
+            continue;
+        };
+        for tool_result in agent_msg.tool_results.values() {
+            let mut uris = Vec::new();
+            for part in &tool_result.content {
+                if let LanguageModelToolResultContent::Text(text) = part {
+                    for uri in hkask_condenser::spillover::extract_spillover_uris(text) {
+                        if !uris.contains(&uri) {
+                            uris.push(uri);
+                        }
+                    }
+                }
+            }
+            if uris.is_empty() {
+                continue;
+            }
+            let Some(raw_value) = tool_result.output.as_ref() else {
+                continue;
+            };
+            let raw_cow: std::borrow::Cow<'_, str> = match raw_value {
+                serde_json::Value::String(s) => std::borrow::Cow::Borrowed(s.as_str()),
+                other => match serde_json::to_string(other) {
+                    Ok(json_str) => std::borrow::Cow::Owned(json_str),
+                    Err(_) => continue,
+                },
+            };
+            for uri in &uris {
+                let _ = vault.rehydrate_verified(&tool_result.tool_name, &raw_cow, uri, privacy);
+            }
+        }
+    }
+}
+
+/// zed-kask: D68 — the `WebID` identity of a native thread's session: the
+/// value `ToolCallEventStream` captures as its `calling_actor` at
+/// construction. Derived from the session id only, never from tool
+/// arguments, so a model cannot spoof it.
+fn native_thread_calling_actor(session_id: &acp_v2::SessionId) -> hkask_types::WebID {
+    hkask_types::WebID::for_agent_name(&format!("native-thread:{session_id}"))
 }
 
 impl ToolCallEventStream {
+    /// Get the owning thread, if any. Used by tools that need to access
+    /// the thread's message history. Returns `None` in tests and for
+    /// streams not tied to a live thread.
+    pub fn thread(&self) -> Option<gpui::WeakEntity<Thread>> {
+        self.thread.clone()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (stream, receiver, _cancellation_tx) = Self::test_with_cancellation();
+        (stream, receiver)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_for_actor(actor: hkask_types::WebID) -> (Self, ToolCallEventStreamReceiver) {
+        let (mut stream, receiver) = Self::test();
+        stream.calling_actor = Some(actor);
+        stream.calling_session_id = Some(format!("test-session:{actor}"));
+        stream.tool_call_id = acp_v2::ToolCallId::new(format!("test:{}", uuid::Uuid::new_v4()));
+        (stream, receiver)
+    }
+
+    /// Like [`Self::test_for_actor`], with an explicit calling provenance —
+    /// the test seam for the D100 (M5 write side) dispatch pins: a private
+    /// test context is constructed here, never claimed through tool input.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_for_actor_with_provenance(
+        actor: hkask_types::WebID,
+        provenance: hkask_types::InferenceProvenance,
+    ) -> (Self, ToolCallEventStreamReceiver) {
+        let (mut stream, receiver) = Self::test();
+        stream.calling_actor = Some(actor);
+        stream.calling_provenance = provenance;
+        stream.calling_session_id = Some(format!("test-session:{actor}"));
+        stream.tool_call_id = acp_v2::ToolCallId::new(format!("test:{}", uuid::Uuid::new_v4()));
         (stream, receiver)
     }
 
@@ -5970,6 +9002,10 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             None,
+            None,
+            // The fail-closed default for un-tied test streams — the same
+            // read the child applies to an absent `_meta` mark.
+            hkask_types::InferenceProvenance::PublicProvider,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -5991,6 +9027,10 @@ impl ToolCallEventStream {
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             None,
+            None,
+            // The fail-closed default for un-tied test streams — the same
+            // read the child applies to an absent `_meta` mark.
+            hkask_types::InferenceProvenance::PublicProvider,
         );
 
         (
@@ -6014,8 +9054,11 @@ impl ToolCallEventStream {
         cancellation_rx: watch::Receiver<bool>,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
         thread: Option<WeakEntity<Thread>>,
+        calling_actor: Option<hkask_types::WebID>,
+        calling_provenance: hkask_types::InferenceProvenance,
     ) -> Self {
         Self {
+            calling_session_id: None,
             tool_use_id,
             tool_call_id,
             stream,
@@ -6023,7 +9066,56 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             thread,
+            calling_actor,
+            calling_provenance,
+            elicitation_barrier: crate::kask_thread_state::ElicitationHoldBarrier::new(),
+            pending_elicitation_reservation: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            spillover_vault: hkask_condenser::spillover::SpilloverVault::new(),
         }
+    }
+
+    pub(crate) fn set_spillover_vault(
+        &mut self,
+        vault: hkask_condenser::spillover::SpilloverVault,
+    ) {
+        self.spillover_vault = vault;
+    }
+
+    pub fn spillover_vault(&self) -> &hkask_condenser::spillover::SpilloverVault {
+        &self.spillover_vault
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_spillover_vault(
+        mut self,
+        vault: hkask_condenser::spillover::SpilloverVault,
+    ) -> Self {
+        self.spillover_vault = vault;
+        self
+    }
+
+    pub(crate) fn set_elicitation_barrier(
+        &mut self,
+        barrier: crate::kask_thread_state::ElicitationHoldBarrier,
+        reservation: Option<crate::kask_thread_state::PendingElicitationReservation>,
+    ) {
+        self.elicitation_barrier = barrier;
+        *self
+            .pending_elicitation_reservation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = reservation;
+    }
+
+    fn enqueue_elicitation_prompt(
+        &self,
+        mode: crate::kask_thread_state::ElicitationPromptMode,
+    ) -> crate::kask_thread_state::ElicitationTicket {
+        let reservation = self
+            .pending_elicitation_reservation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        self.elicitation_barrier.enqueue_prompt(mode, reservation)
     }
 
     /// Whether the owning thread is a subagent, so prompts can say "for this
@@ -6045,9 +9137,27 @@ impl ToolCallEventStream {
         });
     }
 
+    /// Register before launching a Lisp worker, including one never polled.
+    pub(crate) fn register_lisp_completion(&self) -> oneshot::Sender<()> {
+        let mut completions = self.stream.lisp_completions.borrow_mut();
+        completions.retain_mut(|completion| match completion.try_recv() {
+            Ok(Some(())) => false,
+            Ok(None) => true,
+            Err(_) => {
+                log::error!(
+                    "Lisp worker receipt closed without acknowledgement during registration"
+                );
+                true
+            }
+        });
+        let (done, completion) = oneshot::channel();
+        completions.push(completion);
+        done
+    }
+
     /// Returns a future that resolves when the user cancels the tool call.
     /// Tools should select on this alongside their main work to detect user cancellation.
-    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + '_ {
+    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + Send + use<> {
         let mut rx = self.cancellation_rx.clone();
         async move {
             loop {
@@ -6060,6 +9170,33 @@ impl ToolCallEventStream {
                 }
             }
         }
+    }
+
+    /// zed-kask: D-seam — F6/P2 (fix recorded as D68). The initiating actor
+    /// for this tool call, distinct per calling thread/subagent.
+    /// Host-derived from the owning thread's session id
+    /// (`WebID::for_agent_name`, deterministic and stable), never from
+    /// model-supplied tool arguments — a model cannot spoof this because
+    /// nothing about the call's JSON input feeds it. Captured at construction
+    /// (see the field doc): reading the Thread on demand panics inside the
+    /// tool-dispatch update. `None` when the stream is not tied to a live
+    /// thread (tests, `ToolCallEventStream::test()`); callers fall back to a
+    /// documented process-level identity in that case, matching the
+    /// pre-existing behavior for non-thread-tied dispatch.
+    pub fn calling_session_id(&self) -> Option<&str> {
+        self.calling_session_id.as_deref()
+    }
+
+    pub fn calling_actor(&self) -> Option<hkask_types::WebID> {
+        self.calling_actor
+    }
+
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance, captured at construction. Test/un-tied streams default to
+    /// `PublicProvider`, matching the child read side's fail-closed treatment
+    /// of an absent `_meta` mark.
+    pub fn calling_provenance(&self) -> hkask_types::InferenceProvenance {
+        self.calling_provenance
     }
 
     /// Returns true if the user has cancelled this tool call.
@@ -6084,6 +9221,47 @@ impl ToolCallEventStream {
     ) {
         self.stream
             .update_tool_call_fields(&self.tool_call_id, update);
+    }
+
+    /// Create a title sender that updates the tool call's header label.
+    /// Used for step-label updates (e.g. "Step 2/5: scope") so the user
+    /// sees which cascade step is running in the tool call header.
+    pub fn title_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let sender = self.stream.sender.clone();
+        let tool_call_id = self.tool_call_id.clone();
+        Arc::new(move |text: &str| {
+            sender
+                .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
+                    acp_v2::ToolCallUpdate::new(tool_call_id.clone())
+                        .title(text)
+                        .into(),
+                )))
+                .log_err();
+        })
+    }
+
+    /// Create a progress sender that emits real-time thinking traces for
+    /// the tool call. Each call sends a `ToolCallThinking` event through the
+    /// thread event channel, which the foreground drainer appends to the
+    /// tool call's `thoughts` markdown buffer. The user sees a live,
+    /// accumulating thinking trace — not a one-line title that overwrites
+    /// itself.
+    ///
+    /// The returned callback is `Send + Sync` (it wraps an
+    /// `mpsc::UnboundedSender` + a `ToolCallId`, both `Send + Sync`), so it
+    /// can be passed into async cascade execution on a background tokio
+    /// executor.
+    pub fn thinking_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let sender = self.stream.sender.clone();
+        let tool_call_id = self.tool_call_id.clone();
+        Arc::new(move |text: &str| {
+            sender
+                .unbounded_send(Ok(ThreadEvent::ToolCallThinking {
+                    tool_call_id: tool_call_id.clone(),
+                    text: text.to_string(),
+                }))
+                .log_err();
+        })
     }
 
     pub fn resolve_authorization(&self, outcome: acp_thread::SelectedPermissionOutcome) {
@@ -6295,7 +9473,16 @@ impl ToolCallEventStream {
             Ok(outcome) => outcome,
             Err(error) => return Task::ready(Err(error)),
         };
+        let elicitation_ticket = self.enqueue_elicitation_prompt(
+            crate::kask_thread_state::ElicitationPromptMode::SharedSettingsPermission,
+        );
         cx.spawn(async move |cx| {
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
+            if cx
+                .update(|cx| Self::sandbox_request_covered_by_grants(&request, &sandbox_grants, cx))
+            {
+                return Ok(());
+            }
             let (response_tx, mut response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
@@ -6404,7 +9591,10 @@ impl ToolCallEventStream {
 
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
+        let elicitation_ticket = self
+            .enqueue_elicitation_prompt(crate::kask_thread_state::ElicitationPromptMode::Exclusive);
         cx.spawn(async move |_cx| {
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
@@ -6671,7 +9861,10 @@ impl ToolCallEventStream {
         let tool_call_id = self.tool_call_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
         let thread = self.thread.clone();
+        let elicitation_ticket = self
+            .enqueue_elicitation_prompt(crate::kask_thread_state::ElicitationPromptMode::Exclusive);
         cx.spawn(async move |cx| {
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
@@ -6773,7 +9966,10 @@ impl ToolCallEventStream {
         let options = acp_thread::PermissionOptions::Flat(options);
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
+        let elicitation_ticket = self
+            .enqueue_elicitation_prompt(crate::kask_thread_state::ElicitationPromptMode::Exclusive);
         cx.spawn(async move |_cx| {
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
             let mut update = acp_v2::ToolCallUpdate::new(tool_call_id.clone());
             if let Some(title) = title {
                 update = update.title(title);
@@ -6823,7 +10019,10 @@ impl ToolCallEventStream {
     ) -> Task<Result<acp_v2::CreateElicitationResponse>> {
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
+        let elicitation_ticket = self
+            .enqueue_elicitation_prompt(crate::kask_thread_state::ElicitationPromptMode::Exclusive);
         cx.spawn(async move |_cx| {
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
@@ -6879,6 +10078,7 @@ impl ToolCallEventStream {
         let fs = self.fs.clone();
         let stream = self.stream.clone();
         let tool_call_id = self.tool_call_id.clone();
+        let mut cancellation_rx = self.cancellation_rx.clone();
         let auto_resolution_outcomes = if check_settings.is_some() {
             match (
                 auto_resolve_permission_outcome(&options, true),
@@ -6890,7 +10090,27 @@ impl ToolCallEventStream {
         } else {
             None
         };
+        let prompt_mode = if check_settings.is_some() {
+            crate::kask_thread_state::ElicitationPromptMode::SharedSettingsPermission
+        } else {
+            crate::kask_thread_state::ElicitationPromptMode::Exclusive
+        };
+        let elicitation_ticket = self.enqueue_elicitation_prompt(prompt_mode);
         cx.spawn(async move |cx| {
+            if *cancellation_rx.borrow() {
+                return Err(anyhow!("Tool call cancelled before authorization"));
+            }
+            let _elicitation_guard = elicitation_ticket.wait_until_active().await;
+            if *cancellation_rx.borrow() {
+                return Err(anyhow!("Tool call cancelled before authorization"));
+            }
+            if let Some(check) = check_settings.as_ref() {
+                match cx.update(|cx| check(cx)) {
+                    ToolPermissionDecision::Allow => return Ok(()),
+                    ToolPermissionDecision::Deny(reason) => return Err(anyhow!(reason)),
+                    ToolPermissionDecision::Confirm => {}
+                }
+            }
             let (response_tx, mut response_rx) = oneshot::channel();
             if let Err(error) =
                 stream
@@ -6906,14 +10126,36 @@ impl ToolCallEventStream {
                         },
                     )))
             {
-                log::error!("Failed to send tool call authorization: {error}");
-                return Err(anyhow!("Failed to send tool call authorization: {error}"));
+                if *cancellation_rx.borrow() {
+                    return Err(anyhow!("Tool call cancelled before authorization"));
+                }
+                log::error!(
+                    "Failed to send tool call authorization (host event receiver detached): {error}"
+                );
+                return Err(anyhow!(
+                    "Failed to send tool call authorization (host event receiver detached): {error}"
+                ));
             }
 
             let Some(check_settings) = check_settings else {
-                let outcome = response_rx
-                    .await
-                    .map_err(|_| anyhow!("authorization channel closed"))?;
+                let cancelled = async {
+                    loop {
+                        if *cancellation_rx.borrow() {
+                            return;
+                        }
+                        if cancellation_rx.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                };
+                let outcome = futures::select_biased! {
+                    _ = cancelled.fuse() => {
+                        return Err(anyhow!("Tool call cancelled while awaiting authorization"));
+                    }
+                    outcome = (&mut response_rx).fuse() => {
+                        outcome.map_err(|_| anyhow!("authorization channel closed"))?
+                    }
+                };
                 ensure_tool_call_authorization_not_interrupted(&outcome)?;
 
                 return Self::persist_permission_outcome(&outcome, fs, cx);
@@ -6929,18 +10171,31 @@ impl ToolCallEventStream {
                 })
             });
 
-            // Race the user's response against settings changes. On each
-            // settings change, re-evaluate `check_settings`: if it now
-            // yields a definitive Allow or Deny, resolve the prompt
-            // without user interaction. Otherwise keep waiting on the
-            // same prompt.
+            // Race the user's response against settings changes and turn
+            // cancellation. On each settings change, re-evaluate
+            // `check_settings`: if it now yields a definitive Allow or Deny,
+            // resolve the prompt without user interaction. Otherwise keep
+            // waiting on the same prompt.
             loop {
                 let settings_changed = async {
                     if settings_rx.changed().await.is_err() {
                         std::future::pending::<()>().await;
                     }
                 };
+                let cancelled = async {
+                    loop {
+                        if *cancellation_rx.borrow() {
+                            return;
+                        }
+                        if cancellation_rx.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                };
                 futures::select_biased! {
+                    _ = cancelled.fuse() => {
+                        return Err(anyhow!("Tool call cancelled while awaiting authorization"));
+                    }
                     outcome = (&mut response_rx).fuse() => {
                         let outcome = outcome.map_err(|_| anyhow!("authorization channel closed"))?;
                         ensure_tool_call_authorization_not_interrupted(&outcome)?;
@@ -7266,6 +10521,7 @@ impl From<UserMessageContent> for acp_v2::ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::set_auto_compact_settings;
     use crate::tests::test_tools::EchoTool;
     use agent_client_protocol::schema::MaybeUndefined;
     use gpui::TestAppContext;
@@ -7274,6 +10530,132 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    /// expect: "Tools without raw titles retain one serde decode and one typed callback, including malformed input" [H5]
+    #[gpui::test]
+    fn h5_default_title_keeps_typed_path(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        thread_local! {
+            static DECODES: Cell<usize> = const { Cell::new(0) };
+        }
+        #[derive(Serialize, JsonSchema)]
+        struct CountedInput(u32);
+        impl<'de> Deserialize<'de> for CountedInput {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                DECODES.with(|count| count.set(count.get() + 1));
+                u32::deserialize(deserializer).map(Self)
+            }
+        }
+        struct TestTool(Rc<Cell<usize>>);
+        impl AgentTool for TestTool {
+            type Input = CountedInput;
+            type Output = String;
+            const NAME: &'static str = "h5_typed_title_test";
+            fn kind() -> acp_v2::ToolKind {
+                acp_v2::ToolKind::Other
+            }
+            fn initial_title(
+                &self,
+                input: Result<CountedInput, serde_json::Value>,
+                _: &mut App,
+            ) -> SharedString {
+                self.0.set(self.0.get() + 1);
+                match input {
+                    Ok(CountedInput(number)) => format!("Typed {number}").into(),
+                    Err(raw) => {
+                        assert_eq!(raw, json!({"malformed": true}), "original raw fallback");
+                        "Typed fallback".into()
+                    }
+                }
+            }
+            fn run(
+                self: Arc<Self>,
+                _: ToolInput<CountedInput>,
+                _: ToolCallEventStream,
+                _: &mut App,
+            ) -> Task<Result<String, String>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+        let callbacks = Rc::new(Cell::new(0));
+        let tool = TestTool(callbacks.clone()).erase();
+        DECODES.with(|count| count.set(0));
+        for (index, (input, expected)) in [
+            (json!(7), "Typed 7"),
+            (json!({"malformed": true}), "Typed fallback"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                cx.update(|cx| tool.initial_title(input, cx)).as_ref(),
+                expected
+            );
+            assert_eq!(DECODES.with(|count| count.get()), index + 1);
+            assert_eq!(callbacks.get(), index + 1);
+        }
+    }
+
+    // ── D43: turn-end failure visibility ────────────────────────────────
+
+    /// D43 pin: the turn-failure arm must downcast the completion error and
+    /// route ProviderRejections through the kask detail helper. A rebase
+    /// that rewrites the arm and drops this block restores the silent
+    /// signature — five unrootable "Provider returned error" turn failures
+    /// on 2026-09-10. The needle is the helper's method name, assembled
+    /// from pieces so this test's own source cannot satisfy it; it matches
+    /// the call site's method name on its own line, tolerant of the
+    /// `KaskThreadState::` path wrapping across lines (the file's style).
+    #[test]
+    fn turn_failure_surfaces_provider_rejection_detail() {
+        let source = include_str!("thread.rs");
+        let needle = concat!("provider_rejection_turn_end", "_warning");
+        assert!(
+            source.contains(needle),
+            "the turn-failure Err arm must route ProviderRejections through the kask detail helper"
+        );
+    }
+
+    // ── D44: router-visibility marker (hidden MCP tool count) ──────────
+
+    #[test]
+    fn count_hidden_mcp_tools_excludes_visible_and_counts_hidden() {
+        // Pins the D44 helper: registered names absent from the turn's
+        // available set count as hidden; visible ones do not. The count feeds
+        // the system-prompt visibility marker — an off-by-one here misreports
+        // the surface the model cannot see.
+        let registered: Vec<SharedString> = [
+            "web_ping",
+            "web_search",
+            "gallery_search",
+            "kanban_goal_create",
+        ]
+        .iter()
+        .map(|name| SharedString::from(*name))
+        .collect();
+        let available: std::collections::HashSet<&str> =
+            ["web_search", "echo"].into_iter().collect();
+        assert_eq!(
+            count_hidden_mcp_tools(registered.iter(), &available),
+            3,
+            "web_ping, gallery_search, and kanban_goal_create are registered \
+             but not visible this turn; web_search is visible; echo is a \
+             built-in that is not registered and must not count either way"
+        );
+    }
+
+    // ── Goal-event ingestion and acknowledgment (D6) ───────────────────
+
+    fn tool_use(id: &str, name: &str) -> AgentMessageContent {
+        AgentMessageContent::ToolUse(language_model::LanguageModelToolUse {
+            id: LanguageModelToolUseId::from(id),
+            name: Arc::from(name),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        })
+    }
 
     #[gpui::test]
     async fn test_tool_call_events_preserve_opaque_id_storage(cx: &mut TestAppContext) {
@@ -7338,13 +10720,15 @@ mod tests {
 
         let (_cancellation_tx, cancellation_rx) = watch::channel(false);
         let tool_stream = ToolCallEventStream::new(
-            "provider_id".into(),
+            LanguageModelToolUseId::from("test-tool-use"),
             tool_call_id.clone(),
             stream.clone(),
             None,
             cancellation_rx,
             Rc::default(),
             None,
+            None,
+            hkask_types::InferenceProvenance::PublicProvider,
         );
         let authorize = cx.update(|cx| {
             tool_stream.authorize_always_prompt(
@@ -7551,6 +10935,538 @@ mod tests {
         );
     }
 
+    /// expect: "Thread cancellation joins real Lisp cleanup even when provider stop bypasses result draining" [H6B]
+    #[gpui::test]
+    async fn h6b_cancel_joins_provider_early_exit(cx: &mut TestAppContext) {
+        h6b_cancel_scenario(cx, None).await;
+    }
+
+    /// expect: "Old cancellation cannot mutate or join a newer turn, even when both running turns have been taken" [H6B]
+    #[gpui::test]
+    async fn h6b_old_new_turn_isolation(cx: &mut TestAppContext) {
+        for cancel_successor in [false, true] {
+            h6b_cancel_scenario(cx, Some(cancel_successor)).await;
+        }
+    }
+
+    async fn h6b_cancel_scenario(cx: &mut TestAppContext, successor: Option<bool>) {
+        // One barrier factory for both real workers; no blocking OS test gate.
+        let hold_worker = |cx: &mut App| {
+            let (entered_tx, entered_rx) = oneshot::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (decoded_tx, decoded_rx) = oneshot::channel();
+            let (exited_tx, exited_rx) = oneshot::channel();
+            crate::RUN_PROBE.with(|probe| {
+                assert!(
+                    probe
+                        .borrow_mut()
+                        .replace(crate::RunProbe {
+                            executor: cx.background_executor().clone(),
+                            entered: entered_tx,
+                            release: release_rx,
+                            decoded: decoded_tx,
+                            exited: Some(exited_tx),
+                        })
+                        .is_none()
+                );
+            });
+            (entered_rx, release_tx, decoded_rx, exited_rx)
+        };
+        let tool_event = |id: &str| {
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: id.to_string().into(),
+                name: LispEvalTool::NAME.into(),
+                raw_input: r#"{"form":"(let ((f (lambda () 3))) (f))"}"#.into(),
+                input: language_model::LanguageModelToolUseInput::Json(
+                    json!({"form":"(let ((f (lambda () 3))) (f))"}),
+                ),
+                is_input_complete: true,
+                thought_signature: None,
+            })
+        };
+        for stop in [
+            StopReason::ToolUse,
+            StopReason::Refusal(None),
+            StopReason::MaxTokens,
+        ] {
+            if successor.is_some() && stop != StopReason::ToolUse {
+                continue;
+            }
+            let (thread, _, fake) = setup_thread_for_test(cx).await;
+            let model = fake.update_model("fake", |model| model.supports_tools = true);
+            let mut events = cx.update(|cx| {
+                let mut settings = AgentSettings::get_global(cx).clone();
+                let mut profile = settings
+                    .profiles
+                    .values()
+                    .next()
+                    .expect("test profile")
+                    .clone();
+                profile.tools.clear();
+                profile.tools.insert(LispEvalTool::NAME.into(), true);
+                let id = AgentProfileId("h6b-lisp".into());
+                settings.profiles.insert(id.clone(), profile);
+                AgentSettings::override_global(settings, cx);
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.set_model(model.clone(), cx);
+                        thread.add_tool(LispEvalTool);
+                        thread.set_profile(id, cx);
+                        thread.send(ClientUserMessageId::new(), vec!["calculate"], cx)
+                    })
+                    .expect("start actual turn")
+            });
+            cx.run_until_parked();
+            let request = fake.pending_completions_for(&model).pop().expect("request");
+            assert!(
+                request
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == LispEvalTool::NAME),
+                "Lisp must be advertised"
+            );
+            let (mut entered_rx, release_tx, mut decoded_rx, mut exited_rx) = cx.update(|cx| {
+                let observations = hold_worker(cx);
+                fake.send_event(&model, &request, tool_event("h6b"));
+                observations
+            });
+            cx.run_until_parked();
+            assert_eq!(entered_rx.try_recv().expect("entry channel"), Some(false));
+            let turn_stream = thread.read_with(cx, |thread, _| {
+                thread
+                    .running_turn
+                    .as_ref()
+                    .expect("running turn")
+                    .event_stream
+                    .clone()
+            });
+            assert_eq!(
+                turn_stream.lisp_completions.borrow().len(),
+                1,
+                "real worker registered before launch"
+            );
+            assert_eq!(
+                turn_stream.lisp_completions.borrow_mut()[0]
+                    .try_recv()
+                    .expect("worker receipt"),
+                None,
+                "cleanup cannot acknowledge while real worker is held"
+            );
+            // Protocol witness pins the early-exit join even when GPUI immediately
+            // destroys the dropped worker future. It is not a second evaluator.
+            let (join_tx, join_rx) = oneshot::channel();
+            turn_stream.lisp_completions.borrow_mut().push(join_rx);
+            // Queue the ready provider error before waking the root select.
+            fake.send_event(
+                &model,
+                &request,
+                LanguageModelCompletionEvent::Stop(stop.clone()),
+            );
+            let mut cancel = cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)));
+            cx.run_until_parked();
+            let returned_early = (&mut cancel).now_or_never().is_some();
+            let new_turn = if let Some(cancel_successor) = successor {
+                let new_events = cx
+                    .update(|cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.send(ClientUserMessageId::new(), vec!["new turn"], cx)
+                        })
+                    })
+                    .expect("start overlapping turn");
+                cx.run_until_parked();
+                let new_request = fake
+                    .pending_completions_for(&model)
+                    .pop()
+                    .expect("new turn request");
+                let (mut entered, release, decoded, exited) = cx.update(|cx| {
+                    let observations = hold_worker(cx);
+                    fake.send_text(&model, &new_request, "new turn still streaming");
+                    fake.send_event(&model, &new_request, tool_event("h6b-new"));
+                    observations
+                });
+                cx.run_until_parked();
+                assert_eq!(entered.try_recv().expect("successor entry"), Some(false));
+                let stream = thread.read_with(cx, |thread, _| {
+                    thread
+                        .running_turn
+                        .as_ref()
+                        .expect("new running turn")
+                        .event_stream
+                        .clone()
+                });
+                let (done, receipt) = oneshot::channel();
+                stream.lisp_completions.borrow_mut().push(receipt);
+                let mut new_cancel = cancel_successor
+                    .then(|| cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx))));
+                cx.run_until_parked();
+                if let Some(cancel) = new_cancel.as_mut() {
+                    assert!(
+                        cancel.now_or_never().is_none(),
+                        "successor still owns its held worker"
+                    );
+                }
+                thread.read_with(cx, |thread, _| {
+                    assert!(
+                        thread.pending_message.is_some(),
+                        "successor pending before old cleanup"
+                    );
+                    assert_eq!(thread.running_turn.is_none(), cancel_successor);
+                });
+                Some((
+                    new_request,
+                    stream,
+                    done,
+                    new_cancel,
+                    release,
+                    decoded,
+                    exited,
+                    new_events,
+                ))
+            } else {
+                None
+            };
+            if release_tx.send(()).is_err() {
+                assert_ne!(
+                    stop,
+                    StopReason::ToolUse,
+                    "normal cancellation must retain real worker"
+                );
+                assert_eq!(
+                    exited_rx.try_recv().expect("exit channel"),
+                    Some(true),
+                    "early-drop cleanup completed"
+                );
+            }
+            join_tx.send(()).expect("release completion witness");
+            if !returned_early {
+                cancel.await;
+            }
+            cx.run_until_parked();
+            if stop == StopReason::ToolUse {
+                assert_eq!(exited_rx.try_recv().expect("exit channel"), Some(true));
+                assert!(
+                    decoded_rx.try_recv().expect("decode channel").is_some(),
+                    "real input decoded off foreground"
+                );
+            }
+            assert!(
+                turn_stream.lisp_completions.borrow().is_empty(),
+                "turn joined all receipts"
+            );
+            if let Some((
+                new_request,
+                stream,
+                done,
+                new_cancel,
+                release,
+                mut decoded,
+                mut exited,
+                _new_events,
+            )) = new_turn
+            {
+                thread.read_with(cx, |thread, _| {
+                    let pending = thread.pending_message.as_ref().expect("old cancellation must not flush new pending message");
+                    assert!(!pending.tool_results.contains_key(&LanguageModelToolUseId::from("h6b")), "old result must not be inserted into successor");
+                    assert!(pending.content.iter().any(|content| matches!(content, AgentMessageContent::Text(text) if text == "new turn still streaming")));
+                    assert!(thread.owns_pending_message(&stream), "latest owner survives running_turn.take");
+                    assert_eq!(thread.running_turn.is_none(), successor == Some(true), "old cleanup cannot cancel successor");
+                    let old = thread.messages.iter().find_map(|message| match message.as_ref() {
+                        Message::Agent(message) => message.tool_results.get(&LanguageModelToolUseId::from("h6b")),
+                        _ => None,
+                    }).expect("old message flushed at successor start");
+                    assert!(old.is_error);
+                    assert_eq!(old.content, vec![TOOL_CANCELED_MESSAGE.into()], "old placeholder remains in old history");
+                });
+                assert_eq!(
+                    stream.lisp_completions.borrow().len(),
+                    2,
+                    "old join did not take successor receipts"
+                );
+                let new_cancel = new_cancel.unwrap_or_else(|| {
+                    cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
+                });
+                cx.run_until_parked();
+                release.send(()).expect("release successor worker");
+                done.send(()).expect("release successor receipt");
+                fake.end_stream(&model, &new_request);
+                new_cancel.await;
+                cx.run_until_parked();
+                assert_eq!(exited.try_recv().expect("successor exited"), Some(true));
+                assert!(decoded.try_recv().expect("successor decode").is_some());
+                assert!(stream.lisp_completions.borrow().is_empty());
+            } else if stop == StopReason::ToolUse {
+                thread.read_with(cx, |thread, _| {
+                    let result = thread
+                        .messages
+                        .iter()
+                        .find_map(|message| match message.as_ref() {
+                            Message::Agent(message) => message
+                                .tool_results
+                                .get(&LanguageModelToolUseId::from("h6b")),
+                            _ => None,
+                        })
+                        .expect("same-turn cancellation recorded and flushed");
+                    assert!(result.is_error);
+                    assert_eq!(
+                        result.output,
+                        Some(json!({"error":"Lisp evaluation cancelled"}))
+                    );
+                });
+            }
+            let mut saw_cancelled_result = false;
+            while let Some(Some(event)) = events.next().now_or_never() {
+                if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
+                    event
+                {
+                    assert_ne!(
+                        update.status,
+                        MaybeUndefined::Value(acp_v2::ToolCallStatus::Completed)
+                    );
+                    if update.raw_output
+                        == MaybeUndefined::Value(json!({"error":"Lisp evaluation cancelled"}))
+                    {
+                        assert_eq!(
+                            update.status,
+                            MaybeUndefined::Value(acp_v2::ToolCallStatus::Failed)
+                        );
+                        saw_cancelled_result = true;
+                    }
+                }
+            }
+            if stop == StopReason::ToolUse {
+                assert!(
+                    saw_cancelled_result,
+                    "old scoped ACP still publishes canonical failure"
+                );
+            }
+            assert!(
+                !returned_early,
+                "Thread::cancel returned before held real worker exited: {stop:?}"
+            );
+        }
+    }
+
+    /// expect: "Completed receipts are pruned, closed receipts are not cleanup, and all outstanding jobs are joined" [H6B]
+    #[gpui::test]
+    async fn h6b_receipt_lifecycle(cx: &mut TestAppContext) {
+        let (events, _receiver) = ToolCallEventStream::test();
+        events
+            .register_lisp_completion()
+            .send(())
+            .expect("ack completed worker");
+        let closed = events.register_lisp_completion();
+        assert_eq!(
+            events.stream.lisp_completions.borrow().len(),
+            1,
+            "prune acknowledged receipt"
+        );
+        drop(closed);
+        let last = events.register_lisp_completion();
+        assert_eq!(
+            events.stream.lisp_completions.borrow().len(),
+            2,
+            "closed acknowledgement retained distinctly"
+        );
+        let mut join = Box::pin(events.stream.join_lisp_completions());
+        assert!(
+            (&mut join).now_or_never().is_none(),
+            "closed receipt must not skip later pending worker"
+        );
+        last.send(()).expect("ack last worker");
+        assert!(
+            join.await
+                .expect_err("closed is not cleanup proof")
+                .to_string()
+                .contains("acknowledgement")
+        );
+        assert!(events.stream.lisp_completions.borrow().is_empty());
+        cx.run_until_parked();
+    }
+
+    /// expect: "Root cancellation fences buffered Lisp success payload and ACP status, but does not rewrite other tools" [H6B]
+    #[gpui::test]
+    async fn h6b_buffered_publication_fence(cx: &mut TestAppContext) {
+        let (thread, _, _) = setup_thread_for_test(cx).await;
+        let output = cx
+            .update(|cx| {
+                LispEvalTool.erase().run(
+                    ToolInput::ready(json!({"form":"(let ((f (lambda () 3))) (f))"})),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_or_else(|error| panic!("real closure calculation: {}", error.raw_output));
+        assert_eq!(output.raw_output, json!({"result":3}));
+        let error_output = cx
+            .update(|cx| {
+                LispEvalTool.erase().run(
+                    ToolInput::ready(json!({"form":"(car 3)"})),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .err()
+            .expect("real type error output");
+        for (name, cancelled, input_error) in [
+            (LispEvalTool::NAME, false, false),
+            (LispEvalTool::NAME, true, false),
+            (LispEvalTool::NAME, false, true),
+            ("read_file", false, false),
+            ("read_file", true, false),
+            ("read_file", false, true),
+            ("read_file", true, true),
+        ] {
+            let output = if input_error { &error_output } else { &output };
+            let fenced = name == LispEvalTool::NAME && cancelled;
+            let (sender, mut receiver) = mpsc::unbounded();
+            let events = ThreadEventStream::new(sender);
+            thread.update(cx, |thread, _| {
+                thread.pending_message_owner = Rc::downgrade(&events.lisp_completions);
+            });
+            let (_cancel_tx, mut cancel_rx) = watch::channel(cancelled);
+            let result = LanguageModelToolResult {
+                tool_use_id: "buffered".into(),
+                tool_name: name.into(),
+                is_error: input_error,
+                content: output.llm_output.clone(),
+                output: Some(output.raw_output.clone()),
+            };
+            Thread::process_tool_result(
+                &thread.downgrade(),
+                &events,
+                &PromptId::new(),
+                None,
+                &mut cx.to_async(),
+                0,
+                result,
+                &mut cancel_rx,
+            )
+            .expect("publish buffered result");
+            let expected = if fenced {
+                json!({"error":"Lisp evaluation cancelled"})
+            } else {
+                output.raw_output.clone()
+            };
+            thread.read_with(cx, |thread, _| {
+                let result = &thread
+                    .pending_message
+                    .as_ref()
+                    .expect("history insertion")
+                    .tool_results[&LanguageModelToolUseId::from("buffered")];
+                assert_eq!(result.is_error, fenced || input_error);
+                assert_eq!(result.output, Some(expected.clone()));
+                assert_eq!(
+                    result.content,
+                    if fenced {
+                        vec!["Lisp evaluation cancelled".into()]
+                    } else {
+                        output.llm_output.clone()
+                    }
+                );
+            });
+            let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) = receiver
+                .next()
+                .await
+                .expect("ACP event")
+                .expect("ACP success")
+            else {
+                panic!("ACP update")
+            };
+            assert_eq!(update.raw_output, MaybeUndefined::Value(expected));
+            assert_eq!(
+                update.status,
+                MaybeUndefined::Value(if fenced || input_error {
+                    acp_v2::ToolCallStatus::Failed
+                } else {
+                    acp_v2::ToolCallStatus::Completed
+                })
+            );
+        }
+    }
+
+    /// expect: "Pending input, queued workers and owner destruction all acknowledge real worker teardown" [H6B]
+    #[gpui::test]
+    async fn h6b_worker_input_and_owner_drop(cx: &mut TestAppContext) {
+        // The sender stays alive: cancellation, not end-of-input, must wake recv.
+        let (_input_tx, input) = ToolInputSender::channel();
+        let (events, _receiver, mut cancellation) = ToolCallEventStream::test_with_cancellation();
+        let stream = events.stream.clone();
+        let task = cx.update(|cx| LispEvalTool.erase().run(input, events, cx));
+        cx.run_until_parked();
+        cancellation.send(true).expect("cancel pending input");
+        let error = match task.await {
+            Err(error) => error,
+            Ok(output) => panic!("pending input succeeded: {}", output.raw_output),
+        };
+        assert_eq!(
+            error.raw_output,
+            json!({"error":"Lisp evaluation cancelled"})
+        );
+        stream
+            .join_lisp_completions()
+            .await
+            .expect("pending-input worker exited");
+
+        for drop_queued in [true, false] {
+            let (events, _receiver) = ToolCallEventStream::test();
+            let stream = events.stream.clone();
+            let (entered_tx, mut entered_rx) = oneshot::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (decoded_tx, _decoded_rx) = oneshot::channel();
+            let (exited_tx, mut exited_rx) = oneshot::channel();
+            let task = cx.update(|cx| {
+                crate::RUN_PROBE.with(|probe| {
+                    assert!(
+                        probe
+                            .borrow_mut()
+                            .replace(crate::RunProbe {
+                                executor: cx.background_executor().clone(),
+                                entered: entered_tx,
+                                release: release_rx,
+                                decoded: decoded_tx,
+                                exited: Some(exited_tx),
+                            })
+                            .is_none()
+                    )
+                });
+                Arc::new(LispEvalTool).run(ToolInput::ready(json!({"form":"(+ 1 2)"})), events, cx)
+            });
+            assert_eq!(
+                stream.lisp_completions.borrow().len(),
+                1,
+                "registered synchronously"
+            );
+            if !drop_queued {
+                cx.run_until_parked();
+                assert_eq!(entered_rx.try_recv().expect("entry channel"), Some(false));
+            }
+            if drop_queued {
+                assert_eq!(
+                    entered_rx.try_recv().expect("queued entry channel"),
+                    None,
+                    "not polled before owner drop"
+                );
+            }
+            drop(task);
+            cx.run_until_parked();
+            stream
+                .join_lisp_completions()
+                .await
+                .expect("dropped owner worker teardown");
+            assert_eq!(
+                exited_rx.try_recv().expect("exit proof"),
+                Some(true),
+                "owner drop raises monotonic cancellation"
+            );
+            assert!(
+                release_tx.send(()).is_err(),
+                "no live worker waiting after acknowledgement"
+            );
+        }
+    }
+
     async fn setup_thread_for_test(
         cx: &mut TestAppContext,
     ) -> (
@@ -7593,10 +11509,197 @@ mod tests {
         })
     }
 
-    fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {
-        let mut settings = AgentSettings::get_global(cx).clone();
-        settings.auto_compact = auto_compact;
-        AgentSettings::override_global(settings, cx);
+    /// F6/P2: two distinct native threads produce distinct `calling_actor`
+    /// identities, and the same thread produces the same identity across
+    /// two separate tool calls (determinism, not per-call randomness). A
+    /// stream not tied to a live thread (e.g. `ToolCallEventStream::test()`)
+    /// falls back to `None`, matching the pre-existing shared identity path
+    /// — never a spoofable value, since nothing about a tool call's JSON
+    /// input feeds this derivation.
+    #[gpui::test]
+    async fn test_calling_actor_is_distinct_per_thread_and_deterministic(cx: &mut TestAppContext) {
+        let (thread_a, _events_a, _fake) = setup_thread_for_test(cx).await;
+        let (thread_b, _events_b, _fake) = setup_thread_for_test(cx).await;
+
+        // The calling actor is captured at construction, outside any update —
+        // `cx` is passed into the closure explicitly so it does not capture
+        // the `TestAppContext` later borrowed mutably by `cx.update`.
+        let stream_for = |thread: &Entity<Thread>, cx: &App| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use"),
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+                Some(actor),
+                hkask_types::InferenceProvenance::PublicProvider,
+            );
+            (stream, cancellation_tx)
+        };
+
+        let (stream_a, _tx_a) = cx.update(|cx| stream_for(&thread_a, cx));
+        let (stream_a_again, _tx_a2) = cx.update(|cx| stream_for(&thread_a, cx));
+        let (stream_b, _tx_b) = cx.update(|cx| stream_for(&thread_b, cx));
+        let (stream_none, _rx) = ToolCallEventStream::test();
+
+        let actor_a = stream_a.calling_actor();
+        let actor_a_again = stream_a_again.calling_actor();
+        let actor_b = stream_b.calling_actor();
+        let actor_none = stream_none.calling_actor();
+
+        assert!(actor_a.is_some(), "a live thread must produce an identity");
+        assert_eq!(
+            actor_a, actor_a_again,
+            "the same thread must produce the same identity across calls"
+        );
+        assert_ne!(
+            actor_a, actor_b,
+            "two distinct threads must produce distinct identities"
+        );
+        assert_eq!(
+            actor_none, None,
+            "a stream with no owning thread must fall back to None, never a fabricated identity"
+        );
+    }
+
+    /// BH-001 regression pin (D68): `calling_actor` must be callable from
+    /// inside a `Thread` update. `Thread::run_tool` constructs the stream and
+    /// dispatches the tool inside `handle_completion_event`'s update, so the
+    /// old design — reading the owning `Thread` through its `WeakEntity`
+    /// handle on demand — double-leased the entity and panicked the editor on
+    /// prompt send ("cannot read agent::thread::Thread while it is already
+    /// being updated"). Under the old on-demand read this test panics; the
+    /// cached design must pass it. This pins the class, not the instance: any
+    /// future re-introduction of an entity read on this path fails here.
+    #[gpui::test]
+    async fn calling_actor_is_readable_from_inside_a_thread_update(cx: &mut TestAppContext) {
+        let (thread, _events, _fake) = setup_thread_for_test(cx).await;
+
+        // Build the stream outside any update, capturing the actor from the
+        // thread — exactly how `Thread::run_tool` does it.
+        let (stream, _cancellation_tx) = cx.update(|cx| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use"),
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+                Some(actor),
+                hkask_types::InferenceProvenance::PublicProvider,
+            );
+            (stream, cancellation_tx)
+        });
+
+        // The dispatch-context read: the Thread entity is leased by this
+        // update. The old `thread.read(cx)` inside `calling_actor` panicked
+        // here; the cached value must read without touching the entity.
+        thread.update(cx, |thread, _cx| {
+            let actor = stream.calling_actor();
+            assert!(actor.is_some(), "a live thread must produce an identity");
+            assert_eq!(
+                actor,
+                Some(native_thread_calling_actor(thread.id())),
+                "the captured actor must be the thread's session identity"
+            );
+        });
+    }
+
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance is captured at stream construction from the thread's D100
+    /// mark, host-derived exactly like `calling_actor` (D68): never from
+    /// model-supplied tool arguments. An unmarked thread's stream carries
+    /// the public mark; a marked thread's carries the private mark; a
+    /// stream not tied to a live thread defaults to public — the same
+    /// fail-closed read the child applies to an absent `_meta`.
+    #[gpui::test]
+    async fn calling_provenance_is_captured_from_the_threads_d100_mark(cx: &mut TestAppContext) {
+        let (thread, _events, _fake) = setup_thread_for_test(cx).await;
+
+        // Captured outside the update, exactly how `Thread::run_tool` builds
+        // the stream: the mark is read where the thread is available.
+        let (public_stream, _tx) = cx.update(|cx| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use"),
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+                Some(actor),
+                hkask_types::InferenceProvenance::from_private_flag(
+                    thread.read_with(cx, |t, _| t.kask.is_private_inference()),
+                ),
+            );
+            (stream, cancellation_tx)
+        });
+
+        // The read is safe inside the update (the D68 class — no entity
+        // re-lease), and the unmarked thread reads public.
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                public_stream.calling_provenance(),
+                hkask_types::InferenceProvenance::PublicProvider,
+                "an unmarked thread's stream carries the public mark"
+            );
+
+            // Mark the thread (the D100 toggle's setter) and capture
+            // again: the stream follows the mark. `self` is in scope inside
+            // the update, so the capture needs no entity read — the D68
+            // double-lease class cannot recur on this path.
+            thread.set_private_inference(true, cx);
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let private_stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use-2"),
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                None,
+                None,
+                hkask_types::InferenceProvenance::from_private_flag(
+                    thread.kask.is_private_inference(),
+                ),
+            );
+            let _ = cancellation_tx;
+            assert_eq!(
+                private_stream.calling_provenance(),
+                hkask_types::InferenceProvenance::PrivateInference,
+                "a marked thread's stream carries the private mark — the
+                 capture follows the D100 mark, not a default"
+            );
+        });
+
+        // A stream not tied to a live thread defaults to the fail-closed
+        // public mark — the child reads an absent `_meta` the same way.
+        let (test_stream, _rx) = ToolCallEventStream::test();
+        assert_eq!(
+            test_stream.calling_provenance(),
+            hkask_types::InferenceProvenance::PublicProvider,
+            "an un-tied stream defaults to public, never a fabricated private claim"
+        );
+    }
+
+    fn prompt_too_large_error() -> LanguageModelCompletionError {
+        LanguageModelCompletionError::ProviderRejection {
+            provider: "OpenRouter".to_string().into(),
+            status: None,
+            code: Some("400".into()),
+            message: "Requested token count exceeds the model's maximum context length".into(),
+            retry_after: None,
+            category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+        }
     }
 
     fn insert_request_token_usage(
@@ -8004,6 +12107,141 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_completion_request_preserves_utf8_description_cutoff_and_schema(
+        cx: &mut TestAppContext,
+    ) {
+        struct VerboseTool;
+        impl AgentTool for VerboseTool {
+            type Input = ();
+            type Output = String;
+            const NAME: &'static str = "verbose_tool";
+
+            fn description() -> SharedString {
+                "界".repeat(100).into()
+            }
+
+            fn kind() -> acp_v2::ToolKind {
+                acp_v2::ToolKind::Other
+            }
+
+            fn initial_title(&self, _: Result<(), serde_json::Value>, _: &mut App) -> SharedString {
+                "Verbose tool".into()
+            }
+
+            fn run(
+                self: Arc<Self>,
+                _: ToolInput<()>,
+                _: ToolCallEventStream,
+                _: &mut App,
+            ) -> Task<Result<String, String>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+            let tool: Arc<dyn AnyAgentTool> = Arc::new(Erased(Arc::new(VerboseTool)));
+            let schema = tool.input_schema();
+            let (sender, _receiver) = mpsc::unbounded();
+            let (cancellation, _cancellation_receiver) = watch::channel(false);
+            thread.running_turn = Some(RunningTurn::new(
+                ThreadEventStream::new(sender),
+                BTreeMap::from([(VerboseTool::NAME.into(), tool)]),
+                cancellation,
+                Task::ready(()),
+            ));
+
+            let request = thread
+                .build_completion_request(CompletionIntent::UserPrompt, cx)
+                .expect("completion request");
+            let tool = request.tools.first().expect("tool remains visible");
+            assert_eq!(tool.description, format!("{}...", "界".repeat(66)));
+            let language_model::LanguageModelRequestToolInput::Function { input_schema, .. } =
+                &tool.input
+            else {
+                panic!("expected a function tool");
+            };
+            assert_eq!(input_schema, &schema);
+            thread.running_turn.take();
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_title_guard_preserves_thread_id_and_thinking_effort(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let thread_id = thread.read_with(cx, |thread, _| thread.id().to_string());
+        for supports_thinking in [false, true] {
+            let model = fake.update_model("fake", |m| m.supports_thinking = supports_thinking);
+            thread.update(cx, |thread, cx| {
+                thread.spawn_title_generation(model.clone(), None, cx);
+            });
+            cx.run_until_parked();
+
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("title request");
+            assert_eq!(request.thread_id.as_deref(), Some(thread_id.as_str()));
+            assert_eq!(request.thinking_allowed, supports_thinking);
+            assert_eq!(
+                request.thinking_effort.as_deref(),
+                supports_thinking.then_some("low")
+            );
+            fake.send_text(&model, &request, "Title");
+            fake.end_stream(&model, &request);
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.title(), Some("Title".into()));
+            });
+        }
+    }
+
+    // zed-kask: D37 — pins the self-healing error classifier for thread-title
+    // generation. Only `InvalidRequest` (400) rejections trigger the thinking
+    // retry; rate limits, auth failures, and transport errors do not. Mirrors
+    // the D37 `test_is_reasoning_required_error_classifies_invalid_request`.
+    #[test]
+    fn test_is_reasoning_required_title_error_classifies_invalid_request() {
+        use language_model::LanguageModelProviderName;
+        use std::time::Duration;
+
+        let invalid_request = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "Reasoning is mandatory for this endpoint and cannot be disabled".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InvalidRequest,
+        };
+        assert!(
+            is_reasoning_required_title_error(&anyhow::anyhow!(invalid_request)),
+            "InvalidRequest rejection should trigger self-healing retry"
+        );
+
+        let rate_limit = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "rate limited".to_string(),
+            retry_after: Some(Duration::from_secs(60)),
+            category: ProviderErrorCategory::RateLimit,
+        };
+        assert!(
+            !is_reasoning_required_title_error(&anyhow::anyhow!(rate_limit)),
+            "RateLimit rejection should not trigger self-healing retry"
+        );
+
+        let other = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
+        assert!(
+            !is_reasoning_required_title_error(&anyhow::anyhow!(other)),
+            "non-rejection errors should not trigger self-healing retry"
+        );
+    }
+
+    #[gpui::test]
     async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         let model = fake.model("fake");
@@ -8262,6 +12500,88 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_ignores_cache_read_tokens(cx: &mut TestAppContext) {
+        // Cache-read tokens are served from the provider's prompt cache at ~0.1x
+        // cost. Counting them toward the compaction threshold forces premature
+        // summarization of nearly-free cached context — the opposite of the
+        // goal. Compaction should fire on *billed* tokens (full-price input +
+        // cache-write), not gross input (which includes cache reads).
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+        let model = FakeLanguageModelProvider::default().model("fake");
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::TokensUsed(100_000),
+                },
+            );
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "mostly cached thread",
+                ));
+
+                // 200k gross input, but 195k of that is cache reads (billed =
+                // 5k). This should NOT trigger compaction — the billed cost is
+                // well under the 100k threshold.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 5_000,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 195_000,
+                        output_tokens: 0,
+                    },
+                );
+
+                assert_eq!(
+                    thread.compaction_message_target_ix(cx),
+                    None,
+                    "cache reads alone should not trigger cost-based compaction"
+                );
+
+                // Cached tokens still consume the model's context window.
+                // Even with the billed cost under 100k, this request cannot
+                // safely reserve any output if the gross input fills it.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 5_000,
+                        cache_read_input_tokens: thread
+                            .model()
+                            .expect("model selected")
+                            .max_token_count(),
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+
+                // Now bump billed tokens (input + cache_creation) over the
+                // threshold while keeping cache reads high. This SHOULD trigger.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 100_001,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 195_000,
+                        output_tokens: 0,
+                    },
+                );
+
+                assert_eq!(
+                    thread.compaction_message_target_ix(cx),
+                    Some(1),
+                    "billed tokens over threshold must trigger compaction"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn test_compaction_unavailable_for_small_context_window(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         // A context window below the minimum disables auto-compaction.
@@ -8319,6 +12639,8 @@ mod tests {
             });
         });
 
+        let _condenser_override =
+            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -8379,6 +12701,7 @@ mod tests {
         let model = fake.update_model("fake", |model| {
             model.max_token_count = MIN_COMPACTION_CONTEXT_WINDOW - 1;
             model.max_input_tokens = MIN_COMPACTION_CONTEXT_WINDOW - 1;
+            model.supports_thinking = true;
         });
         let user_message_id = ClientUserMessageId::new();
         let compact_message_id = ClientUserMessageId::new();
@@ -8395,6 +12718,8 @@ mod tests {
             });
         });
 
+        let _condenser_override =
+            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
@@ -8409,11 +12734,20 @@ mod tests {
             compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
+        assert!(
+            compaction_request.thinking_allowed,
+            "reasoning-capable compaction model must not receive an implicit disable"
+        );
         let compaction_texts = request_texts_after_system(&compaction_request.messages);
         assert_eq!(compaction_texts.len(), 3);
         assert_eq!(compaction_texts[0], "old user");
+        // The condenser override is wired to prove compaction no longer
+        // consults it: the summarizer's request carries the original text.
         assert_eq!(compaction_texts[1], "old assistant");
         assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages[1].to_markdown(), "old assistant\n");
+        });
 
         fake.send_text(&model, &compaction_request, "summary of old context");
         fake.end_stream(&model, &compaction_request);
@@ -8452,8 +12786,619 @@ mod tests {
         });
     }
 
-    /// Cancelling an in-flight manual compaction must not leave the zero-content
-    /// rewind marker (or a partial summary) dangling at the end of the thread.
+    fn two_half_compaction_history() -> Vec<Arc<Message>> {
+        let evidence = |id: &str, text: &str| {
+            let mut call = tool_use(id, "terminal");
+            if let AgentMessageContent::ToolUse(call) = &mut call {
+                call.thought_signature = Some(id.to_string());
+            }
+            Arc::new(Message::Agent(AgentMessage {
+                content: vec![call],
+                tool_results: IndexMap::from_iter([(
+                    id.into(),
+                    LanguageModelToolResult {
+                        tool_use_id: id.into(),
+                        tool_name: "terminal".into(),
+                        is_error: false,
+                        content: vec![
+                            text.to_string().into(),
+                            LanguageModelToolResultContent::Image(LanguageModelImage::empty()),
+                        ],
+                        output: None,
+                    },
+                )]),
+                reasoning_details: Some(Arc::new(json!({"signature": id}))),
+            }))
+        };
+        vec![
+            user_text_message(ClientUserMessageId::new(), "Keep authentication."),
+            evidence("earlier", "Earlier evidence."),
+            user_text_message(
+                ClientUserMessageId::new(),
+                "Correction: preserve the error type too.",
+            ),
+            evidence("later", "Later evidence."),
+        ]
+    }
+
+    #[gpui::test]
+    async fn test_two_half_compaction_runs_concurrently_then_merges_in_order(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |m| m.supports_thinking = true);
+        let original = two_half_compaction_history();
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = fake.pending_completions_for(&model);
+        assert_eq!(
+            requests.len(),
+            2,
+            "both halves must be dispatched before either completes"
+        );
+        let earlier = requests
+            .iter()
+            .find(|r| {
+                r.messages
+                    .iter()
+                    .any(|m| m.string_contents() == "Keep authentication.")
+            })
+            .expect("earlier half");
+        let later = requests
+            .iter()
+            .find(|r| {
+                r.messages
+                    .iter()
+                    .any(|m| m.string_contents() == "Correction: preserve the error type too.")
+            })
+            .expect("later half");
+        for (request, id) in [(earlier, "earlier"), (later, "later")] {
+            assert!(request.thinking_allowed);
+            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+            assert!(
+                parts.iter().any(
+                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id && call.thought_signature.as_deref() == Some(id))
+                )
+            );
+            assert!(parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id && result.content.iter().any(|part| matches!(part, LanguageModelToolResultContent::Image(_))))));
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|message| message.reasoning_details.as_deref()
+                        == Some(&json!({"signature": id})))
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| matches!(part, MessageContent::ToolUse(_)))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| matches!(part, MessageContent::ToolResult(_)))
+                    .count(),
+                1
+            );
+        }
+        // Complete the later half first; chronology must not follow completion order.
+        fake.send_text(&model, later, "Later summary: preserve the error type.");
+        fake.send_event(
+            &model,
+            later,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 31,
+                output_tokens: 8,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, later);
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions_for(&model).len(), 1);
+        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
+        fake.send_text(&model, earlier, "Earlier summary: keep authentication.");
+        fake.send_event(
+            &model,
+            earlier,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 17,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        fake.send_event(
+            &model,
+            earlier,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                output_tokens: 4,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, earlier);
+        cx.run_until_parked();
+        let merge = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("merge request");
+        assert!(merge.thinking_allowed);
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.find("Earlier summary:").expect("earlier summary")
+                < text.find("Later summary:").expect("later summary")
+        );
+        assert!(text.contains("later corrections"));
+        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
+        fake.send_text(&model, &merge, "Keep authentication and the error type.");
+        fake.send_event(
+            &model,
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, &merge);
+        cx.run_until_parked();
+        assert!(fake.pending_completions_for(&model).is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert_eq!(thread.messages.len(), original.len() + 2);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "Keep authentication and the error type."));
+            assert_eq!(thread.cumulative_token_usage().input_tokens, 57);
+            assert_eq!(thread.cumulative_token_usage().output_tokens, 14);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_two_half_compaction_failure_or_cancellation_saves_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        for outcome in [
+            "earlier",
+            "later",
+            "merge",
+            "cancel-halves",
+            "cancel-merge",
+            "truncated",
+            "truncated-merge",
+        ] {
+            let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+            let model = fake.model("fake");
+            let original = two_half_compaction_history();
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.messages = original.clone();
+            });
+            let mut events = thread
+                .update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+                .expect("compact");
+            cx.run_until_parked();
+            let mut requests = fake.pending_completions_for(&model);
+            assert_eq!(requests.len(), 2, "{outcome}");
+            if matches!(outcome, "merge" | "cancel-merge" | "truncated-merge") {
+                for request in &requests {
+                    fake.send_text(&model, request, "Half summary.");
+                    fake.end_stream(&model, request);
+                }
+                cx.run_until_parked();
+                requests = fake.pending_completions_for(&model);
+                assert_eq!(requests.len(), 1);
+            }
+            if outcome.starts_with("cancel") {
+                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+            } else {
+                let request = if outcome == "later" {
+                    requests.last()
+                } else {
+                    requests.first()
+                }
+                .expect("request to fail");
+                for other in &requests {
+                    if other != request {
+                        fake.send_text(&model, other, "Successful peer summary.");
+                    }
+                }
+                if outcome.starts_with("truncated") {
+                    fake.send_text(&model, request, "Incomplete summary");
+                    fake.send_event(
+                        &model,
+                        request,
+                        LanguageModelCompletionEvent::Stop(StopReason::MaxTokens),
+                    );
+                    fake.send_event(
+                        &model,
+                        request,
+                        LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                            input_tokens: 13,
+                            output_tokens: 7,
+                            ..Default::default()
+                        }),
+                    );
+                } else {
+                    fake.send_error(
+                        &model,
+                        request,
+                        LanguageModelCompletionError::ProviderRejection {
+                            provider: "OpenRouter".to_string().into(),
+                            status: None,
+                            code: Some("400".into()),
+                            message: "Context too large for this compaction phase".into(),
+                            retry_after: None,
+                            category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                        },
+                    );
+                }
+            }
+            for request in &requests {
+                fake.end_stream(&model, request);
+            }
+            cx.run_until_parked();
+            assert!(
+                fake.pending_completions_for(&model).is_empty(),
+                "no retries or merge after {outcome}"
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.messages, original, "{outcome}");
+                if outcome.starts_with("truncated") {
+                    assert_eq!(thread.cumulative_token_usage().input_tokens, 13);
+                    assert_eq!(thread.cumulative_token_usage().output_tokens, 7);
+                }
+            });
+            if !outcome.starts_with("cancel") {
+                let mut saw_error = false;
+                while let Some(event) = events.next().await {
+                    if let Err(error) = event {
+                        assert!(
+                            error
+                                .to_string()
+                                .contains(if outcome.starts_with("truncated") {
+                                    "output limit"
+                                } else {
+                                    "Context too large for this compaction phase"
+                                })
+                        );
+                        saw_error = true;
+                    }
+                }
+                assert!(saw_error, "failure must be surfaced: {outcome}");
+            }
+        }
+    }
+
+    fn compaction_evidence_message(id: &str, result_text: &str) -> Arc<Message> {
+        let mut call = tool_use(id, "terminal");
+        if let AgentMessageContent::ToolUse(call) = &mut call {
+            call.thought_signature = Some(id.to_string());
+        }
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![call],
+            tool_results: IndexMap::from_iter([(
+                id.into(),
+                LanguageModelToolResult {
+                    tool_use_id: id.into(),
+                    tool_name: "terminal".into(),
+                    is_error: false,
+                    content: vec![result_text.to_string().into()],
+                    output: None,
+                },
+            )]),
+            reasoning_details: None,
+        }))
+    }
+
+    fn segmented_compaction_history(count: usize, result_bytes: usize) -> Vec<Arc<Message>> {
+        let mut messages = Vec::new();
+        for index in 0..count {
+            messages.push(user_text_message(
+                ClientUserMessageId::new(),
+                &format!("Exchange {index}: keep it."),
+            ));
+            messages.push(compaction_evidence_message(
+                &format!("exchange-{index}"),
+                &"x".repeat(result_bytes),
+            ));
+        }
+        messages
+    }
+
+    #[gpui::test]
+    async fn test_compaction_pre_shrinks_oversized_tool_results(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        // 80,000 tokens is the compaction floor; the derived byte budget is
+        // ~136 KiB and the per-result window cap ~8 KiB, so three 110 KiB
+        // tool results are deterministically windowed down to a fitting
+        // history — the LLM never sees the bulk.
+        let model = fake.update_model("fake", |m| m.max_token_count = 80_000);
+        let original = segmented_compaction_history(3, 110_000);
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = fake.pending_completions_for(&model);
+        assert_eq!(
+            requests.len(),
+            2,
+            "the windowed history fits, so the ratified two-half plan applies"
+        );
+        for request in &requests {
+            let text = request
+                .messages
+                .iter()
+                .map(|m| m.string_contents())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.contains("compaction elided"),
+                "each oversized result carries the honest window marker"
+            );
+            assert!(
+                text.len() < 100_000,
+                "the deterministic shrink, not the LLM, removes the bulk ({} bytes)",
+                text.len()
+            );
+        }
+        // The stored history keeps every byte of the original results.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages, original);
+        });
+        for (request, summary) in requests
+            .iter()
+            .zip(["Earlier half summary.", "Later half summary."])
+        {
+            fake.send_text(&model, request, summary);
+            fake.send_event(
+                &model,
+                request,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            );
+            fake.end_stream(&model, request);
+        }
+        cx.run_until_parked();
+        let merge = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("merge request");
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.find("Earlier half summary.").expect("earlier")
+                < text.find("Later half summary.").expect("later")
+        );
+        fake.send_text(&model, &merge, "All three exchanges kept.");
+        fake.send_event(
+            &model,
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, &merge);
+        cx.run_until_parked();
+        assert!(fake.pending_completions_for(&model).is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "All three exchanges kept."));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_segmented_compaction_over_budget_history(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        // Forty 6 KiB results: each under the legacy fixed floor's 8 KiB
+        // per-result cap, but ~240 KiB total against the ~136 KiB budget —
+        // segmentation must engage. The count-aware cap (C2, operator ruling
+        // 2026-10-18) bounds the fleet's aggregate by the budget, so these
+        // sub-legacy-floor results ARE windowed now — the fixed floor's
+        // unbounded aggregate was the exact failure this history pinned.
+        // The pin's surviving intent: every segment fits, and each segment
+        // still carries whole tool exchanges.
+        let model = fake.update_model("fake", |m| m.max_token_count = 80_000);
+        let original = segmented_compaction_history(40, 6_000);
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = fake.pending_completions_for(&model);
+        assert!(
+            requests.len() >= 2,
+            "an over-budget history plans multiple segments (got {})",
+            requests.len()
+        );
+        for request in &requests {
+            let text = request
+                .messages
+                .iter()
+                .map(|m| m.string_contents())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.len() < 200_000,
+                "every segment fits the budget ({} bytes)",
+                text.len()
+            );
+            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+            assert!(
+                parts
+                    .iter()
+                    .any(|p| matches!(p, MessageContent::ToolResult(_))),
+                "each segment carries whole exchanges"
+            );
+        }
+        // Complete the segments in reverse order; the merge must follow
+        // summary chronology, not completion order.
+        let summaries: Vec<String> = (0..requests.len())
+            .map(|index| format!("Segment {index} summary."))
+            .collect();
+        for (request, summary) in requests.iter().zip(&summaries).rev() {
+            fake.send_text(&model, request, summary);
+            fake.send_event(
+                &model,
+                request,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            );
+            fake.end_stream(&model, request);
+        }
+        cx.run_until_parked();
+        let merge = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("merge request");
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for pair in summaries.windows(2) {
+            let earlier = text.find(pair[0].as_str()).expect("earlier summary");
+            let later = text.find(pair[1].as_str()).expect("later summary");
+            assert!(earlier < later, "summaries merge in chronological order");
+        }
+        assert!(text.contains("later corrections"));
+        fake.send_text(&model, &merge, "All forty exchanges kept.");
+        fake.send_event(
+            &model,
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, &merge);
+        cx.run_until_parked();
+        assert!(fake.pending_completions_for(&model).is_empty());
+        let segments = requests.len() as u64;
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert_eq!(thread.messages.len(), original.len() + 2);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "All forty exchanges kept."));
+            assert_eq!(
+                thread.cumulative_token_usage().input_tokens,
+                segments * 10 + 9
+            );
+            assert_eq!(
+                thread.cumulative_token_usage().output_tokens,
+                segments * 2 + 2
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_oversized_indivisible_history_compacts_via_elision(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |m| m.max_token_count = 80_000);
+        let transcript = format!("TRANSCRIPT-START{}TRANSCRIPT-END", "x".repeat(500_000));
+        let original = vec![
+            user_text_message(ClientUserMessageId::new(), "Summarize this transcript."),
+            compaction_evidence_message("bulk", &transcript),
+        ];
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = fake.pending_completions_for(&model);
+        assert_eq!(
+            requests.len(),
+            1,
+            "an indivisible history summarizes in one elided call"
+        );
+        let request = requests.first().expect("elided request");
+        let text = request
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("compaction elided"));
+        assert!(text.contains("TRANSCRIPT-START"), "the head is kept");
+        assert!(text.contains("TRANSCRIPT-END"), "the tail is kept");
+        // Elision touches only the summarizer's request copy.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages, original);
+        });
+        fake.send_text(&model, request, "Transcript summarized.");
+        fake.send_event(
+            &model,
+            request,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 11,
+                output_tokens: 3,
+                ..Default::default()
+            }),
+        );
+        fake.end_stream(&model, request);
+        cx.run_until_parked();
+        assert!(fake.pending_completions_for(&model).is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "Transcript summarized."));
+        });
+    }
+
+    #[test]
+    fn compaction_template_preserves_meaning_while_requesting_brevity() {
+        assert!(COMPACTION_PROMPT.contains(
+            "Preserve negations, conditions, genuine uncertainty, and decision rationale"
+        ));
+        assert!(COMPACTION_PROMPT.contains("Prefer clarity over brevity"));
+        assert!(COMPACTION_PROMPT.contains("later corrections override earlier claims"));
+        assert!(
+            COMPACTION_PROMPT
+                .contains("Preserve exact file paths, commands, error strings, and identifiers")
+        );
+    }
+
     #[gpui::test]
     async fn test_manual_compact_cancelled_leaves_no_marker(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
@@ -8491,8 +13436,8 @@ mod tests {
         });
     }
 
-    /// A failed compaction (here, an empty summary) reports an error and leaves
-    /// the thread untouched — no marker, no compaction.
+    /// A compaction that stays empty across its single retry reports an error
+    /// and leaves the thread untouched — no marker, no compaction.
     #[gpui::test]
     async fn test_manual_compact_empty_summary_leaves_no_marker(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
@@ -8522,6 +13467,15 @@ mod tests {
         fake.end_stream(&model, &request);
         cx.run_until_parked();
 
+        // The empty summary is retried once; end the retry's stream empty too
+        // so the compaction actually fails.
+        let retry_request = fake
+            .pending_completions()
+            .pop()
+            .expect("an empty summary is retried once");
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
         // An error is surfaced, and the thread is left exactly as it was. The
         // compaction task drops the event stream after failing, so the channel
         // closes and this drain terminates.
@@ -8536,6 +13490,128 @@ mod tests {
             assert_eq!(thread.messages.len(), 2);
             assert!(matches!(&*thread.messages[0], Message::User(_)));
             assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// A provider refusal on the compaction request is classified as a
+    /// refusal — not misreported as an empty summary — and, being permanent
+    /// for the same request, is not retried.
+    #[gpui::test]
+    async fn test_manual_compact_refusal_is_classified_and_not_retried(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let mut events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let request = fake.pending_completions().pop().unwrap();
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
+        );
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+
+        // The refusal is surfaced by name, no second summarization request is
+        // made, and the thread is left exactly as it was. The compaction task
+        // drops the event stream after failing, so the channel closes and
+        // this drain terminates.
+        let mut refusal_error = false;
+        while let Some(event) = events.next().await {
+            if let Err(error) = event {
+                assert!(
+                    error.to_string().contains("refused the compaction request"),
+                    "the refusal must be named: {error}"
+                );
+                assert!(
+                    !error.to_string().contains("empty summary"),
+                    "a refusal must not be misreported as an empty summary"
+                );
+                refusal_error = true;
+            }
+        }
+        assert!(refusal_error, "expected an error event naming the refusal");
+        assert!(
+            fake.pending_completions().is_empty(),
+            "a refusal is permanent and is not retried"
+        );
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 2);
+            assert!(matches!(&*thread.messages[0], Message::User(_)));
+            assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// An empty-but-successful summarization stream is transient-shaped: the
+    /// manual compaction retries once, and a summary from the retry is
+    /// stored with no error surfaced.
+    #[gpui::test]
+    async fn test_manual_compact_retries_once_on_an_empty_summary(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // First attempt: the stream ends successfully with no text.
+        let request = fake.pending_completions().pop().unwrap();
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+
+        // Exactly one retry, and its summary is stored.
+        let retry_request = fake
+            .pending_completions()
+            .pop()
+            .expect("an empty summary is retried exactly once");
+        fake.send_text(&model, &retry_request, "summary of old context");
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        assert!(
+            fake.pending_completions().is_empty(),
+            "a successful retry ends the compaction — no third request"
+        );
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 4);
+            assert!(matches!(&*thread.messages[2], Message::User(_)));
+            assert!(matches!(
+                &*thread.messages[3],
+                Message::Compaction(CompactionInfo::Summary(summary))
+                    if summary.as_ref() == "summary of old context"
+            ));
         });
     }
 
@@ -8651,7 +13727,12 @@ mod tests {
 
         assert!(request.tools.is_empty());
         assert_eq!(request.tool_choice, None);
-        assert!(!request.thinking_allowed);
+        // zed-kask: D37 — the fork does not implicitly disable a reasoning
+        // model's thinking on helper requests: for a rebuild-prompt
+        // compaction the model's own `supports_thinking` governs (upstream
+        // hard-disables it). A reasoning-only compaction model would reject
+        // a thinking-disabled request with 400 InvalidRequest.
+        assert!(request.thinking_allowed);
         assert_eq!(request.thinking_effort, None);
         assert_eq!(request.speed, None);
     }
@@ -8814,7 +13895,10 @@ mod tests {
 
         assert!(request.tools.is_empty());
         assert_eq!(request.tool_choice, None);
-        assert!(!request.thinking_allowed);
+        // zed-kask: D37 — same rule as the default-strategy test: a
+        // thinking-capable compaction model keeps thinking enabled on the
+        // rebuilt request (upstream hard-disables it).
+        assert!(request.thinking_allowed);
         assert_eq!(request.thinking_effort, None);
         assert_eq!(request.speed, None);
     }
@@ -8999,6 +14083,480 @@ mod tests {
         cx.run_until_parked();
     }
 
+    /// zed-kask: D8 — a PromptTooLarge rejection mid-turn is rescued by one
+    /// forced compaction, and the turn retries against the compacted history
+    /// instead of dying as a permanent rejection (live incident 2026-09-29:
+    /// 917,786 input tokens + the 131,072-token output reserve vs a
+    /// 1,048,576-token window — over by 282 tokens, past the threshold
+    /// check's discrete step).
+    #[gpui::test]
+    async fn test_prompt_too_large_rescue_compacts_and_retries(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The turn request arrives; reject it as PromptTooLarge.
+        let turn_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        assert_eq!(turn_request.intent, Some(CompletionIntent::UserPrompt));
+        fake.send_error(&model, &turn_request, prompt_too_large_error());
+        fake.end_stream(&model, &turn_request);
+        cx.run_until_parked();
+
+        // The rescue fires: a forced compaction request arrives (the simple
+        // two-message history plans a single pass). The turn's prompt is
+        // kept verbatim — it is not part of the summarized range.
+        let compaction_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("rescue compaction request");
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        let compaction_texts = request_texts_after_system(&compaction_request.messages);
+        assert!(
+            !compaction_texts
+                .iter()
+                .any(|text| text.contains("new prompt"))
+        );
+        fake.send_text(&model, &compaction_request, "rescued summary");
+        fake.end_stream(&model, &compaction_request);
+        cx.run_until_parked();
+
+        // The turn retries against the compacted history: the request
+        // carries the summary plus the verbatim turn prompt, not the
+        // original exchange.
+        let retry_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("retry request");
+        let retry_text = retry_request
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(retry_text.contains("rescued summary"));
+        assert!(retry_text.contains("new prompt"));
+        // The summarized agent exchange is dropped from the request (it
+        // lives in the summary); pre-compaction user messages are retained
+        // within the byte budget.
+        assert!(!retry_text.contains("old assistant"));
+        fake.send_text(&model, &retry_request, "done");
+        fake.send_event(
+            &model,
+            &retry_request,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.messages.iter().any(|message| matches!(
+                &**message,
+                Message::Compaction(CompactionInfo::Summary(summary))
+                    if summary.as_ref() == "rescued summary"
+            )));
+            assert!(thread
+                .messages
+                .iter()
+                .any(|message| matches!(&**message, Message::Agent(agent) if agent.to_markdown() == "done\n")));
+        });
+    }
+
+    /// zed-kask: D8 — the rescue is bounded to one per turn: a second
+    /// PromptTooLarge after a rescue falls through to the fatal error path
+    /// instead of compacting again.
+    #[gpui::test]
+    async fn test_prompt_too_large_rescue_is_bound_to_once_per_turn(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let prompt_too_large = || prompt_too_large_error();
+
+        // First rejection: rescued by one compaction.
+        let turn_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        fake.send_error(&model, &turn_request, prompt_too_large());
+        fake.end_stream(&model, &turn_request);
+        cx.run_until_parked();
+        let compaction_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("rescue compaction request");
+        fake.send_text(&model, &compaction_request, "rescued summary");
+        fake.end_stream(&model, &compaction_request);
+        cx.run_until_parked();
+
+        // Second rejection after the rescue: no second compaction — the
+        // turn dies with the original rejection.
+        let retry_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("retry request");
+        fake.send_error(&model, &retry_request, prompt_too_large());
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        assert!(
+            fake
+                .pending_completions_for(&model)
+                .iter()
+                .all(|request| request.intent != Some(CompletionIntent::ThreadContextSummarization)),
+            "a second PromptTooLarge must not trigger a second rescue compaction"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must be dead");
+        });
+    }
+
+    /// zed-kask: D8 — the rescue respects the auto-compact setting: when the
+    /// operator disabled auto-compaction, a PromptTooLarge rejection is not
+    /// rescued (manual Compact stays the recovery path).
+    #[gpui::test]
+    async fn test_prompt_too_large_rescue_respects_disabled_auto_compact(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let turn_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        fake.send_error(&model, &turn_request, prompt_too_large_error());
+        fake.end_stream(&model, &turn_request);
+        cx.run_until_parked();
+
+        assert!(
+            fake
+                .pending_completions_for(&model)
+                .iter()
+                .all(|request| request.intent != Some(CompletionIntent::ThreadContextSummarization)),
+            "auto-compaction disabled must disable the PromptTooLarge rescue"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must be dead");
+        });
+    }
+
+    /// zed-kask: D8 — a transient failure of the rescue compaction retries
+    /// inside the rescue (bounded by the shared retry machinery) instead of
+    /// killing the turn; the whole episode is the turn's one rescue.
+    #[gpui::test]
+    async fn test_prompt_too_large_rescue_retries_transient_compaction_failure(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The turn request is rejected as PromptTooLarge; the rescue fires.
+        let turn_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        fake.send_error(&model, &turn_request, prompt_too_large_error());
+        fake.end_stream(&model, &turn_request);
+        cx.run_until_parked();
+
+        // The rescue compaction fails transiently (503 + retry-after).
+        let first = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("rescue compaction request");
+        assert_eq!(
+            first.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        fake.send_error(
+            &model,
+            &first,
+            LanguageModelCompletionError::from_http_status(
+                language_model::LanguageModelProviderName::new("test"),
+                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                "compaction provider error".to_string(),
+                Some(Duration::from_secs(3)),
+            ),
+        );
+        fake.end_stream(&model, &first);
+        cx.run_until_parked();
+        // The rescue waits out the jittered retry delay, then retries.
+        cx.executor()
+            .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+                3,
+            )));
+        cx.run_until_parked();
+
+        // The retried rescue compaction succeeds.
+        let second = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("rescue compaction retry");
+        assert_eq!(
+            second.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        fake.send_text(&model, &second, "rescued summary");
+        fake.end_stream(&model, &second);
+        cx.run_until_parked();
+
+        // The turn retries against the compacted history and completes.
+        let retry_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("retry request");
+        fake.send_text(&model, &retry_request, "done");
+        fake.send_event(
+            &model,
+            &retry_request,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.messages.iter().any(|message| matches!(
+                &**message,
+                Message::Compaction(CompactionInfo::Summary(summary))
+                    if summary.as_ref() == "rescued summary"
+            )));
+            assert!(thread.running_turn.is_none(), "the turn must complete");
+        });
+    }
+
+    /// zed-kask: D8 — the dead-turn marking self-heals the thread: the
+    /// synthesized usage makes the NEXT turn's threshold check fire an
+    /// auto-compaction before its first request. Emergent but correct —
+    /// pinned so it is not "fixed" away.
+    #[gpui::test]
+    async fn test_prompt_too_large_marking_self_heals_next_turn(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            // Auto-compact disabled: the PromptTooLarge rejection is not
+            // rescued, the turn dies, and handle_completion_error marks the
+            // synthesized usage.
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["doomed prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let turn_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        fake.send_error(&model, &turn_request, prompt_too_large_error());
+        fake.end_stream(&model, &turn_request);
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must be dead");
+        });
+
+        // Re-enable auto-compaction and start the next turn: the threshold
+        // check sees the synthesized usage and compacts BEFORE the request.
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["next prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The threshold check fires BEFORE the request. The summarized
+        // history ([old user, old assistant, doomed prompt]) is splittable,
+        // so the plan is the two-half split: serve both segments, then the
+        // merge.
+        let segments = fake.pending_completions_for(&model);
+        assert_eq!(
+            segments.len(),
+            2,
+            "the splittable history plans the two-half split"
+        );
+        for segment in &segments {
+            assert_eq!(
+                segment.intent,
+                Some(CompletionIntent::ThreadContextSummarization)
+            );
+            fake.send_text(&model, segment, "segment summary");
+            fake.end_stream(&model, segment);
+        }
+        cx.run_until_parked();
+        let merge = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("merge request");
+        fake.send_text(&model, &merge, "self-healed summary");
+        fake.end_stream(&model, &merge);
+        cx.run_until_parked();
+
+        let retry_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("turn request");
+        let retry_text = retry_request
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(retry_text.contains("self-healed summary"));
+        assert!(retry_text.contains("next prompt"));
+        fake.send_text(&model, &retry_request, "done");
+        fake.send_event(
+            &model,
+            &retry_request,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must complete");
+        });
+    }
+
     #[gpui::test]
     async fn test_compaction_usage_counts_toward_cumulative_usage(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
@@ -9102,7 +14660,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_auto_compaction_runs_again_later_in_the_same_turn(cx: &mut TestAppContext) {
+    async fn test_auto_compaction_holds_stale_usage_after_a_same_turn_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        // zed-kask: D8 — adapted from upstream's
+        // `test_auto_compaction_runs_again_later_in_the_same_turn` (renamed:
+        // the fork's answer is the opposite). Usage recorded against a user
+        // message that now precedes the inserted summary is stale — the
+        // `latest_compaction_message_ix_before > usage_ix` guard holds
+        // further mid-turn auto-compactions (the post-compaction history is
+        // smaller; the old usage overstates it). Upstream re-compacts from
+        // its recomputed `context_usage`.
         let (_thread, fake, model, _events) = start_turn_and_compact(cx).await;
 
         finish_tool_round(&fake, &model, None, cx);
@@ -9112,7 +14680,6 @@ mod tests {
         );
 
         finish_tool_round(&fake, &model, Some(900_000), cx);
-        finish_compaction(&fake, &model, "second summary", cx);
         assert_eq!(
             last_pending_intent(&fake),
             Some(CompletionIntent::ToolResults)
@@ -9156,6 +14723,27 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
+        // zed-kask: D8 — the fork has no pre-send compaction: the next
+        // prompt goes out first, and overflow recovery is the PromptTooLarge
+        // rescue (one forced compaction per turn, pinned by the
+        // test_prompt_too_large_rescue_* set).
+        assert_eq!(
+            last_pending_intent(&fake),
+            Some(CompletionIntent::UserPrompt)
+        );
+
+        fake.send_last_error(
+            &model,
+            LanguageModelCompletionError::from_http_status(
+                LanguageModelProviderName::new("test"),
+                http_client::StatusCode::PAYLOAD_TOO_LARGE,
+                "prompt is too long".to_string(),
+                None,
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
         assert_eq!(
             last_pending_intent(&fake),
             Some(CompletionIntent::ThreadContextSummarization)
@@ -9192,26 +14780,31 @@ mod tests {
         );
         fail_transiently_and_retry(&fake, &model, cx);
 
-        let compaction_request = fake.pending_completions().pop().unwrap();
+        // zed-kask: D8 — the fork's budget-aware planner segments the
+        // over-budget history; the retry's prompt HAS recorded usage, so it
+        // is part of the summarized range rather than kept verbatim after
+        // the summary (upstream's insertion keeps an unanswered prompt out
+        // of the summary wholesale). The compacted history — not the raw
+        // messages — is what the retried request carries.
         assert_eq!(
-            request_texts_after_system(&compaction_request.messages),
-            vec![
-                "old user".to_string(),
-                "old assistant".to_string(),
-                COMPACTION_PROMPT.to_string(),
-            ]
+            last_pending_intent(&fake),
+            Some(CompletionIntent::ThreadContextSummarization)
         );
+        let compaction_request = fake.pending_completions().pop().unwrap();
+        assert!(
+            request_texts_after_system(&compaction_request.messages)
+                .iter()
+                .any(|text| text.contains("new prompt"))
+        );
+        finish_compaction(&fake, &model, "summary", cx);
         finish_compaction(&fake, &model, "summary", cx);
 
         let final_request = fake.pending_completions().pop().unwrap();
-        assert_eq!(
-            request_texts_after_system(&final_request.messages),
-            vec![
-                "old user".to_string(),
-                summary_request_text("summary"),
-                "new prompt".to_string(),
-            ]
-        );
+        let final_texts = request_texts_after_system(&final_request.messages);
+        // The retried request carries the compacted history, not the raw
+        // messages.
+        assert!(final_texts.iter().any(|text| text.contains("summary")));
+        assert!(final_texts.iter().all(|text| !text.contains("old user")));
     }
 
     #[gpui::test]
@@ -9305,7 +14898,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_auto_compaction_skips_when_only_the_prompt_remains(cx: &mut TestAppContext) {
+    async fn test_auto_compaction_waits_for_usage_when_only_the_prompt_remains(
+        cx: &mut TestAppContext,
+    ) {
+        // zed-kask: D8 — adapted from upstream's
+        // `test_auto_compaction_skips_when_only_the_prompt_remains` (renamed:
+        // the fork's answer differs in both directions). Compaction is driven
+        // by recorded per-request usage, not a precomputed `context_usage`:
+        // a lone prompt with NO recorded usage has nothing to compact
+        // against, and once the prompt HAS been sent across the threshold
+        // the fork compacts it — the sent prompt is not kept verbatim (the
+        // segmented/elision planner owns the indivisible shape).
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         let model = fake.model("fake");
         let user_message_id = ClientUserMessageId::new();
@@ -9315,6 +14918,9 @@ mod tests {
             thread
                 .messages
                 .push(user_text_message(user_message_id.clone(), "huge prompt"));
+
+            assert_eq!(thread.compaction_message_target_ix(cx), None);
+
             insert_request_token_usage(
                 thread,
                 user_message_id,
@@ -9324,7 +14930,7 @@ mod tests {
                 },
             );
 
-            assert_eq!(thread.compaction_message_target_ix(cx), None);
+            assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
         });
     }
 
@@ -9374,6 +14980,124 @@ mod tests {
         assert!(
             matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
             "expected replayed agent text, got {event:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_system_prompt_digest_stability(cx: &mut TestAppContext) {
+        // The system prompt is re-rendered on every build_request_messages
+        // call, but its inputs rarely change between consecutive requests.
+        // The digest cache must reuse the same rendered string when inputs are
+        // stable, and re-render (different bytes) when a tool is added.
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+        let model = FakeLanguageModelProvider::default().model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+        });
+
+        let first_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // Second call with no changes — should reuse the cached render.
+        let second_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        assert_eq!(
+            first_prompt, second_prompt,
+            "system prompt must be byte-stable across consecutive renders with no input changes"
+        );
+
+        // Add a tool — the available_tools list changes, so the digest must
+        // change and the rendered prompt must differ (the Tool Use section
+        // appears when tools are present).
+        struct DigestBustTool;
+        impl AgentTool for DigestBustTool {
+            type Input = ();
+            type Output = String;
+            const NAME: &'static str = "digest_bust";
+            fn kind() -> acp_v2::ToolKind {
+                acp_v2::ToolKind::Other
+            }
+            fn initial_title(
+                &self,
+                _input: Result<Self::Input, serde_json::Value>,
+                _cx: &mut App,
+            ) -> SharedString {
+                "Digest Bust".into()
+            }
+            fn run(
+                self: std::sync::Arc<Self>,
+                _input: ToolInput<Self::Input>,
+                _event_stream: ToolCallEventStream,
+                _cx: &mut App,
+            ) -> Task<Result<Self::Output, Self::Output>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                thread.add_tool(DigestBustTool);
+            });
+        });
+
+        let third_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                // Pass the tool name explicitly since running_turn is None in
+                // this test context (no turn is running).
+                let available_tools: Vec<SharedString> = thread.tools.keys().cloned().collect();
+                let messages = thread.build_request_messages(available_tools, cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        assert_ne!(
+            second_prompt, third_prompt,
+            "system prompt must change when a tool is added (digest bust)"
+        );
+        assert!(
+            third_prompt.contains("## Tool Use"),
+            "tool-use section should appear after adding a tool, got: {third_prompt}"
         );
     }
 
@@ -9501,6 +15225,132 @@ mod tests {
         );
     }
 
+    /// expect: [P1] a native child cannot regain excluded tools by changing profiles.
+    #[gpui::test]
+    async fn delegation_child_profile_cannot_widen(cx: &mut TestAppContext) {
+        let (parent, _, _fake) = setup_thread_for_test(cx).await;
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+                thread.restrict_delegation(crate::DelegationAuthority::default(), cx);
+            });
+            let child = cx.new(|cx| Thread::new_subagent(&parent, None, cx));
+            child.update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+                thread.set_profile(AgentProfileId::default(), cx);
+                assert!(thread.enabled_tools(cx).is_empty());
+                assert!(
+                    !thread.delegation_allows(
+                        thread
+                            .tools
+                            .get(ReplayImageTool::NAME)
+                            .expect("registered tool")
+                            .as_ref(),
+                    )
+                );
+            });
+        });
+    }
+
+    /// expect: [P1] the inherited ceiling survives database reload and broader profiles.
+    #[gpui::test]
+    async fn delegation_persistence_and_profile_switch(cx: &mut TestAppContext) {
+        let (parent, _, _fake) = setup_thread_for_test(cx).await;
+        let child = cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            let mut narrow = settings.profiles.values().next().unwrap().clone();
+            narrow.tools.clear();
+            narrow.tools.insert(ReplayImageTool::NAME.into(), true);
+            let mut broad = narrow.clone();
+            broad
+                .tools
+                .insert(ReplayFailsOnBadInputTool::NAME.into(), true);
+            settings
+                .profiles
+                .insert(AgentProfileId("delegation-narrow".into()), narrow);
+            settings
+                .profiles
+                .insert(AgentProfileId("delegation-broad".into()), broad);
+            AgentSettings::override_global(settings, cx);
+            parent.update(cx, |thread, cx| {
+                thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+                thread.add_tool(ReplayImageTool);
+                thread.add_tool(ReplayFailsOnBadInputTool);
+                thread.set_profile(AgentProfileId("delegation-narrow".into()), cx);
+                assert_eq!(thread.enabled_tools(cx).len(), 1);
+            });
+            cx.new(|cx| Thread::new_subagent(&parent, None, cx))
+        });
+        let saved = child.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let saved: DbThread = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let restored = cx.new(|cx| {
+            let parent = parent.read(cx);
+            Thread::from_db(
+                child.read(cx).id().clone(),
+                saved,
+                parent.project.clone(),
+                parent.project_context.clone(),
+                parent.context_server_registry.clone(),
+                parent.templates.clone(),
+                cx,
+            )
+        });
+        restored.update(cx, |thread, cx| {
+            thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+            thread.add_tool(ReplayImageTool);
+            thread.add_tool(ReplayFailsOnBadInputTool);
+            thread.set_profile(AgentProfileId("delegation-broad".into()), cx);
+            let tools = thread.enabled_tools(cx);
+            assert_eq!(tools.len(), 1);
+            assert!(tools.contains_key(ReplayImageTool::NAME));
+            // A later grant cannot restore a capability excluded at creation.
+            thread.restrict_delegation(
+                crate::DelegationAuthority::from_identities([
+                    crate::DelegatedToolIdentity::Builtin(ReplayImageTool::NAME.into()),
+                    crate::DelegatedToolIdentity::Builtin(ReplayFailsOnBadInputTool::NAME.into()),
+                ]),
+                cx,
+            );
+            assert_eq!(thread.enabled_tools(cx).len(), 1);
+        });
+    }
+
+    /// expect: [P1] cached calls denied by a narrowed ceiling never execute.
+    #[gpui::test]
+    async fn delegation_execution_gate(cx: &mut TestAppContext) {
+        let (thread, stream, _fake) = setup_thread_for_test(cx).await;
+        let result = thread
+            .update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+                let tool = thread.tools[ReplayImageTool::NAME].clone();
+                thread.restrict_delegation(
+                    crate::DelegationAuthority::from_mcp_tools(&[format!(
+                        "server/{}",
+                        ReplayImageTool::NAME
+                    )]),
+                    cx,
+                );
+                thread.run_tool(
+                    tool,
+                    ToolInput::ready(serde_json::Value::Null),
+                    "denied".into(),
+                    ReplayImageTool::NAME.into(),
+                    0,
+                    &stream,
+                    watch::channel(false).1,
+                    cx,
+                    serde_json::Value::Null,
+                    None,
+                )
+            })
+            .await
+            .1;
+        assert!(result.is_error);
+        assert!(result.content.iter().any(|content| matches!(content,
+            LanguageModelToolResultContent::Text(text) if text.contains("delegation authority")
+        )));
+    }
+
     fn setup_parent_with_subagents(
         cx: &mut TestAppContext,
         parent: &Entity<Thread>,
@@ -9537,6 +15387,45 @@ mod tests {
             _cx: &mut App,
         ) -> SharedString {
             "Registered Image Tool".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            _cx: &mut App,
+        ) -> Task<Result<Self::Output, Self::Output>> {
+            Task::ready(Ok(String::new()))
+        }
+    }
+
+    /// A tool whose `Input` requires a `path` field, so that replaying with an
+    /// empty JSON object `{}` fails deserialization. Used to verify that
+    /// `replay_tool_call` still sends `raw_output` to the UI when deserialize
+    /// fails.
+    struct ReplayFailsOnBadInputTool;
+
+    #[derive(Serialize, Deserialize, JsonSchema)]
+    struct ReplayFailsOnBadInput {
+        pub path: String,
+    }
+
+    impl AgentTool for ReplayFailsOnBadInputTool {
+        type Input = ReplayFailsOnBadInput;
+        type Output = String;
+
+        const NAME: &'static str = "failing_replay_tool";
+
+        fn kind() -> acp_v2::ToolKind {
+            acp_v2::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> SharedString {
+            "Failing Replay Tool".into()
         }
 
         fn run(
@@ -10168,6 +16057,461 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_replay_tool_call_sends_raw_output_when_deserialize_fails(
+        cx: &mut TestAppContext,
+    ) {
+        // When a tool's persisted input violates its current schema (e.g. a
+        // model emitted `timeout_ms` as a string, or omitted a required field),
+        // `tool.replay` fails to deserialize. The raw_output must still be
+        // sent to the UI so the user sees the tool's result — only the rich
+        // tool-specific rendering is lost.
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("failing_replay_tool");
+        let raw_output = json!("the saved output");
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(ReplayFailsOnBadInputTool);
+
+                let tool_use = LanguageModelToolUse {
+                    id: tool_use_id.clone(),
+                    name: ReplayFailsOnBadInputTool::NAME.into(),
+                    // Input that violates the schema: `path` is required but missing.
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(json!({})),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+
+                let mut tool_results = IndexMap::default();
+                tool_results.insert(
+                    tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        tool_name: ReplayFailsOnBadInputTool::NAME.into(),
+                        is_error: false,
+                        content: vec![LanguageModelToolResultContent::Text("text content".into())],
+                        output: Some(raw_output.clone()),
+                    },
+                );
+
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
+                    content: vec![AgentMessageContent::ToolUse(tool_use)],
+                    tool_results,
+                    reasoning_details: None,
+                })));
+
+                thread.replay(cx)
+            })
+        });
+
+        // Collect all ToolCallUpdate events for this tool call.
+        let scoped_id = scoped_tool_call_id(0, &tool_use_id);
+        let mut saw_raw_output = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) = event
+                && update.tool_call_id == scoped_id
+                && let Some(output) = update.raw_output.take().as_ref()
+            {
+                saw_raw_output = true;
+                assert_eq!(output, &raw_output);
+            }
+        }
+        assert!(
+            saw_raw_output,
+            "raw_output must be sent to UI even when replay deserialization fails"
+        );
+    }
+
+    // ── zed-kask: D100 (Seam A) pins — private-thread routing ────────
+    //
+    // The global falsifier is private-thread content reaching any public
+    // provider, observed in any test or live session. These pins hold the
+    // storage gate (model + summarization slots), the mark-time clear, the
+    // turn-entry typed error, the D28 persistence round-trip, the
+    // shared-thread round-trip, and the Curator parity ruling.
+    //
+    // The default test provider (`fake`) is not in the fixed local set, so
+    // its models stand in for public models; a test whose marked thread
+    // must run registers a fake under Zed's Ollama provider id
+    // (`register_local_fake_provider`).
+
+    /// Falsifier (a), storage-gate leg: a privacy-marked thread can never
+    /// hold a public model. Setting one before marking is accepted; the
+    /// mark clears it; every set afterwards is refused; unmarking restores
+    /// free selection.
+    #[gpui::test]
+    async fn private_thread_refuses_a_public_model_at_the_storage_gate(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "an unmarked thread accepts the public model"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.model().is_none(),
+                    "marking clears a held public model — a marked thread \
+                     never holds one (the held model would be a dispatch \
+                     decision)"
+                );
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_none(),
+                    "the storage gate refuses the public model on a marked thread"
+                );
+                thread.set_private_inference(false, cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "unmarking restores free selection (the PI toggle)"
+                );
+            });
+        });
+    }
+
+    /// Falsifier (a), positive control: a marked thread turns on a model
+    /// served by Zed's Ollama provider — the gate must not over-block the
+    /// PI's stated use.
+    #[gpui::test]
+    async fn private_thread_turns_on_a_local_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _public) = setup_thread_for_test(cx).await;
+        let fake = crate::tests::register_local_fake_provider(cx);
+        let model = fake.model("fake");
+
+        let events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.set_private_inference(true, cx);
+                    thread.set_model(model.clone(), cx);
+                    assert!(
+                        thread.model().is_some(),
+                        "the local model is accepted on a marked thread"
+                    );
+                    thread.send(ClientUserMessageId::new(), vec!["hello"], cx)
+                })
+            })
+            .expect("a marked thread with a local model sends");
+        cx.run_until_parked();
+
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("the turn dispatched to the local provider");
+        fake.send_text(&model, &request, "private reply");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        drop(events);
+    }
+
+    /// The unavailability path returns the typed, named error and never a
+    /// public fallback. A marked thread with no local model refuses the
+    /// turn at entry with `PrivateModelUnavailableError` — the registry's
+    /// default (public) model is never consulted.
+    #[gpui::test]
+    async fn private_thread_turn_entry_fails_typed_with_no_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+
+        let send_result = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_private_inference(true, cx);
+                thread.send(ClientUserMessageId::new(), vec!["hello"], cx)
+            })
+        });
+        let error = match send_result {
+            Ok(_) => panic!("a marked thread with no private model must refuse at entry"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("no local model selected"),
+            "the typed error names what is missing: {message}"
+        );
+        assert!(
+            message.contains("no public provider serves a privacy-marked thread"),
+            "the typed error names the no-fallback boundary: {message}"
+        );
+        assert!(
+            fake.pending_completions().is_empty(),
+            "zero requests reached any provider — the registry default was \
+             never a fallback"
+        );
+    }
+
+    /// The summarization slot carries thread content (titles, summaries),
+    /// so the storage gate covers it: a marked thread never holds a public
+    /// summarization model.
+    #[gpui::test]
+    async fn private_thread_refuses_a_public_summarization_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(model.clone()), cx);
+                assert!(
+                    thread.summarization_model().is_some(),
+                    "an unmarked thread sets a summarization model"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.summarization_model().is_none(),
+                    "marking clears a public summarization model — titles \
+                     never dispatch to a public provider"
+                );
+                thread.set_summarization_model(Some(model.clone()), cx);
+                assert!(
+                    thread.summarization_model().is_none(),
+                    "the storage gate refuses a public summarization model \
+                     on a marked thread"
+                );
+            });
+        });
+    }
+
+    /// PI ruling 2026-10-30: Curator sessions mark and route identically to
+    /// native agent threads — the enforcement reads the mark, never the
+    /// agent identity. A Curator thread walks the same refusal/acceptance
+    /// as the Z-K pin above.
+    #[gpui::test]
+    async fn curator_thread_marks_and_routes_identically(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_agent_id(crate::CURATOR_AGENT_ID.clone(), cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "the curator thread holds the model while unmarked"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.model().is_none(),
+                    "a marked Curator thread is cleared of a public model — \
+                     Curator routing is identical to native agent threads"
+                );
+            });
+        });
+
+        // The same marked Curator thread accepts a local model.
+        let local_model = crate::tests::register_local_fake_provider(cx).model("fake");
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(local_model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "a marked Curator thread runs on a local model"
+                );
+            });
+        });
+    }
+
+    /// The D100 roundtrip tests' shared restore leg: rebuild a Thread from
+    /// a db blob through the full `from_db` scaffolding.
+    fn restore_thread_from_db(
+        cx: &mut TestAppContext,
+        session_id: &str,
+        db_thread: crate::db::DbThread,
+        project: &Entity<Project>,
+        templates: Arc<Templates>,
+    ) -> Entity<Thread> {
+        cx.new(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+            Thread::from_db(
+                acp_v2::SessionId::new(session_id),
+                db_thread,
+                project.clone(),
+                project_context,
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    }
+
+    /// D28: the mark persists across restart — the metadata blob carries
+    /// it, `from_db` restores it, and the shared-thread format round-trips
+    /// it (an imported marked thread re-arms its gate on load).
+    #[gpui::test]
+    async fn private_mark_round_trips_through_db(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs, [], cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+        });
+        let db_thread = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.to_db(cx)))
+            .await;
+        assert!(
+            db_thread.private_inference_marked,
+            "to_db carries the mark in the D28 metadata blob"
+        );
+
+        // The shared-thread format (thread export/import) carries it too.
+        let shared = crate::db::SharedThread::from_db_thread(&db_thread);
+        assert!(
+            shared.private_inference_marked,
+            "the shared format carries the mark"
+        );
+        let marked_db = shared.to_db_thread();
+        assert!(
+            marked_db.private_inference_marked,
+            "re-importing the shared thread restores the mark"
+        );
+
+        let restored = restore_thread_from_db(cx, "d100-roundtrip", db_thread, &project, templates);
+        cx.update(|cx| {
+            assert!(
+                restored.read(cx).is_private_inference(),
+                "from_db restores the mark"
+            );
+        });
+    }
+
+    /// The restore leg of the storage gate: a marked thread never LOADS
+    /// holding a public model — a blob whose mark was applied after a
+    /// public model was saved (or hand-edited) is sanitized to `Unset`, and
+    /// the next turn fails typed rather than dispatching.
+    #[gpui::test]
+    async fn a_marked_thread_never_loads_holding_a_public_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs, [], cx).await;
+
+        // A blob from before the gates: public model saved, mark applied
+        // afterwards (the pre-D100 shape, or a hand edit).
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+        let mut db_thread = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.to_db(cx)))
+            .await;
+        db_thread.private_inference_marked = true;
+        assert!(
+            db_thread.model.is_some(),
+            "the blob carries the public model"
+        );
+
+        let restored = restore_thread_from_db(cx, "d100-sanitize", db_thread, &project, templates);
+        cx.update(|cx| {
+            assert!(
+                restored.read(cx).model().is_none(),
+                "the restore sanitize drops the public model — a marked \
+                 thread never loads holding one"
+            );
+        });
+    }
+
+    /// D100 (operator ruling 2026-11-11): no setting widens the set. A
+    /// settings file that still carries the retired
+    /// `kask.private_inference` keys naming the fake provider — the keys
+    /// that used to admit a provider — loads without error and admits
+    /// nothing: the marked thread still refuses that provider's model.
+    #[gpui::test]
+    async fn no_setting_widens_the_private_thread_provider_set(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"kask": {"private_inference": {
+                            "provider_id": "fake",
+                            "local_provider_ids": ["fake"]
+                        }}}"#,
+                        cx,
+                    )
+                    .result()
+                    .expect("a settings file with the retired keys still loads");
+            });
+        });
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_private_inference(true, cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_none(),
+                    "a provider named by the retired keys is still refused on \
+                     a marked thread"
+                );
+            });
+        });
+    }
+
+    /// The refusal text renders — a unit pin that the typed errors name
+    /// the refused model and what a marked thread may run, so the operator
+    /// sees the boundary, not a generic failure.
+    #[test]
+    fn private_routing_errors_name_the_boundary() {
+        let refused = PrivateRoutingError {
+            provider_id: Arc::from("public-provider"),
+            model_id: Arc::from("model-x"),
+        };
+        let text = refused.to_string();
+        assert!(
+            text.contains("public-provider/model-x"),
+            "the refusal names the refused model: {text}"
+        );
+        assert!(
+            text.contains("Ollama or llama.cpp"),
+            "the refusal names what a marked thread may run: {text}"
+        );
+
+        let unavailable = PrivateModelUnavailableError.to_string();
+        assert!(
+            unavailable.contains("Ollama or llama.cpp"),
+            "the unavailability error names what to select: {unavailable}"
+        );
+        assert!(
+            unavailable.contains("no public provider"),
+            "the unavailability error names the no-fallback boundary: {unavailable}"
+        );
+    }
+
+    /// The thread-side predicate resolves through the one admission home
+    /// (`settings::is_private_thread_local_model`, whose full decision
+    /// table is pinned in settings_content): local Ollama and llama.cpp
+    /// models are admitted; an Ollama cloud model, the retired
+    /// `private-local` provider and a public provider are refused.
+    #[test]
+    fn private_leg_predicate_admits_only_local_ollama_and_llama_cpp() {
+        assert!(is_private_leg_model_id("ollama", "qwen3.5:4b"));
+        assert!(is_private_leg_model_id("llama.cpp", "qwen36-35b-a3b"));
+        assert!(
+            !is_private_leg_model_id("ollama", "glm-5.3:cloud"),
+            "an ollama cloud model is refused"
+        );
+        assert!(
+            !is_private_leg_model_id("private-local", "flint"),
+            "the retired kask provider is refused"
+        );
+        assert!(
+            !is_private_leg_model_id("openrouter", "z-ai/glm-5.3"),
+            "a public provider is refused"
+        );
+    }
+
+    #[gpui::test]
     async fn test_refresh_model_picks_up_provider_capability_changes(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         let model = fake.model("fake");
@@ -10248,23 +16592,23 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
                 assert!(
-                    subagent.read(cx).thinking_enabled(),
+                    subagent.read(cx).thinking_effort().is_some(),
                     "Subagent thinking should be enabled after parent enables it"
                 );
             }
 
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(false, cx);
+                thread.set_thinking_effort(false.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
                 assert!(
-                    !subagent.read(cx).thinking_enabled(),
+                    !subagent.read(cx).thinking_effort().is_some(),
                     "Subagent thinking should be disabled after parent disables it"
                 );
             }
@@ -10310,7 +16654,7 @@ mod tests {
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
                 thread.set_speed(Speed::Fast, cx);
-                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
             });
@@ -10321,7 +16665,7 @@ mod tests {
         cx.update(|cx| {
             let sub = subagents[0].read(cx);
             assert_eq!(sub.speed(), Some(Speed::Fast));
-            assert!(sub.thinking_enabled());
+            assert!(sub.thinking_effort().is_some());
             assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
         });
@@ -10347,6 +16691,28 @@ mod tests {
         });
     }
 
+    // zed-kask: D6 — subagent inherits parent's agent_id so curator-spawned
+    // subagents route turns to the curator's sovereign DB for memory ingestion.
+    #[gpui::test]
+    async fn test_subagent_inherits_parent_agent_id(cx: &mut TestAppContext) {
+        let (parent, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        let curator_id = crate::CURATOR_AGENT_ID.clone();
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_agent_id(curator_id.clone(), cx);
+            });
+        });
+
+        let subagent = cx.new(|cx| Thread::new_subagent(&parent, None, cx));
+
+        let subagent_id = cx.update(|cx| subagent.read(cx).agent_id().clone());
+        assert_eq!(
+            subagent_id, curator_id,
+            "subagent must inherit parent's agent_id so curator-spawned subagents route turns to the curator's sovereign DB"
+        );
+    }
+
     #[gpui::test]
     async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
         let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
@@ -10358,7 +16724,7 @@ mod tests {
         // Should not panic even though the subagent was dropped
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
                 thread.set_speed(Speed::Fast, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
             });
@@ -10447,5 +16813,605 @@ mod tests {
             );
             assert!(last_message.tool_results.contains_key(&tool_use_id));
         })
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_excludes_non_matching() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Use strict mode".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: false,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // No matching paths → rule should be filtered out.
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_none(),
+            "conditional rule should be filtered when no paths match"
+        );
+        assert!(!filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_includes_matching() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Use strict mode".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: false,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // Matching path → rule should be kept.
+        let filtered = filter_conditional_rules(context, &["/project/src/main.rs"]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "conditional rule should be kept when a path matches"
+        );
+        assert!(filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_always_apply_true_passes_through() {
+        use prompt_store::{ProjectContext, RuleFrontmatter, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "Always apply".to_string(),
+                frontmatter: Some(RuleFrontmatter {
+                    globs: vec!["**/*.rs".to_string()],
+                    always_apply: true,
+                }),
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // always_apply: true → rule should be kept even with no matching paths.
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "always_apply: true rule should be kept regardless of paths"
+        );
+        assert!(filtered.has_rules);
+    }
+
+    #[test]
+    fn test_filter_conditional_rules_no_frontmatter_passes_through() {
+        use prompt_store::{ProjectContext, RulesFileContext, WorktreeContext};
+        use util::rel_path::RelPath;
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "project".to_string(),
+            abs_path: std::path::Path::new("/project").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: RelPath::from_unix_str(".rules").unwrap().into(),
+                text: "No frontmatter".to_string(),
+                frontmatter: None,
+                project_entry_id: 1,
+            }),
+        }];
+        let context = ProjectContext::new(worktrees);
+
+        // No frontmatter → rule should be kept (I2 — upstream Zed compatibility).
+        let filtered = filter_conditional_rules(context, &[]);
+        assert!(
+            filtered.worktrees[0].rules_file.is_some(),
+            "rule without frontmatter should be kept"
+        );
+        assert!(filtered.has_rules);
+    }
+
+    // ── Condenser bypass for code-reading tools ─────────────────────────
+    //
+    // The condenser's line-level elision (joining non-consecutive selected
+    // lines with `...`) is destructive for source code. `NO_COMPRESS_TOOLS`
+    // pins the list of tools whose output must pass through verbatim even
+    // when a condenser is wired. This test wires a condenser that mutates
+    // every input and verifies the bypass list prevents the mutation for
+    // `read_file` while still allowing compression for a non-bypassed tool.
+
+    /// A condenser that appends a marker to every input, so the test can
+    /// detect whether compression was applied.
+    struct MarkerCondenser;
+
+    impl crate::ThreadCondenser for MarkerCondenser {
+        fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
+            format!("{output} [COMPRESSED]")
+        }
+    }
+
+    #[test]
+    fn test_no_compress_tools_bypasses_read_file() {
+        // Wire a condenser that would mutate every input.
+        let condenser: Arc<dyn crate::ThreadCondenser> = Arc::new(MarkerCondenser);
+        let _condenser_override = crate::scoped_thread_condenser_for_test(condenser.clone());
+
+        // read_file is in NO_COMPRESS_TOOLS → output must pass through verbatim.
+        let tool_name: Arc<str> = Arc::from("read_file");
+        let original = "line one\nline two\nline three\n";
+        let condenser = crate::thread_condenser().expect("condenser should be wired");
+
+        let content = if NO_COMPRESS_TOOLS.contains(&tool_name.as_ref()) {
+            original.to_string()
+        } else {
+            condenser.compress_tool_result(&tool_name, original)
+        };
+
+        assert_eq!(
+            content, original,
+            "read_file output must pass through verbatim (NO_COMPRESS_TOOLS bypass)"
+        );
+        assert!(
+            !content.contains("[COMPRESSED]"),
+            "read_file output must not be compressed"
+        );
+
+        // A non-bypassed tool should still be compressed.
+        let other_tool: Arc<str> = Arc::from("terminal");
+        let other_content = if NO_COMPRESS_TOOLS.contains(&other_tool.as_ref()) {
+            original.to_string()
+        } else {
+            condenser.compress_tool_result(&other_tool, original)
+        };
+        assert!(
+            other_content.contains("[COMPRESSED]"),
+            "terminal output should be compressed (not in NO_COMPRESS_TOOLS)"
+        );
+    }
+
+    #[test]
+    fn test_no_compress_tools_list_is_complete() {
+        // Pin the bypass list contents — adding or removing a tool here is a
+        // deliberate behavior change that should be reviewed.
+        let expected = [
+            "read_file",
+            "grep",
+            "find_path",
+            "list_directory",
+            "diagnostics",
+            "find_references",
+            "get_code_actions",
+            "edit_file",
+        ];
+        for name in expected {
+            assert!(
+                NO_COMPRESS_TOOLS.contains(&name),
+                "{name} should be in NO_COMPRESS_TOOLS"
+            );
+        }
+        // terminal is intentionally NOT in the list.
+        assert!(
+            !NO_COMPRESS_TOOLS.contains(&"terminal"),
+            "terminal must NOT be in NO_COMPRESS_TOOLS — it is the condenser's intended use case"
+        );
+    }
+
+    // ── Phase 0 pinning tests for the thread divergence refactor ──────
+    //
+    // These tests pin the CURRENT behavior of kask-specific Thread fields
+    // and turn-loop branches that were previously untested in thread.rs.
+    // They must pass before AND after the KaskThreadState extraction.
+    // The refactor plan (deleted after implementation) is in git history:
+    // plans/thread-hooks-refactor-2026-08-26.md §2 (gaps).
+
+    /// Pin B9/B10: `last_completion_truncated` distinguishes MaxTokens
+    /// truncation from user cancel. When the flag is set (via
+    /// `handle_completion_event` on `StopReason::MaxTokens`),
+    /// `flush_pending_message` inserts `TOOL_TRUNCATED_MESSAGE` for
+    /// incomplete tool uses. When the flag is false (user cancel),
+    /// it inserts `TOOL_CANCELED_MESSAGE`.
+    #[gpui::test]
+    async fn test_last_completion_truncated_distinguishes_max_tokens_from_cancel(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        // ── Case 1: truncation flag set (MaxTokens) ───────────────────
+        // Simulate what handle_completion_event does on StopReason::MaxTokens:
+        // set the flag, then flush_pending_message reads it.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.kask.on_completion_truncated();
+
+                // Set up a pending message with an incomplete ToolUse
+                // (no tool_result) so flush_pending_message inserts the
+                // cancel/truncated message.
+                let tool_use = LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("truncated-tool-id"),
+                    name: Arc::from("test_tool"),
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::Value::Object(serde_json::Map::new()),
+                    ),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let mut agent_message = AgentMessage::default();
+                agent_message
+                    .content
+                    .push(AgentMessageContent::ToolUse(tool_use));
+                thread.pending_message = Some(agent_message);
+
+                thread.flush_pending_message(cx);
+            });
+        });
+
+        let result_text = thread.read_with(cx, |thread, _| {
+            let last = thread.messages.last().expect("message was flushed");
+            let agent_msg = last.as_agent_message().expect("should be agent message");
+            let result = agent_msg
+                .tool_results
+                .get(&LanguageModelToolUseId::from("truncated-tool-id"))
+                .expect("should have inserted a tool result");
+            match &result.content[0] {
+                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                _ => "not text".to_string(),
+            }
+        });
+        assert_eq!(
+            result_text, TOOL_TRUNCATED_MESSAGE,
+            "truncated completion should produce TOOL_TRUNCATED_MESSAGE, not TOOL_CANCELED_MESSAGE"
+        );
+
+        // ── Case 2: truncation flag NOT set (user cancel) ──────────────
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.kask.reset_truncation_flag();
+
+                let tool_use = LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("canceled-tool-id"),
+                    name: Arc::from("test_tool"),
+                    raw_input: "{}".to_string(),
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::Value::Object(serde_json::Map::new()),
+                    ),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let mut agent_message = AgentMessage::default();
+                agent_message
+                    .content
+                    .push(AgentMessageContent::ToolUse(tool_use));
+                thread.pending_message = Some(agent_message);
+
+                thread.flush_pending_message(cx);
+            });
+        });
+
+        let result_text = thread.read_with(cx, |thread, _| {
+            let last = thread.messages.last().expect("message was flushed");
+            let agent_msg = last.as_agent_message().expect("should be agent message");
+            let result = agent_msg
+                .tool_results
+                .get(&LanguageModelToolUseId::from("canceled-tool-id"))
+                .expect("should have inserted a tool result");
+            match &result.content[0] {
+                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                _ => "not text".to_string(),
+            }
+        });
+        assert_eq!(
+            result_text, TOOL_CANCELED_MESSAGE,
+            "non-truncated completion should produce TOOL_CANCELED_MESSAGE"
+        );
+    }
+
+    /// Pin B16: `cached_filtered_context` reuses the filtered ProjectContext
+    /// when the filtering inputs (open-file paths + mentioned paths) haven't
+    /// changed between renders. The cache is populated on the first render
+    /// and reused on the second — avoiding the `ProjectContext::clone` +
+    /// `filter_conditional_rules` cost.
+    #[gpui::test]
+    async fn test_cached_filtered_context_reuses_on_unchanged_inputs(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+        let model = FakeLanguageModelProvider::default().model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+        });
+
+        // First render — should populate the cache.
+        let first_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // Verify the cache was populated.
+        let cache_after_first =
+            thread.read_with(cx, |thread, _| thread.kask.has_cached_filtered_context());
+        assert!(
+            cache_after_first,
+            "cached_filtered_context should be populated after first render"
+        );
+
+        // Second render with no input changes — should reuse the cache.
+        let second_prompt = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                messages
+                    .first()
+                    .and_then(|m| m.content.first())
+                    .and_then(|c| {
+                        if let language_model::MessageContent::Text(t) = c {
+                            Some(t.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("system prompt message")
+            })
+        });
+
+        // The rendered prompt must be byte-identical (cache hit).
+        assert_eq!(
+            first_prompt, second_prompt,
+            "system prompt must be byte-stable when filtered-context inputs are unchanged"
+        );
+
+        // The cache should still be populated (not cleared by the second render).
+        let cache_after_second =
+            thread.read_with(cx, |thread, _| thread.kask.has_cached_filtered_context());
+        assert!(
+            cache_after_second,
+            "cached_filtered_context should still be populated after second render"
+        );
+    }
+
+    /// Pin B8: `tool_retry_tracker` integration in `handle_tool_use_event`.
+    /// After 3 identical failures, the next `check()` returns
+    /// `AllowWithWarning`. After 5, it returns `Refuse`. This is the
+    /// agent-loop retry cap that prevents the zero-gain retry death spiral.
+    #[gpui::test]
+    async fn test_tool_retry_tracker_integration_in_thread(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        let tool_name = "failing_tool";
+        let input = serde_json::json!({"path": "/some/path"});
+
+        // First 3 failures — check should return Allow each time (below
+        // WARN_THRESHOLD of 3).
+        for i in 0..3 {
+            let verdict = thread.read_with(cx, |thread, _| {
+                thread.kask.check_tool_retry(tool_name, &input)
+            });
+            assert!(
+                matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
+                "check {} should return Allow (below WARN_THRESHOLD), got {:?}",
+                i + 1,
+                verdict
+            );
+            thread.update(cx, |thread, _cx| {
+                thread
+                    .kask
+                    .retry_tracker_handle()
+                    .borrow()
+                    .record_failure(tool_name, &input);
+            });
+        }
+
+        // 4th check — after 3 failures, should return AllowWithWarning.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry(tool_name, &input)
+        });
+        match verdict {
+            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning {
+                attempt,
+                consecutive,
+                probability,
+            } => {
+                assert_eq!(attempt, 3, "attempt should be 3 (per-input count)");
+                assert_eq!(consecutive, 3, "consecutive should be 3");
+                // Bayesian: P(success) = 1/(N+2) = 1/5 = 0.2
+                assert!(
+                    (probability - 0.2).abs() < 0.001,
+                    "probability should be 1/(3+2) = 0.2, got {probability}"
+                );
+            }
+            other => panic!("4th check should return AllowWithWarning, got {:?}", other),
+        }
+
+        // Record one more failure (total 4).
+        thread.update(cx, |thread, _cx| {
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_failure(tool_name, &input);
+        });
+
+        // 5th check — still allowed (4 < HARD_CAP of 5), but with warning.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry(tool_name, &input)
+        });
+        assert!(
+            matches!(
+                verdict,
+                crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { .. }
+            ),
+            "5th check should return AllowWithWarning (4 < HARD_CAP), got {:?}",
+            verdict
+        );
+
+        // Record one more failure (total 5).
+        thread.update(cx, |thread, _cx| {
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_failure(tool_name, &input);
+        });
+
+        // 6th check — after 5 failures, should return Refuse.
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry(tool_name, &input)
+        });
+        match verdict {
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
+                assert_eq!(attempt, 5, "attempt should be 5 (per-input count)");
+            }
+            other => panic!("6th check should return Refuse, got {:?}", other),
+        }
+
+        // Verify that a successful call resets the tracker.
+        thread.update(cx, |thread, _cx| {
+            thread
+                .kask
+                .retry_tracker_handle()
+                .borrow()
+                .record_success_for_message(tool_name, &input, 0);
+        });
+
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry(tool_name, &input)
+        });
+        assert!(
+            matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
+            "check after record_success_for_message should return Allow (reset), got {:?}",
+            verdict
+        );
+    }
+
+    /// The live Thread retry state must admit a corrected call after sibling
+    /// failures, and `run_tool` must pass its owning message index to that state.
+    #[gpui::test]
+    async fn test_parallel_tool_failures_preserve_next_message_retry(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+        let owning_message_ix = thread.read_with(cx, |thread, _| thread.messages.len());
+        thread.update(cx, |thread, _| {
+            let retry = thread.kask.retry_tracker_handle();
+            for i in 0..9 {
+                retry.borrow().record_failure_for_message(
+                    "web_search",
+                    &serde_json::json!({"query": format!("title {i}"), "strategy": "hybrid"}),
+                    owning_message_ix,
+                );
+            }
+        });
+        let corrected = serde_json::json!({"query": "title 0", "strategy": "deep"});
+        let verdict = thread.read_with(cx, |thread, _| {
+            thread.kask.check_tool_retry("web_search", &corrected)
+        });
+        assert!(matches!(
+            verdict,
+            crate::tool_retry_tracker::RetryVerdict::Allow
+        ));
+
+        let source = include_str!("thread.rs");
+        let run_tool = source
+            .split("fn run_tool(")
+            .nth(1)
+            .expect("run_tool exists")
+            .split("fn handle_tool_use_json_parse_error_event(")
+            .next()
+            .expect("run_tool body exists");
+        let record_call = run_tool
+            .split(".record_failure_for_message(")
+            .nth(1)
+            .expect("production retry tracker records batch failures")
+            .split(')')
+            .next()
+            .expect("batch failure arguments");
+        assert!(record_call.contains("owning_message_ix,"));
+    }
+
+    #[test]
+    fn stream_truncation_sets_the_d25_flag_at_the_stream_error_boundary() {
+        // zed-kask: D36 — source-structure pin (the D43
+        // turn_failure_surfaces_provider_rejection_detail precedent, with
+        // concat!-assembled needles so this test's own source cannot
+        // satisfy it): the batch loop's stream-error arm must classify
+        // ToolCallTruncated and set the truncation flag before the turn
+        // fails, so pending partial tool input reads as truncated, not
+        // canceled.
+        let arm_marker = concat!("Err(err)", " => {");
+        let truncation_call = concat!("is_tool_call_trunc", "ation(&err)");
+        let flag_call = concat!("this.kask.on_", "completion_truncated()");
+        let fail_call = concat!("batch_error = Some(err", ".into());");
+        let source = include_str!("thread.rs");
+        let arm = source
+            .split(arm_marker)
+            .find(|segment: &&str| segment.contains(truncation_call))
+            .expect("stream-error arm classifies ToolCallTruncated");
+        let arm = &arm[..arm.find("break;").expect("arm breaks the batch loop")];
+        assert!(arm.contains(flag_call));
+        assert!(arm.contains(fail_call));
+    }
+
+    #[gpui::test]
+    async fn test_run_authorization_loop_cancels_cleanly_when_turn_cancelled(
+        cx: &mut TestAppContext,
+    ) {
+        // 1. Pre-cancelled turn with dropped receiver must return clean cancellation,
+        //    not "send failed because receiver is gone".
+        let (stream, receiver, mut cancel_tx) = ToolCallEventStream::test_with_cancellation();
+        drop(receiver);
+        cancel_tx.send(true).ok();
+
+        let context = ToolPermissionContext::new("terminal", vec!["cargo test".into()]);
+        let err = cx
+            .update(|cx| stream.authorize_always_prompt("cargo test", context, cx))
+            .await
+            .expect_err("cancelled turn must not authorize");
+        assert!(
+            err.to_string().contains("cancelled before authorization"),
+            "unexpected error: {err:#}"
+        );
+
+        // 2. Turn cancelled while awaiting user response must unblock promptly.
+        let (stream, mut receiver, mut cancel_tx) = ToolCallEventStream::test_with_cancellation();
+        let context = ToolPermissionContext::new("terminal", vec!["cargo test".into()]);
+        let auth_task = cx.update(|cx| stream.authorize_always_prompt("cargo test", context, cx));
+        let _auth_req = receiver.expect_authorization().await;
+        cancel_tx.send(true).ok();
+
+        let err = auth_task
+            .await
+            .expect_err("in-flight authorization must unblock on cancellation");
+        assert!(
+            err.to_string()
+                .contains("cancelled while awaiting authorization"),
+            "unexpected error: {err:#}"
+        );
     }
 }

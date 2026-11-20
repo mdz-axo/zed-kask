@@ -311,6 +311,37 @@ fn always_allow_tools(cx: &mut TestAppContext) {
     });
 }
 
+// zed-kask: D8 — shared with thread.rs's test module (the rescue and
+// threshold pins): one helper for auto-compact settings overrides.
+pub(crate) fn set_auto_compact_settings(
+    cx: &mut App,
+    auto_compact: agent_settings::AutoCompactSettings,
+) {
+    let mut settings = AgentSettings::get_global(cx).clone();
+    settings.auto_compact = auto_compact;
+    AgentSettings::override_global(settings, cx);
+}
+
+/// zed-kask: D100 — register a fake provider under Zed's Ollama provider id
+/// and return it. A privacy-marked thread runs only models from the fixed
+/// local set (`settings::PRIVATE_THREAD_LOCAL_PROVIDERS`), and no setting
+/// widens it, so a test whose marked thread must actually run a turn
+/// serves it from this provider. Shared with thread.rs's test module.
+pub(crate) fn register_local_fake_provider(
+    cx: &mut TestAppContext,
+) -> Arc<FakeLanguageModelProvider> {
+    let provider = Arc::new(FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("ollama".to_string()),
+        LanguageModelProviderName::from("Ollama".to_string()),
+    ));
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+        });
+    });
+    provider
+}
+
 /// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
 /// variant exposed to the model as `terminal`. Tests that register
 /// `TerminalTool` directly need this because the sandboxing feature flag is
@@ -565,6 +596,10 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
     });
 
     // ...but a model that always thinks ignores the stale toggle state.
+    // zed-kask: upstream's generic mandatory-reasoning guard (the D37 class,
+    // now in the request builder) keeps thinking allowed for models that
+    // cannot disable it; the D42 explicit-disable passthrough lives in the
+    // wire mappers and applies to models that can honor a disable.
     fake.update_model("fake", |model| model.supports_disabling_thinking = false);
     thread.update(cx, |thread, cx| {
         thread.refresh_model(&model.provider_id, cx);
@@ -3782,6 +3817,19 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
         thread,
         ..
     } = setup(cx, TestModel::Fake).await;
+    // zed-kask: D8 — the marking contract holds on the fall-through path;
+    // with auto-compaction enabled the PromptTooLarge rescue recovers the
+    // turn instead (pinned in thread.rs). Applied after `setup` so the
+    // settings-file watcher cannot reset it.
+    cx.update(|cx| {
+        set_auto_compact_settings(
+            cx,
+            agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: AutoCompactThreshold::Percentage(0.9),
+            },
+        )
+    });
 
     thread
         .update(cx, |thread, cx| {
@@ -3844,6 +3892,16 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
         thread,
         ..
     } = setup(cx, TestModel::Fake).await;
+    // zed-kask: D8 — see test_prompt_too_large_marks_token_usage_exceeded.
+    cx.update(|cx| {
+        set_auto_compact_settings(
+            cx,
+            agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: AutoCompactThreshold::Percentage(0.9),
+            },
+        )
+    });
 
     thread
         .update(cx, |thread, cx| {
@@ -4466,7 +4524,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 
     // Ensure pending tools are skipped when building a request.
     let request = thread
-        .read_with(cx, |thread, cx| {
+        .update(cx, |thread, cx| {
             thread.build_completion_request(CompletionIntent::EditFile, cx)
         })
         .unwrap();
@@ -4476,7 +4534,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Hey!".into()],
-                cache: true,
+                cache: false,
                 reasoning_details: None,
             },
             LanguageModelRequestMessage {
@@ -4497,7 +4555,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     content: vec!["test".into()],
                     output: Some("test".into())
                 })],
-                cache: false,
+                cache: true,
                 reasoning_details: None,
             },
         ],
@@ -4535,7 +4593,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create agent and connection
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store, templates.clone(), fake_fs.clone(), cx));
-    let connection = NativeAgentConnection(agent.clone());
+    let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
@@ -5107,6 +5165,207 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
 }
 
 #[gpui::test]
+async fn test_non_streaming_tool_partial_input_then_max_tokens_gets_canceled_message(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Send a partial tool use (is_input_complete = false) for a non-streaming
+    // tool (EchoTool does not override supports_input_streaming). The handler
+    // returns None — no tool starts, but the partial tool_use is stored in the
+    // pending message.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partia"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"text": "partia"})),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(tool_use.clone()),
+    );
+    cx.run_until_parked();
+
+    // End the stream with MaxTokens WITHOUT ever sending is_input_complete = true.
+    // This simulates the model hitting the output token limit mid-tool-call.
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Stop(StopReason::MaxTokens),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // MaxTokens is not retryable (retry_strategy_for returns None for it),
+    // so the turn should end immediately.
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "MaxTokens should end the turn without retrying",
+        );
+    });
+
+    // The partial tool_use should have been flushed with a tool result.
+    // Currently this is TOOL_CANCELED_MESSAGE ("Tool canceled by user"),
+    // which is misleading — the user didn't cancel; the stream truncated.
+    // This test pins the current behavior so a future fix that distinguishes
+    // stream-truncation from user-cancellation must update this assertion.
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_received_or_pending_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+
+        let tool_result = agent_message
+            .tool_results
+            .get(&tool_use.id)
+            .expect("partial tool_use should have a flushed tool result");
+        assert!(
+            tool_result.is_error,
+            "the flushed result for a stream-truncated partial tool_use should be an error",
+        );
+        let content_text = tool_result.text_contents();
+        assert_eq!(
+            content_text, "Tool call was interrupted because the model's output reached the token limit before completing the tool input. Try again with a shorter or simpler tool call.",
+            "MaxTokens-truncated partial tool_use should get the truncation-specific message, \
+             not the generic TOOL_CANCELED_MESSAGE (which means the user stopped the turn).",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_non_streaming_tool_partial_input_then_retryable_error_flushes_canceled_message(
+    cx: &mut TestAppContext,
+) {
+    // When the stream ends with a retryable error after a partial non-streaming
+    // tool_use, flush_pending_message fires before the retry and inserts
+    // TOOL_CANCELED_MESSAGE for the partial tool_use. On retry, the model sees
+    // the partial tool_use with a "canceled" result — which is misleading
+    // (the user didn't cancel; the stream errored). This test pins the current
+    // behavior so we can detect if it changes.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Send a partial tool use (is_input_complete = false) for a non-streaming
+    // tool. No tool starts; the partial is stored in the pending message.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partia"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"text": "partia"})),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(&model, LanguageModelCompletionEvent::ToolUse(tool_use));
+    cx.run_until_parked();
+
+    // End the stream with a retryable error (internal server error).
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            language_model::LanguageModelProviderName::new("test"),
+            http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+
+    // Advance past the retry delay so run_turn_internal retries.
+    // The retry uses exponential_backoff(1) = 5s + jitter (up to 10% = 0.5s).
+    // Advance by 6s to clear the jitter window.
+    cx.executor().advance_clock(Duration::from_secs(6));
+    cx.run_until_parked();
+
+    // The retry request should contain the partial tool_use with a flushed
+    // tool result. The result should be TOOL_CANCELED_MESSAGE (not the
+    // truncation message, since this wasn't MaxTokens).
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("No running turn after retry");
+
+    // Find the tool result in the retry request messages.
+    let tool_result_message = completion
+        .messages
+        .iter()
+        .rev()
+        .find_map(|msg| {
+            if msg.role != Role::User {
+                return None;
+            }
+            msg.content.iter().find_map(|content| match content {
+                MessageContent::ToolResult(result) => Some(result),
+                _ => None,
+            })
+        })
+        .expect("retry request should contain a tool result");
+
+    assert!(
+        tool_result_message.is_error,
+        "flushed partial tool_use result should be an error",
+    );
+    let content_text: String = tool_result_message
+        .content
+        .iter()
+        .map(|c| match c {
+            LanguageModelToolResultContent::Text(t) => t.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        content_text, "Tool canceled by user",
+        "retryable error after partial non-streaming tool_use should flush \
+         TOOL_CANCELED_MESSAGE (not the truncation message, since this isn't MaxTokens). \
+         This is still misleading — the user didn't cancel — but it's the current behavior.",
+    );
+
+    // Finish the retry round so the turn completes cleanly.
+    fake.send_last_text(&model, "Done");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be stuck; the turn should have completed",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
     cx: &mut TestAppContext,
 ) {
@@ -5197,9 +5456,14 @@ async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
         "Expected tool-enriched partial context, got: {content_text}"
     );
     assert!(
-        content_text
-            .contains("Error parsing input JSON: EOF while parsing a string at line 1 column 17"),
-        "Expected forwarded JSON parse error, got: {content_text}"
+        content_text.contains(
+            "Tool call arguments were cut off mid-JSON (EOF while parsing a string at line 1 column 17)",
+        ),
+        "Expected forwarded EOF-cut guidance naming the parse error, got: {content_text}"
+    );
+    assert!(
+        content_text.contains("Resend the whole call with a shorter payload"),
+        "Expected the EOF-cut remedy, got: {content_text}"
     );
     assert!(
         !content_text.contains("tool input was not fully received"),
@@ -5227,6 +5491,1787 @@ fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp_v2::StopReaso
             _ => None,
         })
         .collect()
+}
+
+/// A minimal MCP tool declaration for the surface-pinning tests below —
+/// the tool's name is the load-bearing part; the schema is the empty
+/// object schema the sanitized-names test uses.
+fn plain_mcp_tool(name: &str) -> context_server::types::Tool {
+    context_server::types::Tool {
+        name: name.into(),
+        title: None,
+        description: None,
+        input_schema: json!({"type": "object", "properties": {}}),
+        output_schema: None,
+        annotations: None,
+    }
+}
+
+/// Override the settings file so the `test` profile enables every
+/// context-server tool and tool-permission prompts default to allow —
+/// the MCP-surface pins below assert on the tool list the model sees.
+/// The profile enables no built-in tools, so the completion's tool list
+/// contains only the fake MCP servers' tools.
+async fn enable_all_context_servers_profile(fs: &Arc<FakeFs>, cx: &mut TestAppContext) {
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+}
+
+/// The D100/M5 perimeter tests' shared preamble: a fake-model thread
+/// test with every context-server profile enabled and the test profile
+/// armed — destructure the fields your test consumes.
+async fn setup_thread_test_with_test_profile(cx: &mut TestAppContext) -> ThreadTest {
+    let test = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&test.fs, cx).await;
+    test.thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+    test
+}
+
+/// Steer and ordinary threads retain the full cross-domain MCP surface: tools
+/// from independently registered servers are presented together.
+#[gpui::test]
+async fn test_context_server_tools_remain_cross_domain(cx: &mut TestAppContext) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let _scoped_calls = setup_context_server(
+        "scoped_server",
+        vec![plain_mcp_tool("in_scope_tool")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "other_server",
+        vec![plain_mcp_tool("out_of_scope_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Both independently registered servers' tools surface together.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after unscoped send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"in_scope_tool".to_string()),
+        "unscoped thread must see the scoped server's tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"out_of_scope_tool".to_string()),
+        "unscoped thread must see the other server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
+/// zed-kask: D100 (operator ruling 2026-11-05) — the private-thread tool
+/// perimeter: a privacy-marked thread refuses the tool surface of servers
+/// whose assisting inference cannot run locally (the media server by
+/// default) — its tools never enter the offered list — while every other
+/// server's tools remain available. Unmarking restores the full surface.
+/// Pinned end-to-end through the turn's offered tool names.
+#[gpui::test]
+async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the request-gate semantics
+    // are pinned separately in thread.rs).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    let _media_calls = setup_context_server(
+        "media",
+        vec![plain_mcp_tool("media_analyze")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Unmarked: both tools are offered before the thread is privacy-marked.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"media_analyze".to_string()),
+        "an unmarked thread offers the media server's tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "an unmarked thread offers the research server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Marked: media, research, and external ContextServerStore servers are
+    // refused on D100 private threads (S113-F01/F02).
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"media_analyze".to_string()),
+        "a private thread never offers the media server's tool: {names:?}"
+    );
+    assert!(
+        !names.contains(&"research_tool".to_string()),
+        "a private thread never offers the research/external server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Monotonic D100 latch (S109-F01): once private turns exist, downgrading
+    // `true -> false` is refused and the thread stays private.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        assert!(
+            thread.is_private_inference(),
+            "monotonic D100 latch must refuse true -> false after private history"
+        );
+    });
+}
+
+/// zed-kask: D107 — the reported bug's request shape. A local model with a
+/// small context window (a private thread on a 15 GiB CPU-only laptop) is
+/// sent the compact system prompt and only the file and search tools; a
+/// local model with a large window, and a small model that is not local,
+/// keep the full prompt and the full tool surface.
+#[gpui::test]
+async fn small_local_model_gets_the_compact_prompt_and_tools(cx: &mut TestAppContext) {
+    let public = init_test(cx);
+    let local = register_local_fake_provider(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let small_local = local.update_model("small", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+    });
+    let boundary_local = local.update_model("boundary", |model| {
+        model.max_token_count = crate::thread::COMPACT_PROFILE_MAX_CONTEXT;
+        model.max_input_tokens = crate::thread::COMPACT_PROFILE_MAX_CONTEXT;
+    });
+    let small_public = public.update_model("small-public", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+    });
+    assert!(crate::thread::uses_compact_profile(&small_local));
+    assert!(
+        !crate::thread::uses_compact_profile(&boundary_local),
+        "the profile applies strictly below the threshold"
+    );
+    assert!(
+        !crate::thread::uses_compact_profile(&small_public),
+        "only Zed's local providers get the profile"
+    );
+    let llama_cpp = FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("llama.cpp".to_string()),
+        LanguageModelProviderName::from("llama.cpp".to_string()),
+    );
+    let small_llama_cpp = llama_cpp.update_model("small", |model| model.max_token_count = 4_096);
+    assert!(
+        crate::thread::uses_compact_profile(&small_llama_cpp),
+        "a small llama.cpp model gets the profile too"
+    );
+    let small_cloud = local.update_model("glm-5.3:cloud", |model| model.max_token_count = 4_096);
+    assert!(
+        !crate::thread::uses_compact_profile(&small_cloud),
+        "an Ollama cloud-proxied model does not run on this machine"
+    );
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(small_local.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment.clone(), cx);
+        thread
+    });
+    let _research_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    let system_prompt = |completion: &LanguageModelRequest| {
+        completion
+            .messages
+            .first()
+            .expect("system prompt message")
+            .string_contents()
+    };
+
+    // 1. Plain conversational prompt ("hello") on the compact-profile model:
+    //    tools are disabled so small models cannot emit unsolicited file/search
+    //    calls, while the compact prompt carries verified provenance.
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_private_inference(true, cx);
+            thread.send(ClientUserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("small-local conversational completion");
+    assert!(
+        tool_names_for_completion(&completion).is_empty(),
+        "plain conversational requests on local models offer no tools"
+    );
+    let prompt = system_prompt(&completion);
+    assert!(
+        prompt.contains("## How to answer")
+            && prompt.contains("provider=ollama, model=small, private=true"),
+        "a small local model gets the compact prompt with provenance: {prompt}"
+    );
+    assert!(
+        !prompt.contains("## Fixing Diagnostics"),
+        "the full prompt is not sent to a small local model"
+    );
+    assert_eq!(
+        completion.messages.len(),
+        2,
+        "the request is the compact prompt and the user message, nothing injected"
+    );
+
+    local.end_last(&small_local);
+    cx.run_until_parked();
+
+    // 2. File-oriented prompt on the tool-capable compact-profile model: offers
+    //    only the bounded file and search tools, never MCP server tools.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["read Cargo.toml"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("small-local file completion");
+    let mut names = tool_names_for_completion(&completion);
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "edit_file",
+            "find_path",
+            "grep",
+            "list_directory",
+            "read_file",
+            "write_file"
+        ],
+        "a tool-capable compact local model offers only the file and search tools when the prompt requires them"
+    );
+    local.end_last(&small_local);
+    cx.run_until_parked();
+
+    // 3. Unsupported sub-3B local model (`qwen3:1.7b`): offers no tools even on
+    //    a file-oriented prompt unless explicitly enabled in settings.
+    let qwen_1_7b = local.update_model("qwen3:1.7b", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+        model.supports_tools = false;
+    });
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_model(qwen_1_7b.clone(), cx);
+            thread.send(ClientUserMessageId::new(), ["read Cargo.toml"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("qwen3:1.7b completion");
+    assert!(
+        tool_names_for_completion(&completion).is_empty(),
+        "sub-3B local model disables tools by default"
+    );
+    local.end_last(&qwen_1_7b);
+    cx.run_until_parked();
+
+    // The same marked thread on a local model at the threshold keeps the
+    // full prompt and the MCP surface when tools are needed, while still
+    // withholding tools on plain conversational acknowledgements ("ok").
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_model(boundary_local.clone(), cx);
+            thread.send(ClientUserMessageId::new(), ["ok"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let ok_completion = local
+        .pending_completions()
+        .pop()
+        .expect("boundary-local conversational completion");
+    assert!(
+        tool_names_for_completion(&ok_completion).is_empty(),
+        "plain 'ok' disables tools on local models"
+    );
+    local.end_last(&boundary_local);
+    cx.run_until_parked();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["list research tools"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("boundary-local completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"research_tool".to_string()),
+        "a private thread blocks research/external MCP server tools even at the threshold: {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == CopyPathTool::NAME),
+        "a local model at the threshold keeps the other built-in tools: {names:?}"
+    );
+    assert!(system_prompt(&completion).contains("## Fixing Diagnostics"));
+    local.end_last(&boundary_local);
+    cx.run_until_parked();
+
+    // A small model that is not local is not given the profile (tested on a
+    // fresh unmarked thread because monotonic D100 refuses downgrading a
+    // tainted private thread).
+    let public_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(small_public.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+    public_thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["hello once more"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = public
+        .pending_completions()
+        .pop()
+        .expect("small-public completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a small public model keeps MCP server tools: {names:?}"
+    );
+    assert!(system_prompt(&completion).contains("## Fixing Diagnostics"));
+    public.end_last(&small_public);
+}
+
+#[gpui::test]
+async fn private_local_model_integration_persists_memory_reports_provenance_and_blocks_unsafe_tools(
+    cx: &mut TestAppContext,
+) {
+    struct TestPrivateMemory {
+        stored: std::sync::Mutex<Vec<String>>,
+        fail_writes: std::sync::atomic::AtomicBool,
+    }
+
+    impl crate::ThreadMemoryPort for TestPrivateMemory {
+        fn ingest_turn(
+            &self,
+            _record: crate::ThreadTurnRecord,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn store_private_memory<'a>(
+            &'a self,
+            _thread_id: &'a str,
+            content: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>
+        {
+            let text = content.to_string();
+            Box::pin(async move {
+                if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err("curator-private.db lock error".to_string());
+                }
+                self.stored.lock().unwrap().push(text);
+                Ok(())
+            })
+        }
+    }
+
+    impl crate::ContextInjector for TestPrivateMemory {
+        fn inject_context(
+            &self,
+            _thread_id: &str,
+            _user_prompt: &str,
+            private_context: bool,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            let notes = if private_context {
+                self.stored.lock().unwrap().clone()
+            } else {
+                Vec::new()
+            };
+            Box::pin(async move {
+                if notes.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![language_model::LanguageModelRequestMessage {
+                        role: language_model::Role::System,
+                        content: vec![language_model::MessageContent::Text(format!(
+                            "Saved preferences from curator-private.db: {}",
+                            notes.join("; ")
+                        ))],
+                        cache: false,
+                        reasoning_details: None,
+                    }]
+                }
+            })
+        }
+    }
+
+    let _public = init_test(cx);
+    let local = register_local_fake_provider(cx);
+    let qwen = local.update_model("qwen3:1.7b", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+        model.supports_tools = false;
+    });
+
+    let memory = Arc::new(TestPrivateMemory {
+        stored: std::sync::Mutex::new(Vec::new()),
+        fail_writes: std::sync::atomic::AtomicBool::new(false),
+    });
+    crate::set_memory_port(Some(memory.clone()));
+    crate::set_context_injector(Some(memory.clone()));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({ "song.mp3": "binary" }))
+        .await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(qwen.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread.set_private_inference(true, cx);
+        thread
+    });
+
+    // (1) Explicit private-memory write + (2) verified provenance on locked qwen3:1.7b.
+    let msg_id_1 = ClientUserMessageId::new();
+    let _rx1 = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                msg_id_1.clone(),
+                ["Please remember “I prefer brief, direct answers in Spanish”"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let req1 = local.pending_completions().pop().expect("turn 1 request");
+    let all_req1_text = req1
+        .messages
+        .iter()
+        .map(|m| m.string_contents())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all_req1_text.contains("SUCCESS — saved to curator-private.db"),
+        "turn 1 injects verified write confirmation: {all_req1_text}"
+    );
+    assert!(
+        all_req1_text.contains("provider=ollama, model=qwen3:1.7b, private=true"),
+        "system prompt carries exact runtime provenance: {all_req1_text}"
+    );
+
+    local.send_last_event(
+        &qwen,
+        language_model::LanguageModelCompletionEvent::ResponseModel("qwen3:1.7b".into()),
+    );
+    local.send_last_text(&qwen, "Guardado.");
+    local.end_last(&qwen);
+    cx.run_until_parked();
+
+    let prov1 = cx.update(|cx| {
+        thread
+            .read(cx)
+            .request_provenance_for(&msg_id_1)
+            .cloned()
+            .expect("recorded provenance")
+    });
+    assert_eq!(
+        prov1.summary_text(),
+        "provider=ollama, model=qwen3:1.7b, private=true · private_memory=saved (curator-private.db)"
+    );
+
+    // (1b) Subsequent short prompt ("dime ok") recalls the saved preference AND
+    // (3) disables tools + blocks any unsolicited tool call (`list_directory`).
+    let mut rx2 = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["dime ok"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let req2 = local.pending_completions().pop().expect("turn 2 request");
+    assert!(
+        tool_names_for_completion(&req2).is_empty(),
+        "'dime ok' must offer zero tools"
+    );
+    let all_req2_text = req2
+        .messages
+        .iter()
+        .map(|m| m.string_contents())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all_req2_text.contains("I prefer brief, direct answers in Spanish"),
+        "later locked turn recalls preference from private memory even on compact profile: {all_req2_text}"
+    );
+
+    // Even if the model hallucinates an unsolicited `list_directory` call on
+    // "dime ok", it is rejected before execution.
+    local.send_last_event(
+        &qwen,
+        language_model::LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "unsolicited_1".into(),
+            name: "list_directory".into(),
+            raw_input: json!({ "path": "test" }).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({ "path": "test" })),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    local.send_last_event(
+        &qwen,
+        language_model::LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse),
+    );
+    local.end_last(&qwen);
+    cx.run_until_parked();
+
+    let followup_req = local
+        .pending_completions()
+        .pop()
+        .expect("rejection returned to model");
+    let tool_err_text = followup_req
+        .messages
+        .iter()
+        .rev()
+        .flat_map(|m| m.content.iter().rev())
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some((r.is_error, r.text_contents())),
+            _ => None,
+        })
+        .next()
+        .expect("tool result");
+    assert!(tool_err_text.0, "unsolicited tool call must error");
+    assert!(
+        tool_err_text.1.contains("blocked before execution"),
+        "got: {}",
+        tool_err_text.1
+    );
+    local.send_last_text(&qwen, "Vale.");
+    local.end_last(&qwen);
+    while rx2.try_recv().is_ok() {}
+    cx.run_until_parked();
+
+    // (3b) Pre-execution validation on a tool-capable model: `find_path({})`
+    // with missing `glob` is rejected BEFORE execution (`InProgress` never sent).
+    let qwen_4b = local.update_model("qwen3.5:4b", |model| {
+        model.max_token_count = 8_192;
+        model.max_input_tokens = 8_192;
+        model.supports_tools = true;
+    });
+    let mut rx3 = thread
+        .update(cx, |thread, cx| {
+            thread.set_model(qwen_4b.clone(), cx);
+            thread.send(ClientUserMessageId::new(), ["find files in project"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let _req3 = local.pending_completions().pop().expect("turn 3 request");
+    local.send_last_event(
+        &qwen_4b,
+        language_model::LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "bad_find_1".into(),
+            name: "find_path".into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    local.send_last_event(
+        &qwen_4b,
+        language_model::LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse),
+    );
+    local.end_last(&qwen_4b);
+    cx.run_until_parked();
+
+    let mut saw_in_progress = false;
+    while let Ok(Ok(ev)) = rx3.try_recv() {
+        if let crate::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(upd)) = ev
+            && upd.status == MaybeUndefined::Value(acp_v2::ToolCallStatus::InProgress)
+        {
+            saw_in_progress = true;
+        }
+    }
+    assert!(
+        !saw_in_progress,
+        "malformed find_path missing `glob` must be rejected before `run_tool` sets InProgress"
+    );
+
+    let followup_req3 = local
+        .pending_completions()
+        .pop()
+        .expect("validation error returned to model");
+    let bad_find_err = followup_req3
+        .messages
+        .iter()
+        .rev()
+        .flat_map(|m| m.content.iter().rev())
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some((r.is_error, r.text_contents())),
+            _ => None,
+        })
+        .next()
+        .expect("validation tool result");
+    assert!(bad_find_err.0);
+    assert!(
+        bad_find_err.1.contains("missing required field `glob`"),
+        "got: {}",
+        bad_find_err.1
+    );
+    local.end_last(&qwen_4b);
+    cx.run_until_parked();
+
+    // (1c) Private memory write failure surfaces clearly in provenance.
+    memory
+        .fail_writes
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let msg_id_fail = ClientUserMessageId::new();
+    let _rx4 = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                msg_id_fail.clone(),
+                ["Remember: I prefer concise bullet points"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    local.end_last(&qwen_4b);
+    cx.run_until_parked();
+    let prov_fail = cx.update(|cx| {
+        thread
+            .read(cx)
+            .request_provenance_for(&msg_id_fail)
+            .cloned()
+            .expect("failed write provenance")
+    });
+    assert!(
+        prov_fail
+            .summary_text()
+            .contains("private_memory=failed (curator-private.db lock error)"),
+        "got: {}",
+        prov_fail.summary_text()
+    );
+
+    // (2b) Wire ResponseModel reporting `:cloud` on a locked thread fails closed.
+    let mut rx5 = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    local.send_last_event(
+        &qwen_4b,
+        language_model::LanguageModelCompletionEvent::ResponseModel("qwen3:cloud".into()),
+    );
+    local.end_last(&qwen_4b);
+    cx.run_until_parked();
+    let mut saw_cloud_error = false;
+    while let Ok(item) = rx5.try_recv() {
+        if let Err(err) = item
+            && (err.downcast_ref::<crate::PrivateRoutingError>().is_some()
+                || err.to_string().contains("ollama/qwen3:cloud"))
+        {
+            saw_cloud_error = true;
+        }
+    }
+    assert!(
+        saw_cloud_error,
+        "locked thread must fail closed if provider wire response reports a `:cloud` model"
+    );
+
+    crate::set_memory_port(None);
+    crate::set_context_injector(None);
+}
+
+/// zed-kask: D100 (operator ruling 2026-11-06 — the tool-query-embed design
+/// §8.2's ruling, shape 2: the perimeter) — the corpus server joins the
+/// default `private_thread_disabled_servers` set: its assisting-inference
+/// legs (`corpus_embed`, `corpus_tag_chunks`, the OCR vision leg) cannot
+/// run locally, so a private thread refuses the corpus tool surface at
+/// the offer point — the same end-to-end posture the media pin holds,
+/// through the same default-set resolution (the belt covers kask-sourced
+/// corpus dispatches the same way, pinned generically at
+/// `kask_server_tool_refuses_private_provenance_on_disabled_servers`).
+#[gpui::test]
+async fn corpus_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the media pin's pattern;
+    // the request-gate semantics are pinned separately in thread.rs).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    let _corpus_calls = setup_context_server(
+        "corpus",
+        vec![plain_mcp_tool("corpus_embed")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Unmarked: the corpus tool is offered before the thread is privacy-marked.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"corpus_embed".to_string()),
+        "an unmarked thread offers the corpus server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Marked: the corpus and research/external servers are refused at the offer
+    // point (S113-F01/F02).
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"corpus_embed".to_string()),
+        "a private thread never offers the corpus server's tool: {names:?}"
+    );
+    assert!(
+        !names.contains(&"research_tool".to_string()),
+        "a private thread never offers the research/external server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Monotonic D100 latch (S109-F01): downgrading after private history is refused.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        assert!(
+            thread.is_private_inference(),
+            "monotonic D100 latch must refuse true -> false after private history"
+        );
+    });
+}
+
+/// zed-kask: D100 (operator ruling 2026-11-11: "nostr is not enabled or is
+/// disabled on private threads - you shouldn't be sharing private threads on
+/// a public network") — the Nostr client server joins the default
+/// `private_thread_disabled_servers` set. Its tools read from and publish to
+/// public relays for the configured account, so a private thread refuses the
+/// whole server at the offer point, through the same default-set resolution
+/// the media and corpus pins hold. The whole server, not a per-tool table: a
+/// tool added to it later is covered without an entry of its own.
+#[gpui::test]
+async fn nostr_client_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the media pin's pattern).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    // Two tools on the Nostr server: the one that exists today and a name
+    // that does not, standing for any tool added later.
+    let _nostr_calls = setup_context_server(
+        "nostr-client",
+        vec![
+            plain_mcp_tool("nostr_account"),
+            plain_mcp_tool("nostr_tool_added_later"),
+        ],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Unmarked: the Nostr tools are offered before the thread is privacy-marked.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    for nostr_tool in ["nostr_account", "nostr_tool_added_later"] {
+        assert!(
+            names.contains(&nostr_tool.to_string()),
+            "an unmarked thread offers the Nostr server's {nostr_tool}: {names:?}"
+        );
+    }
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Marked: every tool of the Nostr and research/external servers is refused
+    // at the offer point (S113-F01/F02).
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    for nostr_tool in ["nostr_account", "nostr_tool_added_later"] {
+        assert!(
+            !names.contains(&nostr_tool.to_string()),
+            "a private thread never offers the Nostr server's {nostr_tool}: {names:?}"
+        );
+    }
+    assert!(
+        !names.contains(&"research_tool".to_string()),
+        "a private thread never offers the research/external server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Monotonic D100 latch (S109-F01): downgrading after private history is refused.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        assert!(
+            thread.is_private_inference(),
+            "monotonic D100 latch must refuse true -> false after private history"
+        );
+    });
+}
+
+/// zed-kask: D100 (review finding F2) — the mark-change-mid-turn
+/// interaction on the tool perimeter. The perimeter is re-evaluated per
+/// REQUEST ITERATION (`refresh_turn_tools` inside `run_turn_internal`),
+/// tighter than the register's "per turn": a mark flipped while a turn
+/// runs still leaves the pre-flip tool map live for the rest of the
+/// current iteration (pinned here — `has_tool` stays true across the
+/// flip), but the NEXT iteration's request carries the re-scoped map (the
+/// media tool gone, the other server's tool kept). The in-iteration window
+/// is closed at dispatch for kask-sourced tools by the belt pin
+/// `kask_server_tool_refuses_private_provenance_on_disabled_servers`.
+#[gpui::test]
+async fn marking_mid_turn_re_scopes_the_running_turns_tool_map(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // A local provider serves the thread (the perimeter pin's pattern),
+    // so the mid-turn mark does NOT clear the held model and the turn
+    // keeps iterating — the request-gate arms are pinned separately in
+    // thread.rs.
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    let _media_calls = setup_context_server(
+        "media",
+        vec![plain_mcp_tool("media_analyze")],
+        &context_server_store,
+        cx,
+    );
+    let mut other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // An unmarked turn starts; the running turn's tool map offers the
+    // media tool (built at the request's construction).
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let first = fake
+        .pending_completions()
+        .pop()
+        .expect("the unmarked turn's first request");
+    let names = tool_names_for_completion(&first);
+    assert!(
+        names.contains(&"media_analyze".to_string()),
+        "the unmarked turn offers the media tool: {names:?}"
+    );
+    assert!(
+        cx.update(|cx| thread.read(cx).has_tool("media_analyze")),
+        "the running turn's map was built before the flip"
+    );
+
+    // The PI marks the thread MID-TURN (the toggle has no status guard).
+    // The pre-flip map is still live for the rest of this iteration — the
+    // documented window the dispatch-time belt closes for kask tools.
+    thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+    assert!(
+        cx.update(|cx| thread.read(cx).has_tool("media_analyze")),
+        "the in-flight iteration keeps the pre-flip map — the belt owns the dispatch"
+    );
+
+    // The model emits a research_tool call from the pre-flip map; the
+    // dispatch-time D100 belt in ContextServerTool refuses it (never reaching
+    // `other_calls`), and the turn loops into its next iteration whose request
+    // carries the re-scoped tool map with both media and research removed.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: "research_tool".into(),
+        raw_input: json!({}).to_string(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({})),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(&model, LanguageModelCompletionEvent::ToolUse(tool_use));
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    assert!(
+        other_calls.try_recv().is_err(),
+        "dispatch-time D100 belt must refuse pre-flip external/research tool call"
+    );
+
+    let second = fake
+        .pending_completions()
+        .pop()
+        .expect("the turn's next iteration");
+    let names = tool_names_for_completion(&second);
+    assert!(
+        !names.contains(&"media_analyze".to_string()),
+        "the mid-turn mark re-scopes the running turn's tool map at the next \
+         iteration — the perimeter is per-request, not per-turn: {names:?}"
+    );
+    assert!(
+        !names.contains(&"research_tool".to_string()),
+        "the research/external server's tool is also removed on the private perimeter: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
+/// Pin D6 (post-removal): the curator memory-edit tools are available to
+/// plain threads. The curator-thread gate that once excluded
+/// `memory_insert`/`memory_update`/`memory_resolve_contradiction` from
+/// non-curator sessions was removed 2026-09-01 by operator decision —
+/// models cannot reliably emit calls to tools absent from their visible
+/// list (observed 4/4 announce-then-stop failures on GLM 5.3), so the
+/// gate turned operator-approved memory writes into silent no-effect
+/// stops. This pins the gate's absence in `enabled_tools` through the
+/// context-server path: a plain thread (agent_id unset) surfaces all
+/// four curator tools. The kask-source registration path is pinned
+/// separately by `test_curator_memory_edit_tools_available_to_non_curator_threads`.
+#[gpui::test]
+async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut TestAppContext) {
+    // This test exercises the ContextServerStore path, so its scoped kask
+    // source stays empty without affecting parallel registries.
+    let _source_override = crate::scoped_kask_tool_source_for_test(std::sync::Arc::new(
+        MutableKaskToolSource(std::sync::Mutex::new(Vec::new())),
+    ));
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    let _curator_calls = setup_context_server(
+        "curator",
+        vec![
+            plain_mcp_tool("memory_insert"),
+            plain_mcp_tool("memory_update"),
+            plain_mcp_tool("memory_resolve_contradiction"),
+            plain_mcp_tool("curator_memory_recall"),
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    // Plain thread (agent_id unset): all four curator tools surface.
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["recall"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after plain-thread send");
+    let names = tool_names_for_completion(&completion);
+    for tool in [
+        "memory_insert",
+        "memory_update",
+        "memory_resolve_contradiction",
+        "curator_memory_recall",
+    ] {
+        assert!(
+            names.contains(&tool.to_string()),
+            "plain thread must surface {tool}: {names:?}"
+        );
+    }
+    fake.end_last(&model);
+}
+
+/// A `KaskToolSource` whose descriptor set can change after wiring — the
+/// shape of the real source (a cache refreshed by governed `McpRuntime`
+/// change events), and the fixture for the startup-race pin below.
+struct MutableKaskToolSource(std::sync::Mutex<Vec<KaskToolDescriptor>>);
+
+impl MutableKaskToolSource {
+    fn set(&self, descriptors: Vec<KaskToolDescriptor>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = descriptors;
+    }
+}
+
+impl KaskToolSource for MutableKaskToolSource {
+    fn tools(&self) -> Vec<KaskToolDescriptor> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn running_server_ids_now(&self) -> Option<Vec<String>> {
+        Some(Vec::new())
+    }
+
+    fn invoke(
+        &self,
+        _server_id: &str,
+        _caller: Option<hkask_types::WebID>,
+        _tool: &str,
+        _args: serde_json::Value,
+        _provenance: hkask_types::InferenceProvenance,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    > {
+        Box::pin(async { Ok(serde_json::json!({"status": "ok"})) })
+    }
+}
+
+/// Pin: the kask-tool startup race (single spawn authority, I1). The panel
+/// registry is created during window restore, before the deferred MCP launch
+/// registers kask tools — and because kask servers are not in the
+/// ContextServerStore, no store event ever announces the late registration.
+/// The registry's surface-change subscription must surface tools that appear
+/// in the source after construction, or every agent-panel conversation runs
+/// without kask tools for the whole app session (observed live 2026-08-30: a
+/// fresh session had zero kask tools until a store event was fired by hand).
+///
+/// The source double is scoped to this test thread, so its populated window
+/// cannot alter a registry constructed by a parallel test.
+#[gpui::test]
+async fn test_kask_tools_surface_when_source_populates_after_registry_creation(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // The startup window: `setup` constructed the registry above before this
+    // source exists, matching the live deferred-launch ordering.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
+
+    // The deferred launch registers tools — no store event fires for this
+    // (kask servers are not in the ContextServerStore).
+    source.set(vec![KaskToolDescriptor {
+        server_id: "kask-poll-test".to_string(),
+        name: "late_registered_tool".to_string(),
+        description: "A kask tool registered after the registry was created".to_string(),
+        input_schema: serde_json::json!({"type": "object", "properties": {}}),
+    }]);
+    // Fire the surface-change signal — the registry's subscription task
+    // reloads on receipt; run_until_parked drives the foreground task to
+    // completion. (Replaces the former advance-clock-past-the-poll dance.)
+    crate::tools::notify_kask_tool_surface_changed();
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"late_registered_tool".to_string()),
+        "a kask tool registered after registry construction must surface via the change signal: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
+/// zed-kask: D44 integration pin — the tool-visibility marker. Registered
+/// tools can still be hidden from a turn by profile restrictions; when any
+/// are absent from the available set, the system prompt names their count so the
+/// model never mistakes the visible list for the complete surface (the live
+/// failure that motivated this: an agent reported `web_ping` as unavailable
+/// because a filter layer hadn't selected it). This drives the full path —
+/// kask source → registry change-signal → enabled_tools (profile filters) →
+/// render_system_prompt — and asserts both halves: the filtered tool is
+/// absent from the request's tool list AND the marker names it as hidden.
+#[gpui::test]
+async fn test_system_prompt_names_tools_hidden_by_profile(cx: &mut TestAppContext) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    // The profile enables all context-server tools EXCEPT one — the
+    // per-tool profile override, the filter layer that remains now that the
+    // LazyToolRouter is gone (D44 removal, 2026-08-30).
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {},
+                        "context_servers": {
+                            "kask-marker-test": {
+                                "tools": { "marker_hidden_tool": false }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // Register one tool the profile keeps and one it filters through this
+    // test's scoped source.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
+    source.set(vec![
+        KaskToolDescriptor {
+            server_id: "kask-marker-test".to_string(),
+            name: "web_cats_search".to_string(),
+            description: "Search the web for cats".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "kask-marker-test".to_string(),
+            name: "marker_hidden_tool".to_string(),
+            description: "Totally unrelated to any request".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+    ]);
+    crate::tools::notify_kask_tool_surface_changed();
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(
+                ClientUserMessageId::new(),
+                ["please search the web for cats carefully and thoroughly"],
+                cx,
+            )
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+
+    // Half 1: the profile-filtered tool is absent from the request's tool list.
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"web_cats_search".to_string()),
+        "the profile-enabled tool must be retained: {names:?}"
+    );
+    assert!(
+        !names.contains(&"marker_hidden_tool".to_string()),
+        "the profile-disabled tool must be filtered: {names:?}"
+    );
+
+    // Half 2: the system prompt names the hidden count — the model is told
+    // the visible list is a selection, never the whole surface.
+    let system_message = &completion.messages[0];
+    let MessageContent::Text(system_prompt) = &system_message.content[0] else {
+        panic!("Expected text content");
+    };
+    assert!(
+        system_prompt.contains("1 additional MCP server tools are registered"),
+        "the marker must name the hidden count (marker_hidden_tool): {system_prompt}"
+    );
+    assert!(
+        system_prompt.contains("Never report a tool as unavailable"),
+        "the marker must forbid absence claims: {system_prompt}"
+    );
+
+    fake.end_last(&model);
+}
+
+/// zed-kask: D6 pin — the curator memory-edit tools are available to
+/// non-curator threads. The curator-thread gate that once filtered
+/// `memory_insert`/`memory_update`/`memory_resolve_contradiction` out of
+/// non-curator sessions was removed 2026-09-01 by operator decision:
+/// models cannot reliably emit calls to tools absent from their visible
+/// list (observed 4/4 announce-then-stop failures on GLM 5.3), so the
+/// gate produced silent no-effect stops indistinguishable from thread
+/// kills while blocking operator-approved memory writes. Drives the real
+/// path — kask source → registry change-signal → enabled_tools — and asserts the
+/// memory-edit tool reaches a default (zed-agent) thread, where the old
+/// gate would have dropped it.
+#[gpui::test]
+async fn test_curator_memory_edit_tools_available_to_non_curator_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {},
+                        "context_servers": {}
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // A "curator" server whose registered surface includes the memory-edit
+    // tool. The default thread (zed agent — agent_id unset) must see it.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    let _source_override = crate::scoped_kask_tool_source_for_test(source.clone());
+    source.set(vec![KaskToolDescriptor {
+        server_id: "curator".to_string(),
+        name: "memory_insert".to_string(),
+        description: "Insert a new memory into the curator's store.".to_string(),
+        input_schema: serde_json::json!({"type": "object", "properties": {}}),
+    }]);
+    crate::tools::notify_kask_tool_surface_changed();
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["please remember this"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"memory_insert".to_string()),
+        "the curator memory-edit tool must be visible to non-curator threads: {names:?}"
+    );
+
+    fake.end_last(&model);
+}
+
+/// zed-kask: D44 discovery pin — the `list_mcp_tools` meta-tool. This is
+/// the pull mechanism that replaced the removed LazyToolRouter's push: the
+/// model enumerates the registered MCP surface on demand (grouped by
+/// server, filterable by substring over server id / tool name / description)
+/// instead of a per-turn heuristic guessing what is relevant. Drives the
+/// real path — kask source → registry change-signal → listing — so a break anywhere
+/// in the surfacing chain fails here, not in a live session. The
+/// system-prompt visibility marker points the model at this tool when it
+/// finds a tool missing; if the listing dropped tools or mis-grouped them,
+/// the model would trade a false-absence belief for a false-index belief.
+#[gpui::test]
+async fn test_list_mcp_tools_enumerates_and_filters(cx: &mut TestAppContext) {
+    // Keep the source empty while setup constructs the registry, then replace
+    // this test-local value with the populated source below.
+    let mut source_override = crate::scoped_kask_tool_source_for_test(std::sync::Arc::new(
+        MutableKaskToolSource(std::sync::Mutex::new(Vec::new())),
+    ));
+
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+
+    // Register tools on two servers and fire the surface-change signal so
+    // the registry merges them.
+    let source = std::sync::Arc::new(MutableKaskToolSource(std::sync::Mutex::new(Vec::new())));
+    source_override.replace(source.clone());
+    source.set(vec![
+        KaskToolDescriptor {
+            server_id: "research".to_string(),
+            name: "web_ping".to_string(),
+            description: "Liveness check".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "research".to_string(),
+            name: "web_search".to_string(),
+            description: "Search the web".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        KaskToolDescriptor {
+            server_id: "media".to_string(),
+            name: "gallery_search".to_string(),
+            description: "Search the gallery".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+    ]);
+    crate::tools::notify_kask_tool_surface_changed();
+    cx.run_until_parked();
+
+    let run_listing = |cx: &mut TestAppContext, filter: Option<String>| {
+        thread.update(cx, |thread, cx| {
+            let tool = std::sync::Arc::new(crate::ListMcpToolsTool::new(
+                thread.context_server_registry.clone(),
+            ));
+            let (event_stream, _rx) = ToolCallEventStream::test();
+            tool.run(
+                ToolInput::resolved(crate::ListMcpToolsToolInput { filter }),
+                event_stream,
+                cx,
+            )
+        })
+    };
+
+    // Unfiltered: both servers, all three tools, grouped correctly.
+    let listing = run_listing(cx, None).await.expect("listing runs");
+    assert_eq!(listing.total_tools, 3);
+    assert_eq!(listing.servers.len(), 2);
+    let research = listing
+        .servers
+        .iter()
+        .find(|s| s.server_id == "research")
+        .expect("research server in listing");
+    assert_eq!(research.tools.len(), 2);
+    assert!(research.tools.iter().any(|t| t.name == "web_ping"));
+
+    // Filter matches tool name, description text, and server id.
+    let by_name = run_listing(cx, Some("web_pi".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_name.total_tools, 1);
+    assert_eq!(by_name.servers[0].tools[0].name, "web_ping");
+
+    let by_description = run_listing(cx, Some("liveness".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_description.total_tools, 1);
+
+    let by_server = run_listing(cx, Some("media".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(by_server.total_tools, 1);
+    assert_eq!(by_server.servers[0].tools[0].name, "gallery_search");
+
+    let no_match = run_listing(cx, Some("nonexistent".to_string()))
+        .await
+        .expect("listing runs");
+    assert_eq!(
+        no_match.total_tools, 0,
+        "a filter with no matches must return an empty listing, not the unfiltered one"
+    );
+}
+
+/// Like [`setup_context_server`], but starts the server with an explicit
+/// request timeout so a never-responding tool call fails with the client's
+/// "Context server request timeout" error on a test-controllable clock.
+fn setup_context_server_with_timeout(
+    name: &'static str,
+    tools: Vec<context_server::types::Tool>,
+    request_timeout: Duration,
+    context_server_store: &Entity<ContextServerStore>,
+    cx: &mut TestAppContext,
+) -> mpsc::UnboundedReceiver<(
+    context_server::types::CallToolParams,
+    oneshot::Sender<context_server::types::CallToolResponse>,
+)> {
+    cx.update(|cx| {
+        let mut settings = ProjectSettings::get_global(cx).clone();
+        settings.context_servers.insert(
+            name.into(),
+            project::project_settings::ContextServerSettings::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: Vec::new(),
+                    env: None,
+                    timeout: None,
+                },
+            },
+        );
+        ProjectSettings::override_global(settings, cx);
+    });
+
+    let (mcp_tool_calls_tx, mcp_tool_calls_rx) = mpsc::unbounded();
+    let fake_transport = context_server::test::create_fake_transport(name, cx.executor())
+        .on_request::<context_server::types::requests::Initialize, _>(move |_params| async move {
+            context_server::types::InitializeResponse {
+                protocol_version: context_server::types::ProtocolVersion(
+                    context_server::types::LATEST_PROTOCOL_VERSION.to_string(),
+                ),
+                server_info: context_server::types::Implementation {
+                    name: name.into(),
+                    title: None,
+                    version: "1.0.0".to_string(),
+                    description: None,
+                },
+                capabilities: context_server::types::ServerCapabilities {
+                    tools: Some(context_server::types::ToolsCapabilities {
+                        list_changed: Some(true),
+                    }),
+                    ..Default::default()
+                },
+                meta: None,
+            }
+        })
+        .on_request::<context_server::types::requests::ListTools, _>(move |_params| {
+            let tools = tools.clone();
+            async move {
+                context_server::types::ListToolsResponse {
+                    tools,
+                    next_cursor: None,
+                    meta: None,
+                }
+            }
+        })
+        .on_request::<context_server::types::requests::CallTool, _>(move |params| {
+            let mcp_tool_calls_tx = mcp_tool_calls_tx.clone();
+            async move {
+                let (response_tx, response_rx) = oneshot::channel();
+                mcp_tool_calls_tx
+                    .unbounded_send((params, response_tx))
+                    .unwrap();
+                // The client times out and cancels the request before the
+                // test responds — a cancelled response channel is the
+                // normal end state for this server, not an error.
+                response_rx
+                    .await
+                    .unwrap_or_else(|_| context_server::types::CallToolResponse {
+                        content: vec![],
+                        is_error: Some(true),
+                        meta: None,
+                        structured_content: None,
+                    })
+            }
+        });
+    context_server_store.update(cx, |store, cx| {
+        store.start_server(
+            Arc::new(ContextServer::new_with_timeout(
+                ContextServerId(name.into()),
+                Arc::new(fake_transport),
+                Some(request_timeout),
+            )),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    mcp_tool_calls_rx
+}
+
+/// Pin (D-seam, `run_inner` retry classification — full path): when a
+/// context-server tool call times out, the tool result surfaces the
+/// timeout error to the model and the server sees exactly ONE request —
+/// the timeout verdict bails immediately and does NOT enter the 30s
+/// restart-and-retry loop. The transport-death half of the classification
+/// (retry-eligible) is pinned at the predicate level in
+/// `context_server_registry::tests::timeout_and_transport_death_classify_into_distinct_retry_verdicts`.
+#[gpui::test]
+async fn test_mcp_tool_timeout_does_not_retry(cx: &mut TestAppContext) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // A server with a 1s request timeout whose tool never responds.
+    let mut mcp_tool_calls = setup_context_server_with_timeout(
+        "slow_server",
+        vec![plain_mcp_tool("slow_tool")],
+        Duration::from_secs(1),
+        &context_server_store,
+        cx,
+    );
+
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["call the slow tool"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    // Simulate the model calling the slow tool.
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after send");
+    assert_eq!(tool_names_for_completion(&completion), vec!["slow_tool"]);
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "slow_tool".into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake.end_last(&model);
+
+    // Fire the 1s request timeout on the fake clock.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    // The server saw exactly one request — the timeout verdict does not
+    // trigger a restart-and-retry second call.
+    let (params, _response_tx) = mcp_tool_calls
+        .try_recv()
+        .expect("the tool call was dispatched to the server");
+    assert_eq!(params.name, "slow_tool");
+    assert!(
+        mcp_tool_calls.try_recv().is_err(),
+        "a timeout must NOT trigger a second (retry) request — the server is alive but slow"
+    );
+
+    // The tool result surfaces the timeout error to the model.
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("completion after the tool result");
+    let last_message = completion
+        .messages
+        .last()
+        .expect("the tool result is fed back to the model");
+    match last_message.content.first() {
+        Some(MessageContent::ToolResult(result)) => {
+            assert!(
+                result.is_error,
+                "the timed-out tool call must surface as an error"
+            );
+            let output = match &result.output {
+                Some(serde_json::Value::String(text)) => text.clone(),
+                Some(other) => other.to_string(),
+                None => result
+                    .content
+                    .iter()
+                    .find_map(|content| match content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            Some(text.to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+            };
+            assert!(
+                output.contains("Context server request timeout"),
+                "the error must name the timeout, got: {output:?}"
+            );
+        }
+        other => panic!("expected a tool result message, got: {other:?}"),
+    }
+    fake.end_last(&model);
 }
 
 struct ThreadTest {
@@ -5312,6 +7357,15 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         watch_settings(fs.clone(), cx);
         fake
     });
+
+    // Drive the async settings watcher to completion before constructing the
+    // thread below: `Thread::new` fixes `profile_id` from `default_profile` at
+    // construction, so if the test profile hasn't loaded yet the thread is
+    // stuck on the default "write" profile, whose tool allowlist omits every
+    // test tool — all tool calls then fail with "No tool named X exists"
+    // (observed 2026-09-11: five streaming tests failed this way, and several
+    // passing ones ran with a silently empty tool surface).
+    cx.run_until_parked();
 
     let templates = Templates::new();
 
@@ -5932,7 +7986,7 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6137,7 +8191,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6286,7 +8340,7 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6445,7 +8499,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6583,7 +8637,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -6768,6 +8822,162 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     );
 }
 
+/// expect: [P1] native creation inherits authority; roots and other parents cannot be resumed.
+#[gpui::test]
+async fn delegation_native_creation_and_resume(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| LanguageModelRegistry::test(cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), [], cx).await;
+    let store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+    let root = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let other = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        let root_id = root.read(cx).session_id().clone();
+        let other_id = other.read(cx).session_id().clone();
+        let parent = agent.read(cx).sessions[&root_id].thread.clone();
+        parent.update(cx, |thread, cx| {
+            thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+            assert_ne!(
+                thread.delegation_for_child(cx),
+                DelegationAuthority::default()
+            );
+        });
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: parent.downgrade(),
+            acp_thread: root.downgrade(),
+        };
+        assert!(
+            environment
+                .resume_subagent_thread(root_id.clone(), cx)
+                .is_err()
+        );
+        assert!(
+            environment
+                .resume_subagent_thread(other_id.clone(), cx)
+                .is_err()
+        );
+        let child = environment
+            .create_subagent_thread("child".into(), None, cx)
+            .unwrap();
+        let child_thread = agent.read(cx).sessions[&child.id()].thread.clone();
+        assert_eq!(child_thread.read(cx).parent_thread_id(), Some(root_id));
+        let child_authority = child_thread.read(cx).delegation_for_child(cx);
+        assert_ne!(child_authority, DelegationAuthority::default());
+        let mut inherited = child_authority.clone();
+        inherited.intersect(&parent.read(cx).delegation_for_child(cx));
+        assert_eq!(child_authority, inherited);
+        parent.update(cx, |thread, cx| {
+            thread.restrict_delegation(DelegationAuthority::default(), cx);
+        });
+        assert!(environment.resume_subagent_thread(child.id(), cx).is_ok());
+        assert_eq!(
+            child_thread.read(cx).delegation_for_child(cx),
+            DelegationAuthority::default()
+        );
+        let other_parent = agent.read(cx).sessions[&other_id].thread.clone();
+        let other_environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: other_parent.downgrade(),
+            acp_thread: other.downgrade(),
+        };
+        assert!(
+            other_environment
+                .resume_subagent_thread(child.id(), cx)
+                .is_err()
+        );
+    });
+}
+
+/// expect: [P1] sibling host receives actual parent authority, not request-supplied grants.
+#[gpui::test]
+async fn delegation_sibling_host_uses_actual_parent(cx: &mut TestAppContext) {
+    struct Host(Rc<std::cell::RefCell<Option<DelegationAuthority>>>);
+    impl SiblingThreadHost for Host {
+        fn create_sibling_thread(
+            &self,
+            request: SiblingThreadRequest,
+            _: &mut AsyncApp,
+        ) -> Task<Result<SiblingThreadInfo>> {
+            *self.0.borrow_mut() = request.delegation_authority;
+            Task::ready(Ok(SiblingThreadInfo {
+                title: request.title,
+                agent_id: "zed".into(),
+                model: None,
+                warning: None,
+            }))
+        }
+        fn list_available_agents(&self, _: &mut App) -> Result<AvailableAgents> {
+            Ok(AvailableAgents { agents: Vec::new() })
+        }
+    }
+    init_test(cx);
+    cx.update(|cx| LanguageModelRegistry::test(cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), [], cx).await;
+    let store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+    let root = cx
+        .update(|cx| connection.new_session(project, PathList::new(&[Path::new("")]), cx))
+        .await
+        .unwrap();
+    let observed = Rc::new(std::cell::RefCell::new(None));
+    let environment = cx.update(|cx| {
+        agent.update(cx, |agent, _| {
+            agent.set_sibling_thread_host(Rc::new(Host(observed.clone())))
+        });
+        let id = root.read(cx).session_id().clone();
+        let thread = agent.read(cx).sessions[&id].thread.clone();
+        thread.update(cx, |thread, cx| {
+            thread.set_model(FakeLanguageModelProvider::default().model("fake"), cx);
+            thread.restrict_delegation(DelegationAuthority::default(), cx);
+        });
+        NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: thread.downgrade(),
+            acp_thread: root.downgrade(),
+        }
+    });
+    environment
+        .create_sibling_thread(
+            SiblingThreadRequest {
+                title: "child".into(),
+                prompt: "task".into(),
+                agent_id: None,
+                model: None,
+                use_new_worktree: false,
+                worktree_name: None,
+                base_ref: None,
+                delegation_authority: Some(DelegationAuthority::from_mcp_tools(&[
+                    "server/write".into()
+                ])),
+                private_inference_marked: false,
+            },
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(*observed.borrow(), Some(DelegationAuthority::default()));
+}
+
 #[gpui::test]
 async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestAppContext) {
     let fake = init_test(cx);
@@ -6797,7 +9007,7 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
     });
 
     let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx));
-    subagent_thread.read_with(cx, |subagent_thread, cx| {
+    subagent_thread.update(cx, |subagent_thread, cx| {
         assert!(subagent_thread.is_subagent());
         assert_eq!(subagent_thread.depth(), 1);
         assert_eq!(
@@ -6883,7 +9093,7 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
             subagent_thread.model().map(|model| model.id()),
             Some(subagent_model.id())
         );
-        assert!(subagent_thread.thinking_enabled());
+        assert!(subagent_thread.thinking_effort().is_some());
         assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
     });
 
@@ -6892,7 +9102,6 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
             subagent_thread.model().map(|model| model.id()),
             Some(explicit_model.id())
         );
-        assert!(!subagent_thread.thinking_enabled());
         assert_eq!(subagent_thread.thinking_effort(), None);
     });
 
@@ -6902,7 +9111,6 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
     });
     parent_thread.update(cx, |parent_thread, cx| {
         parent_thread.set_model(parent_model.clone(), cx);
-        parent_thread.set_thinking_enabled(false, cx);
         parent_thread.set_thinking_effort(None, cx);
     });
 
@@ -6911,7 +9119,7 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
             subagent_thread.model().map(|model| model.id()),
             Some(subagent_model.id())
         );
-        assert!(subagent_thread.thinking_enabled());
+        assert!(subagent_thread.thinking_effort().is_some());
         assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
     });
     explicit_subagent_thread.read_with(cx, |subagent_thread, _cx| {
@@ -6919,7 +9127,6 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
             subagent_thread.model().map(|model| model.id()),
             Some(explicit_model.id())
         );
-        assert!(!subagent_thread.thinking_enabled());
         assert_eq!(subagent_thread.thinking_effort(), None);
     });
 }
@@ -6973,6 +9180,89 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             "subagent tool should not be present at max depth"
         );
     });
+}
+
+/// zed-kask: pins the construction↔list seam of the four-gate tool
+/// visibility chain (the gates are documented on the `tools!` macro).
+/// `Thread::add_default_tools` and the macro's `ALL_TOOL_NAMES` are two
+/// hand-kept lists; a tool constructed but missing from the macro silently
+/// disappears from every macro consumer (the profile pin, the permission
+/// UI) — the exact defect class that shipped `record_skill_feedback`
+/// registered-but-invisible (D1). A macro entry with no construction site
+/// is a dead entry. Both directions fail here instead of in a live session.
+#[gpui::test]
+async fn default_constructed_tools_and_macro_list_are_in_sync(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = FakeLanguageModelProvider::default().model("fake");
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    let registered: std::collections::HashSet<String> = thread.read_with(cx, |thread, _| {
+        thread
+            .registered_tool_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    });
+
+    // These tools are registered outside add_default_tools: status, the
+    // Curator-only directive, log-clear and skill-evaluation tools in
+    // NativeAgent::new_session, the skill
+    // tool in register_session. Their separate session-path tests pin that
+    // they reach (or, for native sessions, stay out of) model-visible requests.
+    const SESSION_TOOLS: &[&str] = &[
+        CuratorStatusTool::NAME,
+        CuratorDirectiveTool::NAME,
+        CuratorClearAlgedonicLogTool::NAME,
+        SkillTool::NAME,
+        RecordSkillFeedbackTool::NAME,
+    ];
+
+    for name in crate::ALL_TOOL_NAMES {
+        if SESSION_TOOLS.contains(name) {
+            continue;
+        }
+        assert!(
+            registered.contains(*name),
+            "ALL_TOOL_NAMES lists `{name}` but add_default_tools never constructs it — \
+             a dead macro entry or a missing construction site"
+        );
+    }
+    for name in &registered {
+        // SandboxedTerminalTool surfaces under the canonical `terminal`
+        // name, so the macro deliberately excludes it.
+        if name.as_str() == SandboxedTerminalTool::NAME {
+            continue;
+        }
+        assert!(
+            crate::ALL_TOOL_NAMES.contains(&name.as_str()),
+            "add_default_tools constructs `{name}` but the tools! macro does not list it — \
+             the tool is invisible to every macro consumer (the record_skill_feedback \
+             defect class, D1)"
+        );
+    }
 }
 
 #[gpui::test]
@@ -7358,6 +9648,349 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fake = cx.update(|cx| {
+        let fake = LanguageModelRegistry::test(cx);
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.auto_compact.enabled = false;
+        AgentSettings::override_global(settings, cx);
+        fake
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = fake.model("fake");
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Start the parent turn
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
+    cx.run_until_parked();
+    fake.send_last_text(&model, "spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+        model: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&subagent_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(subagent_tool_use),
+    );
+    fake.end_last(&model);
+
+    cx.run_until_parked();
+
+    // Verify subagent is running
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // Send a usage update that crosses the warning threshold (80% of 1,000,000)
+    fake.send_last_text(&model, "partial work");
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            input_tokens: 850_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        }),
+    );
+
+    cx.run_until_parked();
+
+    // The subagent should no longer be running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should be stopped after context window warning"
+        );
+    });
+
+    // The parent model should get a new completion request to respond to the
+    // tool error. The mid-turn title generation races this follow-up on the
+    // same registered fake — select by intent, not by list position.
+    let parent_followup = fake
+        .pending_completions_for(&model)
+        .into_iter()
+        .find(|request| request.intent == Some(CompletionIntent::ToolResults))
+        .expect("parent follow-up after subagent warning");
+    fake.send_text(&model, &parent_followup, "Response after warning");
+    fake.end_stream(&model, &parent_followup);
+
+    send.await.unwrap();
+
+    // Verify the parent thread shows the warning error in the tool call
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("nearing the end of its context window"),
+        "tool output should contain context window warning message, got:\n{markdown}"
+    );
+    assert!(
+        markdown.contains("Status: Failed"),
+        "tool call should have Failed status, got:\n{markdown}"
+    );
+
+    // Verify the subagent session still exists (can be resumed)
+    agent.read_with(cx, |agent, _cx| {
+        assert!(
+            agent.sessions.contains_key(&subagent_session_id),
+            "subagent session should still exist for potential resume"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fake = cx.update(|cx| {
+        let fake = LanguageModelRegistry::test(cx);
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.auto_compact.enabled = false;
+        AgentSettings::override_global(settings, cx);
+        fake
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = fake.model("fake");
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // === First turn: create subagent, trigger context window warning ===
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["First prompt".into()], cx)
+    });
+    cx.run_until_parked();
+    fake.send_last_text(&model, "spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "initial task".to_string(),
+        message: "do the first task".to_string(),
+        session_id: None,
+        model: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&subagent_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(subagent_tool_use),
+    );
+    fake.end_last(&model);
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // Subagent sends a usage update that crosses the warning threshold.
+    // This triggers Normal→Warning, stopping the subagent.
+    fake.send_last_text(&model, "partial work");
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            input_tokens: 850_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        }),
+    );
+
+    cx.run_until_parked();
+
+    // Verify the first turn was stopped with a context window warning
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should be stopped after context window warning"
+        );
+    });
+
+    // Parent model responds to complete first turn. The mid-turn title
+    // generation races this follow-up on the same registered fake — select
+    // by intent, not by list position.
+    let parent_followup = fake
+        .pending_completions_for(&model)
+        .into_iter()
+        .find(|request| request.intent == Some(CompletionIntent::ToolResults))
+        .expect("parent follow-up after subagent warning");
+    fake.send_text(&model, &parent_followup, "First response");
+    fake.end_stream(&model, &parent_followup);
+
+    send.await.unwrap();
+
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("nearing the end of its context window"),
+        "first turn should have context window warning, got:\n{markdown}"
+    );
+
+    // === Second turn: resume the same subagent (now at Warning level) ===
+    let send2 = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Follow up".into()], cx)
+    });
+    cx.run_until_parked();
+    fake.send_last_text(&model, "resuming subagent");
+    let resume_tool_input = SpawnAgentToolInput {
+        label: "follow-up task".to_string(),
+        message: "do the follow-up task".to_string(),
+        session_id: Some(subagent_session_id.clone()),
+        model: None,
+    };
+    let resume_tool_use = LanguageModelToolUse {
+        id: "subagent_2".into(),
+        name: SpawnAgentTool::NAME.into(),
+        raw_input: serde_json::to_string(&resume_tool_input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(&resume_tool_input).unwrap(),
+        ),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(resume_tool_use),
+    );
+    fake.end_last(&model);
+
+    cx.run_until_parked();
+
+    // Subagent responds with tokens still at warning level (no worse).
+    // Since ratio_before_prompt was already Warning, this should NOT
+    // trigger the context window warning again.
+    fake.send_last_text(&model, "follow-up task response");
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+            input_tokens: 870_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        }),
+    );
+    fake.end_last(&model);
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete second turn
+    fake.send_last_text(&model, "Second response");
+    fake.end_last(&model);
+
+    send2.await.unwrap();
+
+    // The resumed subagent should have completed normally since the ratio
+    // didn't transition (it was Warning before and stayed at Warning)
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("follow-up task response"),
+        "resumed subagent should complete normally when already at warning, got:\n{markdown}"
+    );
+    // The second tool call should NOT have a context window warning
+    let second_tool_pos = markdown
+        .find("follow-up task")
+        .expect("should find follow-up tool call");
+    let after_second_tool = &markdown[second_tool_pos..];
+    assert!(
+        !after_second_tool.contains("nearing the end of its context window"),
+        "should NOT contain context window warning for resumed subagent at same level, got:\n{after_second_tool}"
+    );
+}
+
+#[gpui::test]
 async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut TestAppContext) {
     for (enabled, max_tokens, max_output_tokens, input_tokens) in [
         (true, 1_000_000, None, 899_999),
@@ -7720,7 +10353,7 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent =
         cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
     let acp_thread = cx
         .update(|cx| {
@@ -9312,6 +11945,158 @@ async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_sibling_failure_interrupts_stream_reports_interruption_not_user_cancel(
+    cx: &mut TestAppContext,
+) {
+    // zed-kask: false-halt fix (card bd7dbf68). Live incident 2026-10-15: a
+    // parallel batch (edit_file + grep + curator_semantic_search) returned
+    // "Tool canceled by user" on calls the operator did not cancel. Mechanism:
+    // a streaming tool (edit_file) errored while its input was still streaming
+    // → the event loop `break` (thread.rs `is_error && is_still_streaming`)
+    // abandoned the batch → the non-streaming sibling's partial tool_use sat in
+    // the pending message, never started → `flush_pending_message` stamped it
+    // TOOL_CANCELED_MESSAGE because no truncation flag was set. The user had
+    // canceled nothing.
+    //
+    // This test pins the honest attribution: the never-started sibling gets
+    // the interrupted-by-sibling-failure message (naming the real cause and
+    // telling the model to re-issue the call), never the user-cancellation
+    // message. The failing streaming tool keeps its own real error result.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+        thread.add_tool(EchoTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                ClientUserMessageId::new(),
+                ["Use the streaming_failing_echo tool and the echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The streaming tool is dispatched immediately on its partial input and
+    // fails after one chunk while still streaming.
+    let failing_tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({ "text": "hello" })),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(failing_tool_use.clone()),
+    );
+
+    // The non-streaming sibling's input is emitted next, while the streaming
+    // sibling is still consuming its chunks: this tool_use lands in the pending
+    // message (never started — EchoTool does not support input streaming and
+    // is_input_complete is false), exactly the incident shape.
+    let abandoned_tool_use = LanguageModelToolUse {
+        id: "call_2".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partial"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({ "text": "partial" })),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(abandoned_tool_use.clone()),
+    );
+    cx.run_until_parked();
+
+    // End the stream without ever completing either input. The failing
+    // streaming tool's error breaks the loop while its input is still
+    // streaming, abandoning the already-delivered sibling — no `end_last`
+    // needed (the loop break is the stream's terminal event for this round,
+    // as in `test_streaming_tool_error_breaks_stream_loop_immediately`).
+    cx.run_until_parked();
+
+    // The turn must have flushed a tool result for the never-started sibling,
+    // and it must be the interruption message — not a user cancellation. The
+    // agent message owning both tool uses is the one that owns call_1's tool
+    // use; search the thread's messages rather than assume it is the last one
+    // (a continuation round may follow).
+    thread.read_with(cx, |thread, _| {
+        let owning_message = thread
+            .find_agent_message_with_tool_use(&failing_tool_use.id)
+            .expect("the flushed agent message owning the interrupted batch must exist");
+        let failing_result = owning_message
+            .tool_results
+            .get(&failing_tool_use.id)
+            .expect("the failing streaming tool's real error result must be present");
+        assert!(failing_result.is_error);
+        assert_eq!(failing_result.text_contents(), "failed");
+
+        let abandoned_result = owning_message
+            .tool_results
+            .get(&abandoned_tool_use.id)
+            .expect("the never-started sibling's tool use must have a flushed result");
+        assert!(
+            abandoned_result.is_error,
+            "the never-started sibling's result must be an error"
+        );
+        assert_eq!(
+            abandoned_result.text_contents(),
+            "Tool call was interrupted because a sibling tool call in the same batch failed while the stream was still emitting this call's input; the call never started. The user canceled nothing. Re-issue this tool call.",
+            "the never-started sibling must be reported as interrupted-by-sibling-failure, \
+             never as canceled by the user (card bd7dbf68)"
+        );
+    });
+
+    // (i) drain-and-continue: the continuation request must carry both real
+    // results — the failing sibling's error and the never-started call's
+    // interruption message — so the model can re-issue the abandoned call.
+    let completions = fake.pending_completions();
+    let continuation = completions
+        .get(1)
+        .expect("a continuation request must follow the interrupted batch");
+    let result_texts: Vec<String> = continuation
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r.text_contents()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        result_texts.len(),
+        2,
+        "the continuation must carry both real results (the failing sibling's \
+         error and the never-started call's interruption message), got: {result_texts:?}"
+    );
+    assert!(
+        result_texts.contains(&"failed".to_string()),
+        "the failing streaming tool's real error must reach the model"
+    );
+    assert!(
+        result_texts
+            .iter()
+            .any(|t| t.contains("Re-issue this tool call")),
+        "the interrupted-sibling message must reach the model so it can re-issue"
+    );
+}
+
+#[gpui::test]
 async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
@@ -9562,7 +12347,7 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("profile-a".into()), cx);
-        thread.set_thinking_enabled(false, cx);
+        thread.set_thinking_effort(false.then(|| "default".to_string()), cx);
     });
 
     // Send a message — first iteration starts with model A, profile-a, thinking off.
@@ -9603,7 +12388,10 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("profile-b".into()), cx);
         thread.set_model(model_b.clone(), cx);
+        // zed-kask: thinking is the explicit toggle in the merged design; an
+        // effort alone no longer implies it (upstream's capability guard).
         thread.set_thinking_enabled(true, cx);
+        thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
     });
 
     // Run until parked — processes the echo tool call, loops back, picks up
@@ -9745,7 +12533,7 @@ impl SubagentCompactionTest {
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
         let store = cx.new(ThreadStore::new);
         let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let acp_thread = cx
             .update(|cx| connection.new_session(project, PathList::new(&[Path::new("")]), cx))
             .await
@@ -9755,7 +12543,13 @@ impl SubagentCompactionTest {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
         let model = fake.model("fake");
-        parent.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        parent.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            // The child receives a snapshot of the parent's enabled tool
+            // authority (delegation_for_child), so the parent must hold the
+            // tool for the subagent to be allowed to use it.
+            thread.add_tool(EchoTool);
+        });
         let environment = NativeThreadEnvironment {
             agent: agent.downgrade(),
             thread: parent.downgrade(),
@@ -9902,5 +12696,1377 @@ impl SubagentCompactionTest {
         });
         self.thread
             .read_with(cx, |thread, _| assert!(thread.is_turn_complete()));
+    }
+}
+
+/// expect: skill-use issue capture is always on and mechanical — a tool that
+/// fails after the model activated a skill in the same thread is recorded
+/// against that skill and its invoker, with no model report; a failure with
+/// no active skill is not attributed to any skill.
+/// [P9] Motivating: the learning loop's observe stage cannot depend on the
+/// model remembering to report.
+#[gpui::test]
+async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContext) {
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        fs: settings_fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    settings_fs
+        .insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "skill-probe": {
+                            "name": "Skill probe",
+                            "tools": {
+                                crate::SkillTool::NAME: true,
+                                StreamingFailingEchoTool::NAME: true,
+                            }
+                        }
+                    }
+                },
+                "tool_permissions": { "default": "allow" }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+    cx.run_until_parked();
+
+    let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = recorded.clone();
+    let _recorder = crate::SKILL_TOOL_FAILURE_RECORDER.scoped_for_test(Arc::new(
+        move |skill, invoker, tool, error| {
+            if let Ok(mut entries) = captured.lock() {
+                entries.push((
+                    skill.to_string(),
+                    invoker.to_string(),
+                    tool.to_string(),
+                    error.to_string(),
+                ));
+            }
+        },
+    ));
+
+    let fs = fs::FakeFs::new(cx.executor());
+    let content = "---\nname: probe-skill\ndescription: Probe\n---\n\nbody";
+    fs.insert_tree("/skills", json!({ "probe-skill": { "SKILL.md": content } }))
+        .await;
+    let skill = agent_skills::parse_skill_frontmatter(
+        Path::new("/skills/probe-skill/SKILL.md"),
+        content,
+        agent_skills::SkillSource::Global,
+    )
+    .expect("probe skill");
+    // Core skills are pre-authorized, so the probe does not wait on a prompt.
+    let skill = agent_skills::Skill {
+        core: true,
+        ..skill
+    };
+    let skills = Arc::new(vec![skill]);
+    let fs_for_body = fs.clone();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 0,
+        });
+        thread.add_tool(crate::SkillTool::with_body_resolver(
+            move |_cx| skills.clone(),
+            move |skill, cx| {
+                let fs = fs_for_body.clone();
+                cx.spawn(async move |_| {
+                    Ok(agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path).await?)
+                })
+            },
+        ));
+    });
+
+    let tool_use = |id: &str, name: &str, input: serde_json::Value| {
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: id.into(),
+            name: name.into(),
+            raw_input: input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(input),
+            is_input_complete: true,
+            thought_signature: None,
+        })
+    };
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.set_profile(AgentProfileId("skill-probe".into()), cx);
+            thread.send(ClientUserMessageId::new(), ["go"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // A failure before any skill is active is not a skill-use issue.
+    fake.send_last_event(
+        &model,
+        tool_use("t0", StreamingFailingEchoTool::NAME, json!({ "text": "x" })),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+    assert!(recorded.lock().expect("lock").is_empty());
+
+    fake.send_last_event(
+        &model,
+        tool_use("t1", "skill", json!({ "name": "probe-skill" })),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+    fake.send_last_event(
+        &model,
+        tool_use("t2", StreamingFailingEchoTool::NAME, json!({ "text": "x" })),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    let entries = recorded.lock().expect("lock").clone();
+    assert_eq!(
+        entries.len(),
+        1,
+        "exactly the post-activation failure: {entries:?}"
+    );
+    let (skill, invoker, tool, error) = &entries[0];
+    assert_eq!(skill, "probe-skill");
+    assert_eq!(invoker, "Zed Agent");
+    assert_eq!(tool, StreamingFailingEchoTool::NAME);
+    assert!(error.contains("failed"), "error text: {error}");
+}
+
+mod elicitation_hold_barrier {
+    use super::*;
+    use crate::tools::{
+        GoalCloseTool, NativeGoalDecision, NativeGoalEvidence, NativeGoalHost, NativeGoalPrompt,
+        NativeGoalSubmission,
+    };
+    use collections::HashMap;
+    use pretty_assertions::assert_eq;
+    use std::sync::{Mutex, OnceLock};
+
+    #[derive(Default)]
+    struct TestNativeGoalHost {
+        submissions: Mutex<Vec<(String, NativeGoalDecision)>>,
+    }
+
+    impl TestNativeGoalHost {
+        fn recorded_goal_ids_with_prefix(&self, prefix: &str) -> Vec<String> {
+            self.submissions
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(goal_id, _)| goal_id.starts_with(prefix))
+                .map(|(goal_id, _)| goal_id.clone())
+                .collect()
+        }
+    }
+
+    impl NativeGoalHost for TestNativeGoalHost {
+        fn prepare(
+            &self,
+            goal_id: &str,
+            _actor: hkask_types::WebID,
+            _evidence: &[NativeGoalEvidence],
+            _correction: bool,
+        ) -> std::result::Result<NativeGoalPrompt, String> {
+            Ok(NativeGoalPrompt {
+                spec_digest: format!("sha256:{:064x}", goal_id.len()),
+                message: format!("Close goal {goal_id}?"),
+                supersedes_event_id: None,
+            })
+        }
+
+        fn submit(
+            &self,
+            submission: NativeGoalSubmission,
+        ) -> std::result::Result<serde_json::Value, String> {
+            self.submissions
+                .lock()
+                .unwrap()
+                .push((submission.goal_id.clone(), submission.decision));
+            Ok(json!({
+                "id": submission.goal_id,
+                "status": "closed"
+            }))
+        }
+    }
+
+    fn install_shared_goal_host() -> Arc<TestNativeGoalHost> {
+        static SHARED_HOST: OnceLock<Arc<TestNativeGoalHost>> = OnceLock::new();
+        let host = SHARED_HOST
+            .get_or_init(|| {
+                let host = Arc::new(TestNativeGoalHost::default());
+                crate::set_native_goal_host(Some(host.clone()));
+                host
+            })
+            .clone();
+        host
+    }
+
+    #[derive(JsonSchema, Serialize, Deserialize)]
+    struct CancellableDecisionInput {
+        id: String,
+    }
+
+    struct CancellableDecisionTool {
+        cancel_receivers: Arc<Mutex<HashMap<String, oneshot::Receiver<()>>>>,
+    }
+
+    impl AgentTool for CancellableDecisionTool {
+        type Input = CancellableDecisionInput;
+        type Output = String;
+
+        const NAME: &'static str = "cancellable_decision";
+
+        fn kind() -> acp_v2::ToolKind {
+            acp_v2::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: std::result::Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> gpui::SharedString {
+            "Cancellable Decision".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            input: ToolInput<Self::Input>,
+            event_stream: ToolCallEventStream,
+            cx: &mut App,
+        ) -> Task<std::result::Result<Self::Output, Self::Output>> {
+            let cancel_receivers = self.cancel_receivers.clone();
+            cx.spawn(async move |cx| {
+                let input = input.recv().await.map_err(|e| e.to_string())?;
+                let cancel_rx = cancel_receivers.lock().unwrap().remove(&input.id);
+                let decision_task = cx.update(|cx| {
+                    event_stream.prompt_for_decision(
+                        Some(format!("Decision {}", input.id)),
+                        Some(format!("Confirm {}", input.id)),
+                        vec![acp_v2::PermissionOption::new(
+                            acp_v2::PermissionOptionId::new("proceed"),
+                            "Proceed",
+                            acp_v2::PermissionOptionKind::AllowOnce,
+                        )],
+                        cx,
+                    )
+                });
+
+                if let Some(cancel_rx) = cancel_rx {
+                    let mut decision_task = decision_task.fuse();
+                    futures::select_biased! {
+                        _ = cancel_rx.fuse() => {
+                            Err(format!("cancelled:{}", input.id))
+                        }
+                        outcome = decision_task => {
+                            let selected = outcome.map_err(|e| e.to_string())?;
+                            Ok(format!("{}:{}", input.id, selected.0))
+                        }
+                    }
+                } else {
+                    let selected = decision_task.await.map_err(|e| e.to_string())?;
+                    Ok(format!("{}:{}", input.id, selected.0))
+                }
+            })
+        }
+    }
+
+    fn drain_ready_events(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> Vec<ThreadEvent> {
+        let mut drained = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            drained.push(event.expect("thread event must not error"));
+        }
+        drained
+    }
+
+    fn make_tool_use(
+        id: &str,
+        name: &str,
+        input: serde_json::Value,
+    ) -> LanguageModelCompletionEvent {
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: id.into(),
+            name: name.into(),
+            raw_input: input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(input),
+            is_input_complete: true,
+            thought_signature: None,
+        })
+    }
+
+    #[gpui::test]
+    async fn fb_1_dual_parallel_prompt_for_decision_serialization(cx: &mut TestAppContext) {
+        let host = install_shared_goal_host();
+
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-fb1": {
+                            "name": "Elicitation FB1",
+                            "tools": {
+                                GoalCloseTool::NAME: true,
+                            }
+                        }
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-fb1".into()), cx);
+                thread.add_tool(GoalCloseTool);
+                thread.send(ClientUserMessageId::new(), ["Close both goals"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "call_1",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-fb1-alpha" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "call_2",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-fb1-beta" }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut active_prompts: Vec<ToolCallAuthorization> = Vec::new();
+        let mut max_concurrent_active_prompts = 0usize;
+        let mut resolved_count = 0usize;
+
+        while resolved_count < 2 {
+            for event in drain_ready_events(&mut events) {
+                if let ThreadEvent::ToolCallAuthorization(auth) = event {
+                    assert_eq!(auth.kind, acp_thread::AuthorizationKind::ActionChoice);
+                    active_prompts.push(auth);
+                }
+            }
+            max_concurrent_active_prompts = max_concurrent_active_prompts.max(active_prompts.len());
+            assert!(
+                !active_prompts.is_empty(),
+                "expected at least one pending ActionChoice prompt after resolved_count={resolved_count}"
+            );
+
+            let next_auth = active_prompts.remove(0);
+            next_auth
+                .response
+                .send(acp_thread::SelectedPermissionOutcome::new(
+                    acp_v2::PermissionOptionId::new("accomplished_achieved"),
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                ))
+                .expect("ActionChoice receiver should be open");
+            resolved_count += 1;
+            cx.run_until_parked();
+        }
+
+        fake.send_last_text(&model, "Both goals closed.");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let recorded = host.recorded_goal_ids_with_prefix("goal-fb1-");
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=fb_1 max_concurrent_active_prompts={max_concurrent_active_prompts} recorded={recorded:?}"
+        );
+
+        assert_eq!(
+            recorded,
+            vec!["goal-fb1-alpha".to_string(), "goal-fb1-beta".to_string()]
+        );
+        assert_eq!(
+            max_concurrent_active_prompts, 1,
+            "dual parallel prompt_for_decision calls must never exceed 1 active modal"
+        );
+    }
+
+    #[gpui::test]
+    async fn fb_2_goal_close_action_choice_holds_sibling_edit_mutation(cx: &mut TestAppContext) {
+        let _host = install_shared_goal_host();
+
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+        always_allow_tools(cx);
+
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "readme.md": "reference note\n",
+                "target.txt": "state-0\n"
+            }),
+        )
+        .await;
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-fb2": {
+                            "name": "Elicitation FB2",
+                            "tools": {
+                                GoalCloseTool::NAME: true,
+                                crate::EditFileTool::NAME: true,
+                                crate::ReadFileTool::NAME: true,
+                            }
+                        }
+                    },
+                    "tool_permissions": { "default": "allow" }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let env: Rc<dyn crate::ThreadEnvironment> = Rc::new(FakeThreadEnvironment::default());
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-fb2".into()), cx);
+                thread.add_default_tools(env, cx);
+                thread.send(ClientUserMessageId::new(), ["Close goal and edit file"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Batch 1: edit_file emitted BEFORE kanban_goal_close alongside read-only read_file.
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "edit_1",
+                crate::EditFileTool::NAME,
+                json!({
+                    "path": "test/target.txt",
+                    "edits": [{ "old_text": "state-0", "new_text": "state-1" }]
+                }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "goal_1",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-fb2-turn1" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "read_1",
+                crate::ReadFileTool::NAME,
+                json!({ "path": "test/readme.md" }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut pending_auth = None;
+        for event in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(auth) = event {
+                pending_auth = Some(auth);
+            }
+        }
+        let auth_1 = pending_auth.expect("expected ActionChoice prompt for goal_1");
+
+        // Check whether read-only sibling completed while ActionChoice hold is active.
+        let req_while_held_1 = thread
+            .update(cx, |thread, cx| {
+                thread.build_completion_request(CompletionIntent::EditFile, cx)
+            })
+            .unwrap();
+        let readonly_completed_1 = req_while_held_1.messages.iter().any(|msg| {
+            msg.content.iter().any(|c| {
+                matches!(
+                    c,
+                    MessageContent::ToolResult(r)
+                        if r.tool_use_id == LanguageModelToolUseId::from("read_1") && !r.is_error
+                )
+            })
+        });
+
+        let disk_while_held_1 = fs
+            .load(path!("/test/target.txt").as_ref())
+            .await
+            .expect("target.txt exists");
+        let mutated_while_held_1 = disk_while_held_1 != "state-0\n";
+
+        auth_1
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("accomplished_achieved"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        let disk_after_release_1 = fs
+            .load(path!("/test/target.txt").as_ref())
+            .await
+            .expect("target.txt exists");
+        assert_eq!(disk_after_release_1, "state-1\n");
+
+        // Batch 2 (continuation): kanban_goal_close emitted BEFORE edit_file alongside read_file.
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "goal_2",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-fb2-turn2" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "edit_2",
+                crate::EditFileTool::NAME,
+                json!({
+                    "path": "test/target.txt",
+                    "edits": [{ "old_text": "state-1", "new_text": "state-2" }]
+                }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "read_2",
+                crate::ReadFileTool::NAME,
+                json!({ "path": "test/readme.md" }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut pending_auth_2 = None;
+        for event in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(auth) = event {
+                pending_auth_2 = Some(auth);
+            }
+        }
+        let auth_2 = pending_auth_2.expect("expected ActionChoice prompt for goal_2");
+
+        let req_while_held_2 = thread
+            .update(cx, |thread, cx| {
+                thread.build_completion_request(CompletionIntent::EditFile, cx)
+            })
+            .unwrap();
+        let readonly_completed_2 = req_while_held_2.messages.iter().any(|msg| {
+            msg.content.iter().any(|c| {
+                matches!(
+                    c,
+                    MessageContent::ToolResult(r)
+                        if r.tool_use_id == LanguageModelToolUseId::from("read_2") && !r.is_error
+                )
+            })
+        });
+
+        let disk_while_held_2 = fs
+            .load(path!("/test/target.txt").as_ref())
+            .await
+            .expect("target.txt exists");
+        let mutated_while_held_2 = disk_while_held_2 != "state-1\n";
+
+        auth_2
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("accomplished_achieved"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        let disk_after_release_2 = fs
+            .load(path!("/test/target.txt").as_ref())
+            .await
+            .expect("target.txt exists");
+        assert_eq!(disk_after_release_2, "state-2\n");
+
+        fake.send_last_text(&model, "Done.");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=fb_2 mutated_while_held_1={mutated_while_held_1} mutated_while_held_2={mutated_while_held_2} readonly_completed_1={readonly_completed_1} readonly_completed_2={readonly_completed_2}"
+        );
+
+        assert!(
+            readonly_completed_1 && readonly_completed_2,
+            "read-only sibling read_file must complete without blocking while ActionChoice is held"
+        );
+        assert!(
+            !mutated_while_held_1 && !mutated_while_held_2,
+            "mutating sibling edit_file must not write while ActionChoice hold is unresolved (batch1={mutated_while_held_1}, batch2={mutated_while_held_2})"
+        );
+    }
+
+    #[gpui::test]
+    async fn fb_3_cancelled_elicitation_drops_guard_and_unblocks_waiter(cx: &mut TestAppContext) {
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-fb3": {
+                            "name": "Elicitation FB3",
+                            "tools": {
+                                CancellableDecisionTool::NAME: true,
+                            }
+                        }
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let (cancel_tx_1, cancel_rx_1) = oneshot::channel::<()>();
+        let cancel_map = Arc::new(Mutex::new(HashMap::default()));
+        cancel_map
+            .lock()
+            .unwrap()
+            .insert("first".to_string(), cancel_rx_1);
+
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-fb3".into()), cx);
+                thread.add_tool(CancellableDecisionTool {
+                    cancel_receivers: cancel_map.clone(),
+                });
+                thread.send(ClientUserMessageId::new(), ["Run two decisions"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "d1",
+                CancellableDecisionTool::NAME,
+                json!({ "id": "first" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "d2",
+                CancellableDecisionTool::NAME,
+                json!({ "id": "second" }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut pre_cancel_prompts = Vec::new();
+        for event in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(auth) = event {
+                pre_cancel_prompts.push(auth);
+            }
+        }
+        let initial_prompts_before_cancel = pre_cancel_prompts.len();
+
+        // Cancel the first decision task mid-await! Its RAII hold guard must drop
+        // and unblock the queued second decision without deadlock.
+        cancel_tx_1.send(()).unwrap();
+        cx.run_until_parked();
+
+        let mut post_cancel_prompts = Vec::new();
+        for event in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(auth) = event {
+                post_cancel_prompts.push(auth);
+            }
+        }
+        let post_cancel_prompts_len = post_cancel_prompts.len();
+
+        // Resolve the second decision whether it arrived pre-cancel (unguarded baseline)
+        // or post-cancel (guarded challenger) so the turn terminates cleanly.
+        let second_auth = if let Some(auth) = post_cancel_prompts.pop() {
+            auth
+        } else {
+            pre_cancel_prompts
+                .into_iter()
+                .find(|auth| auth.tool_call.tool_call_id.0.as_ref().ends_with("d2"))
+                .expect("second decision prompt must be reachable")
+        };
+
+        second_auth
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("proceed"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("second decision receiver must remain open");
+        cx.run_until_parked();
+
+        let completion = fake
+            .pending_completions()
+            .pop()
+            .expect("turn must advance to next completion without deadlocking");
+        let last_msg = completion.messages.last().unwrap();
+        let d2_succeeded = last_msg.content.iter().any(|c| {
+            matches!(
+                c,
+                MessageContent::ToolResult(r)
+                    if r.tool_use_id == LanguageModelToolUseId::from("d2") && !r.is_error
+            )
+        });
+
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=fb_3 initial_prompts_before_cancel={initial_prompts_before_cancel} post_cancel_prompts_len={post_cancel_prompts_len} d2_succeeded={d2_succeeded}"
+        );
+
+        assert!(
+            d2_succeeded,
+            "second decision must unblock and succeed after first cancels"
+        );
+        assert_eq!(
+            initial_prompts_before_cancel, 1,
+            "waiter must remain held until active elicitation drops; observed {initial_prompts_before_cancel} prompts before cancel"
+        );
+    }
+
+    #[derive(JsonSchema, Serialize, Deserialize)]
+    struct ConcurrentReadProbeInput {
+        slot: String,
+    }
+
+    struct ConcurrentReadProbeTool {
+        in_flight: Arc<AtomicUsize>,
+        max_in_flight: Arc<AtomicUsize>,
+        release_rx: watch::Receiver<bool>,
+    }
+
+    impl AgentTool for ConcurrentReadProbeTool {
+        type Input = ConcurrentReadProbeInput;
+        type Output = String;
+
+        const NAME: &'static str = "concurrent_read_probe";
+
+        fn kind() -> acp_v2::ToolKind {
+            acp_v2::ToolKind::Read
+        }
+
+        fn initial_title(
+            &self,
+            _input: std::result::Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> gpui::SharedString {
+            "Concurrent Read Probe".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            cx: &mut App,
+        ) -> Task<std::result::Result<Self::Output, Self::Output>> {
+            let in_flight = self.in_flight.clone();
+            let max_in_flight = self.max_in_flight.clone();
+            let mut release_rx = self.release_rx.clone();
+            cx.spawn(async move |_cx| {
+                let input = input.recv().await.map_err(|e| e.to_string())?;
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                max_in_flight.fetch_max(now, Ordering::SeqCst);
+                while !*release_rx.borrow() {
+                    if release_rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(format!("read_ok:{}", input.slot))
+            })
+        }
+    }
+
+    #[gpui::test]
+    async fn ho_1_mixed_permission_grant_and_request_elicitation_fifo_order(
+        cx: &mut TestAppContext,
+    ) {
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-ho1": {
+                            "name": "Elicitation HO1",
+                            "tools": {
+                                ToolRequiringPermission::NAME: true,
+                                crate::AskUserTool::NAME: true,
+                            }
+                        }
+                    },
+                    "tool_permissions": { "default": "confirm" }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let env: Rc<dyn crate::ThreadEnvironment> = Rc::new(FakeThreadEnvironment::default());
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-ho1".into()), cx);
+                thread.add_default_tools(env, cx);
+                thread.add_tool(ToolRequiringPermission);
+                thread.send(ClientUserMessageId::new(), ["Mixed prompts"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Round 1: PermissionGrant first, Elicitation second.
+        fake.send_last_event(
+            &model,
+            make_tool_use("perm_1", ToolRequiringPermission::NAME, json!({})),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "ask_1",
+                crate::AskUserTool::NAME,
+                json!({
+                    "question": "Pick option A or B",
+                    "options": ["Option A", "Option B"]
+                }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut max_concurrent_modals = 0usize;
+        let mut round1_order: Vec<&'static str> = Vec::new();
+
+        let step1_events = drain_ready_events(&mut events);
+        let mut step1_auths = Vec::new();
+        let mut step1_elicits = Vec::new();
+        for ev in step1_events {
+            match ev {
+                ThreadEvent::ToolCallAuthorization(a) => step1_auths.push(a),
+                ThreadEvent::Elicitation(e) => step1_elicits.push(e),
+                _ => {}
+            }
+        }
+        max_concurrent_modals = max_concurrent_modals.max(step1_auths.len() + step1_elicits.len());
+        assert_eq!(step1_auths.len(), 1, "PermissionGrant must arrive first");
+        assert_eq!(
+            step1_elicits.len(),
+            0,
+            "Elicitation must wait while PermissionGrant is unresolved"
+        );
+        round1_order.push("PermissionGrant");
+
+        step1_auths
+            .pop()
+            .unwrap()
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        let step2_events = drain_ready_events(&mut events);
+        let mut step2_auths = Vec::new();
+        let mut step2_elicits = Vec::new();
+        for ev in step2_events {
+            match ev {
+                ThreadEvent::ToolCallAuthorization(a) => step2_auths.push(a),
+                ThreadEvent::Elicitation(e) => step2_elicits.push(e),
+                _ => {}
+            }
+        }
+        max_concurrent_modals = max_concurrent_modals.max(step2_auths.len() + step2_elicits.len());
+        assert_eq!(step2_auths.len(), 0);
+        assert_eq!(
+            step2_elicits.len(),
+            1,
+            "Elicitation must activate immediately after PermissionGrant resolves"
+        );
+        round1_order.push("Elicitation");
+
+        let mut content_map = std::collections::BTreeMap::new();
+        content_map.insert(
+            "choice".to_string(),
+            acp_v2::ElicitationContentValue::String("Option A".to_string()),
+        );
+        step2_elicits
+            .pop()
+            .unwrap()
+            .response
+            .send(acp_v2::CreateElicitationResponse::new(
+                acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(content_map),
+                ),
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        // Round 2: Elicitation first, PermissionGrant second.
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "ask_2",
+                crate::AskUserTool::NAME,
+                json!({
+                    "question": "Pick option C or D",
+                    "options": ["Option C", "Option D"]
+                }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use("perm_2", ToolRequiringPermission::NAME, json!({})),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut round2_order: Vec<&'static str> = Vec::new();
+        let step3_events = drain_ready_events(&mut events);
+        let mut step3_auths = Vec::new();
+        let mut step3_elicits = Vec::new();
+        for ev in step3_events {
+            match ev {
+                ThreadEvent::ToolCallAuthorization(a) => step3_auths.push(a),
+                ThreadEvent::Elicitation(e) => step3_elicits.push(e),
+                _ => {}
+            }
+        }
+        max_concurrent_modals = max_concurrent_modals.max(step3_auths.len() + step3_elicits.len());
+        assert_eq!(
+            step3_elicits.len(),
+            1,
+            "Elicitation must arrive first in round 2"
+        );
+        assert_eq!(
+            step3_auths.len(),
+            0,
+            "PermissionGrant must wait behind active Elicitation"
+        );
+        round2_order.push("Elicitation");
+
+        let mut content_map_2 = std::collections::BTreeMap::new();
+        content_map_2.insert(
+            "choice".to_string(),
+            acp_v2::ElicitationContentValue::String("Option C".to_string()),
+        );
+        step3_elicits
+            .pop()
+            .unwrap()
+            .response
+            .send(acp_v2::CreateElicitationResponse::new(
+                acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new().content(content_map_2),
+                ),
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        let step4_events = drain_ready_events(&mut events);
+        let mut step4_auths = Vec::new();
+        let mut step4_elicits = Vec::new();
+        for ev in step4_events {
+            match ev {
+                ThreadEvent::ToolCallAuthorization(a) => step4_auths.push(a),
+                ThreadEvent::Elicitation(e) => step4_elicits.push(e),
+                _ => {}
+            }
+        }
+        max_concurrent_modals = max_concurrent_modals.max(step4_auths.len() + step4_elicits.len());
+        assert_eq!(step4_elicits.len(), 0);
+        assert_eq!(
+            step4_auths.len(),
+            1,
+            "PermissionGrant must activate in FIFO order after Elicitation resolves"
+        );
+        round2_order.push("PermissionGrant");
+
+        step4_auths
+            .pop()
+            .unwrap()
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        fake.send_last_text(&model, "Completed mixed rounds.");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=ho_1 max_concurrent_modals={max_concurrent_modals} round1_order={round1_order:?} round2_order={round2_order:?}"
+        );
+
+        assert_eq!(max_concurrent_modals, 1);
+        assert_eq!(round1_order, vec!["PermissionGrant", "Elicitation"]);
+        assert_eq!(round2_order, vec!["Elicitation", "PermissionGrant"]);
+    }
+
+    #[gpui::test]
+    async fn ho_2_parallel_readonly_non_eliciting_batch_concurrency_parity(
+        cx: &mut TestAppContext,
+    ) {
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+        always_allow_tools(cx);
+
+        fs.insert_tree(
+            path!("/test"),
+            json!({ "doc.txt": "parallel read payload\n" }),
+        )
+        .await;
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-ho2": {
+                            "name": "Elicitation HO2",
+                            "tools": {
+                                ConcurrentReadProbeTool::NAME: true,
+                                crate::ReadFileTool::NAME: true,
+                            }
+                        }
+                    },
+                    "tool_permissions": { "default": "allow" }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let (mut release_tx, release_rx) = watch::channel(false);
+
+        let env: Rc<dyn crate::ThreadEnvironment> = Rc::new(FakeThreadEnvironment::default());
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-ho2".into()), cx);
+                thread.add_default_tools(env, cx);
+                thread.add_tool(ConcurrentReadProbeTool {
+                    in_flight: in_flight.clone(),
+                    max_in_flight: max_in_flight.clone(),
+                    release_rx,
+                });
+                thread.send(
+                    ClientUserMessageId::new(),
+                    ["Read everything in parallel"],
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        for slot in ["p1", "p2", "p3"] {
+            fake.send_last_event(
+                &model,
+                make_tool_use(slot, ConcurrentReadProbeTool::NAME, json!({ "slot": slot })),
+            );
+        }
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "rf1",
+                crate::ReadFileTool::NAME,
+                json!({ "path": "test/doc.txt" }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let observed_simultaneous_in_flight = max_in_flight.load(Ordering::SeqCst);
+        let req_mid_batch = thread
+            .update(cx, |thread, cx| {
+                thread.build_completion_request(CompletionIntent::EditFile, cx)
+            })
+            .unwrap();
+        let read_file_completed_mid_batch = req_mid_batch.messages.iter().any(|msg| {
+            msg.content.iter().any(|c| {
+                matches!(
+                    c,
+                    MessageContent::ToolResult(r)
+                        if r.tool_use_id == LanguageModelToolUseId::from("rf1") && !r.is_error
+                )
+            })
+        });
+
+        release_tx.send(true).unwrap();
+        cx.run_until_parked();
+
+        fake.send_last_text(&model, "All reads completed.");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=ho_2 observed_simultaneous_in_flight={observed_simultaneous_in_flight} read_file_completed_mid_batch={read_file_completed_mid_batch}"
+        );
+
+        assert_eq!(
+            observed_simultaneous_in_flight, 3,
+            "all 3 read-only probes must execute concurrently without serialization"
+        );
+        assert!(
+            read_file_completed_mid_batch,
+            "sibling read_file must complete immediately while peer read probes are parked"
+        );
+    }
+
+    #[gpui::test]
+    async fn ho_3_panicked_or_closed_channel_elicitation_releases_barrier(cx: &mut TestAppContext) {
+        // Leg A: panic unwind while holding an active Exclusive guard must not
+        // poison or wedge the barrier.
+        let barrier = crate::kask_thread_state::ElicitationHoldBarrier::new();
+        let unwind_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _active_ticket = barrier.enqueue_prompt(
+                crate::kask_thread_state::ElicitationPromptMode::Exclusive,
+                None,
+            );
+            panic!("simulated panic while holding elicitation guard");
+        }));
+        assert!(unwind_result.is_err());
+
+        let post_panic_ticket = barrier.enqueue_prompt(
+            crate::kask_thread_state::ElicitationPromptMode::Exclusive,
+            None,
+        );
+        let recovered_immediately = matches!(
+            post_panic_ticket,
+            crate::kask_thread_state::ElicitationTicket::Active(_)
+        );
+        drop(post_panic_ticket);
+        barrier.wait_while_held().await;
+
+        // Leg B: closed authorization channel (dropping `response_tx` without
+        // sending) releases the active guard, promotes the next queued FIFO
+        // prompt while continuing to hold mutating `edit_file`, and then
+        // unblocks `edit_file` once the survivor prompt resolves.
+        let host = install_shared_goal_host();
+
+        let ThreadTest {
+            model,
+            fake,
+            thread,
+            fs,
+            ..
+        } = setup(cx, TestModel::Fake).await;
+        always_allow_tools(cx);
+
+        fs.insert_tree(path!("/test"), json!({ "ho3.txt": "before-close\n" }))
+            .await;
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "profiles": {
+                        "elicitation-ho3": {
+                            "name": "Elicitation HO3",
+                            "tools": {
+                                GoalCloseTool::NAME: true,
+                                crate::EditFileTool::NAME: true,
+                            }
+                        }
+                    },
+                    "tool_permissions": { "default": "allow" }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let env: Rc<dyn crate::ThreadEnvironment> = Rc::new(FakeThreadEnvironment::default());
+        let mut events = thread
+            .update(cx, |thread, cx| {
+                thread.set_profile(AgentProfileId("elicitation-ho3".into()), cx);
+                thread.add_default_tools(env, cx);
+                thread.send(ClientUserMessageId::new(), ["Close goals and edit"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "g_drop",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-ho3-dropped" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "g_survive",
+                GoalCloseTool::NAME,
+                json!({ "goal_id": "goal-ho3-survivor" }),
+            ),
+        );
+        fake.send_last_event(
+            &model,
+            make_tool_use(
+                "e_after",
+                crate::EditFileTool::NAME,
+                json!({
+                    "path": "test/ho3.txt",
+                    "edits": [{ "old_text": "before-close", "new_text": "after-close" }]
+                }),
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        let mut first_prompts = Vec::new();
+        for ev in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(a) = ev {
+                first_prompts.push(a);
+            }
+        }
+        assert_eq!(
+            first_prompts.len(),
+            1,
+            "only first goal prompt should be active"
+        );
+
+        // Close the first prompt's oneshot channel without answering!
+        drop(first_prompts.pop().unwrap().response);
+        cx.run_until_parked();
+
+        // Second goal prompt must promote in FIFO order while edit_file is STILL held!
+        let mut second_prompts = Vec::new();
+        for ev in drain_ready_events(&mut events) {
+            if let ThreadEvent::ToolCallAuthorization(a) = ev {
+                second_prompts.push(a);
+            }
+        }
+        assert_eq!(
+            second_prompts.len(),
+            1,
+            "survivor goal prompt must promote after first prompt channel closes"
+        );
+        let disk_during_survivor_hold = fs
+            .load(path!("/test/ho3.txt").as_ref())
+            .await
+            .expect("ho3.txt exists");
+        let mutated_between_prompts = disk_during_survivor_hold != "before-close\n";
+
+        second_prompts
+            .pop()
+            .unwrap()
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp_v2::PermissionOptionId::new("accomplished_achieved"),
+                acp_v2::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        cx.run_until_parked();
+
+        let disk_after_survivor = fs
+            .load(path!("/test/ho3.txt").as_ref())
+            .await
+            .expect("ho3.txt exists");
+
+        fake.send_last_text(&model, "Recovered cleanly.");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        eprintln!(
+            "[ELICITATION_METRIC] fixture=ho_3 recovered_after_panic={recovered_immediately} mutated_between_prompts={mutated_between_prompts} disk_after_survivor={:?}",
+            disk_after_survivor.trim()
+        );
+
+        assert!(
+            recovered_immediately,
+            "barrier must recover immediately after panic unwind"
+        );
+        assert!(
+            !mutated_between_prompts,
+            "mutating sibling must remain held across back-to-back queued prompt handoff"
+        );
+        assert_eq!(disk_after_survivor, "after-close\n");
+        assert_eq!(
+            host.recorded_goal_ids_with_prefix("goal-ho3-"),
+            vec!["goal-ho3-survivor".to_string()]
+        );
     }
 }

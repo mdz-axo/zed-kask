@@ -428,11 +428,39 @@ impl SessionMessage {
     }
 }
 
+/// Verified per-request execution provenance recorded by the host turn loop
+/// (never derived from model text), reporting the actual provider, served
+/// model, privacy boundary, and optional private-memory persistence status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestProvenance {
+    pub provider: SharedString,
+    pub model: SharedString,
+    pub private: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_status: Option<SharedString>,
+}
+
+impl RequestProvenance {
+    pub fn summary_text(&self) -> String {
+        match &self.memory_status {
+            Some(status) if !status.is_empty() => format!(
+                "provider={}, model={}, private={} · {}",
+                self.provider, self.model, self.private, status
+            ),
+            _ => format!(
+                "provider={}, model={}, private={}",
+                self.provider, self.model, self.private
+            ),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
     pub indented: bool,
     pub is_subagent_output: bool,
+    pub provenance: Option<RequestProvenance>,
 }
 
 impl AssistantMessage {
@@ -1208,6 +1236,12 @@ pub struct ToolCall {
     /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
     /// the command was sandboxed normally (or sandboxing was off).
     pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
+    /// Real-time thinking trace from the tool's execution. Populated by skill
+    /// execution via `thinking_sender()` — each step appends its reasoning
+    /// here so the user sees a live thinking trace, not just a one-line
+    /// title. `None` when the tool call has no skill execution
+    /// (ordinary built-in tools like `read_file`).
+    pub thoughts: Option<Entity<Markdown>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1401,6 +1435,18 @@ impl ToolCallPatch {
 }
 
 impl ToolCall {
+    /// Append a thinking trace chunk to this tool call. Creates the `Markdown`
+    /// entity lazily on first append so ordinary tool calls pay no cost.
+    pub fn append_thinking(&mut self, text: &str, cx: &mut App) {
+        if text.is_empty() {
+            return;
+        }
+        let markdown = self
+            .thoughts
+            .get_or_insert_with(|| cx.new(|cx| Markdown::new_text(SharedString::default(), cx)));
+        markdown.update(cx, |md, cx| md.append(text, cx));
+    }
+
     fn from_acp(
         tool_call: acp_v1::ToolCall,
         status: Option<ToolCallStatus>,
@@ -1494,6 +1540,7 @@ impl ToolCall {
             sandbox_authorization_details,
             sandbox_fallback_authorization_details,
             sandbox_not_applied,
+            thoughts: None,
         };
         result.update_raw_output_content(&language_registry, cx);
         Ok(result)
@@ -3817,6 +3864,7 @@ pub struct AcpThread {
     /// A cursor over retained source, rather than a second text store, lets the UI
     /// reveal text gradually without changing the authoritative message.
     streaming_text_buffer: Option<StreamingTextBuffer>,
+    pending_assistant_provenance: Option<RequestProvenance>,
     idle_sleep_prevention: IdleSleepPrevention,
 }
 
@@ -3886,7 +3934,15 @@ struct StreamingTextBuffer {
 impl StreamingTextBuffer {
     /// The number of milliseconds between each timer tick, controlling how quickly
     /// text is revealed.
-    const TASK_UPDATE_MS: u64 = 16;
+    //
+    // zed-kask: increased from 16ms (60fps) to 50ms (20fps) to reduce render
+    // pressure on the GPUI foreground thread. At 60fps, the streaming text
+    // reveal timer saturates the foreground thread with Markdown re-renders,
+    // starving the BlinkManager's 500ms timer and causing irregular cursor
+    // flashing. 20fps is still smooth for text reveal (the human eye can't
+    // perceive text appearing at >20fps) but reduces render pressure by 3x.
+    // See DIVERGENCE.md D14.
+    const TASK_UPDATE_MS: u64 = 50;
     /// The time in milliseconds to reveal the entire pending text.
     const REVEAL_TARGET: f32 = 200.0;
 
@@ -4163,6 +4219,7 @@ impl AcpThread {
             draft_prompt_revision: 0,
             ui_scroll_position: None,
             streaming_text_buffer: None,
+            pending_assistant_provenance: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
         }
     }
@@ -5663,6 +5720,7 @@ impl AcpThread {
                             chunks: vec![chunk],
                             indented: false,
                             is_subagent_output: false,
+                            provenance: self.pending_assistant_provenance.clone(),
                         }));
                     Ok(MessageLocation::Assistant {
                         entry_index,
@@ -5770,6 +5828,7 @@ impl AcpThread {
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
+            self.pending_assistant_provenance = None;
             let mut content = MessageContent::default();
             content.append_prompt(chunk, &language_registry, path_style, cx);
             self.push_entry(
@@ -5841,9 +5900,13 @@ impl AcpThread {
                 chunks,
                 indented: existing_indented,
                 is_subagent_output: _,
+                provenance: existing_provenance,
             }) = last_entry
             && *existing_indented == indented
         {
+            if existing_provenance.is_none() {
+                *existing_provenance = self.pending_assistant_provenance.clone();
+            }
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
             match (chunks.last_mut(), is_thought) {
@@ -5906,10 +5969,35 @@ impl AcpThread {
                     chunks: vec![chunk],
                     indented,
                     is_subagent_output: false,
+                    provenance: self.pending_assistant_provenance.clone(),
                 }),
                 cx,
             );
         }
+    }
+
+    pub fn set_assistant_provenance(
+        &mut self,
+        provenance: RequestProvenance,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_assistant_provenance = Some(provenance.clone());
+        let mut updated_ix = None;
+        for (idx, entry) in self.entries.iter_mut().enumerate().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => break,
+                AgentThreadEntry::AssistantMessage(message) => {
+                    message.provenance = Some(provenance);
+                    updated_ix = Some(idx);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(idx) = updated_ix {
+            cx.emit(AcpThreadEvent::EntryUpdated(idx));
+        }
+        cx.notify();
     }
 
     fn streaming_content_target(
@@ -6416,6 +6504,22 @@ impl AcpThread {
         call.update_raw_output_content(&languages, cx);
         cx.emit(AcpThreadEvent::EntryUpdated(index));
         Ok(())
+    }
+
+    /// Append a thinking trace chunk to a tool call's `thoughts` buffer.
+    /// Called from `ThreadEvent::ToolCallThinking` — skill execution emits
+    /// these so the user sees a live thinking trace during long-running tool
+    /// calls, not just a one-line title.
+    pub fn append_tool_call_thinking(
+        &mut self,
+        tool_call_id: &acp_v2::ToolCallId,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((ix, call)) = self.tool_call_mut(tool_call_id) {
+            call.append_thinking(text, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
     }
 
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
@@ -8456,6 +8560,9 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    // zed-kask: upstream adopted the non-interactive sandboxed
+                    // shell (linux-gated; zed-kask is linux-only per D7), so this
+                    // matches upstream. Pin: test_sandboxed_terminal_runs_non_interactively.
                     if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
@@ -23386,6 +23493,58 @@ mod tests {
             thread.read_with(cx, |t, _| t.status()),
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
+        );
+    }
+
+    /// D14: the streaming text reveal timer interval must be 50ms, not the
+    /// upstream 16ms. At 16ms (60fps) the timer saturates the GPUI foreground
+    /// thread with Markdown re-renders during streaming, starving the
+    /// BlinkManager's 500ms timer and causing irregular cursor flashing.
+    /// 50ms (20fps) is still smooth for text reveal but reduces render
+    /// pressure by 3x.
+    #[test]
+    fn test_streaming_reveal_timer_interval_kask_contract() {
+        assert_eq!(
+            StreamingTextBuffer::TASK_UPDATE_MS,
+            50,
+            "D14: TASK_UPDATE_MS must be 50ms (20fps), not upstream's 16ms (60fps). \
+             See DIVERGENCE.md D14."
+        );
+    }
+
+    /// Sandboxed terminal commands must run non-interactively. The sandbox
+    /// creates a new session (setsid) with no controlling terminal and stdin
+    /// redirected to /dev/null. An interactive shell (-i) tries to set the tty
+    /// process group, fails with "Cannot set tty process group (No such
+    /// process)", and exits with code 2 — making every sandboxed terminal
+    /// command appear to fail even when the command itself succeeds. This test
+    /// pins the ShellBuilder contract: non_interactive() omits the -i flag that
+    /// interactive mode would pass.
+    #[test]
+    fn test_sandboxed_terminal_runs_non_interactively() {
+        let shell = Shell::Program("/bin/sh".to_string());
+
+        // Interactive (upstream default for non-headless GUI): -i flag present.
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            args.contains(&"-i".to_string()),
+            "interactive shell must pass -i (upstream default for non-headless GUI)"
+        );
+
+        // Non-interactive (zed-kask sandboxed path): no -i flag.
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .non_interactive()
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            !args.contains(&"-i".to_string()),
+            "sandboxed terminal must not pass -i — the sandbox has no \
+             controlling terminal, so -i causes \"Cannot set tty process group\" \
+             and exit code 2."
         );
     }
 

@@ -1,6 +1,9 @@
 use super::tool_permissions::{
     authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
-    global_skill_settings_kind, sensitive_settings_kind,
+    detect_mcp_owned_kask_artifacts_path, global_skill_settings_kind, mcp_owned_artifacts_error,
+    resolve_creatable_kask_artifacts_descendant_path,
+    resolve_writable_kask_artifacts_descendant_path, resolves_to_kask_artifacts_dir,
+    sensitive_settings_kind,
 };
 use crate::{
     AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -26,7 +29,7 @@ use util::markdown::MarkdownInlineCode;
 /// If the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.
 ///
 /// This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
-/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
+/// Supported paths outside the project are descendants of the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`, outside producer-owned `{server}-mcp/` folders).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
     /// The source path of the file or directory to move/rename.
@@ -134,6 +137,32 @@ impl AgentTool for MovePathTool {
                         .to_string(),
                 );
             }
+            if resolves_to_kask_artifacts_dir(Path::new(&input.source_path), fs.as_ref()).await
+                || resolves_to_kask_artifacts_dir(
+                    Path::new(&input.destination_path),
+                    fs.as_ref(),
+                )
+                .await
+            {
+                return Err(
+                    "Cannot move the Kask artifacts directory itself. Move a subdirectory or file beneath it instead."
+                        .to_string(),
+                );
+            }
+            if let Some(server) =
+                detect_mcp_owned_kask_artifacts_path(Path::new(&input.source_path), fs.as_ref())
+                    .await
+                    .or(detect_mcp_owned_kask_artifacts_path(
+                        Path::new(&input.destination_path),
+                        fs.as_ref(),
+                    )
+                    .await)
+            {
+                return Err(mcp_owned_artifacts_error(
+                    "Cannot move path: path is inside a producer-owned folder under the Kask artifacts directory.",
+                    &server,
+                ));
+            }
 
             let global_source_path = global_skill_files
                 .resolve_descendant(Path::new(&input.source_path), cx)
@@ -141,6 +170,25 @@ impl AgentTool for MovePathTool {
             let global_destination_path = global_skill_files
                 .resolve_creatable_descendant(Path::new(&input.destination_path), cx)
                 .await;
+            // zed-kask: D28 — Kask visible artifacts directory descendants.
+            let kask_source_path = if global_source_path.is_none() {
+                resolve_writable_kask_artifacts_descendant_path(
+                    Path::new(&input.source_path),
+                    fs.as_ref(),
+                )
+                .await
+            } else {
+                None
+            };
+            let kask_destination_path = if global_destination_path.is_none() {
+                resolve_creatable_kask_artifacts_descendant_path(
+                    Path::new(&input.destination_path),
+                    fs.as_ref(),
+                )
+                .await
+            } else {
+                None
+            };
 
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
                 project.read_with(cx, |project, cx| {
@@ -205,6 +253,65 @@ impl AgentTool for MovePathTool {
 
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
+            }
+
+            if kask_source_path.is_some() || kask_destination_path.is_some() {
+                // zed-kask: D28 — move involving Kask visible artifacts directory.
+                let source = if let Some(path) = kask_source_path.or(global_source_path) {
+                    path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.entry_for_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} could not be resolved.", input.source_path)
+                        })
+                    })?
+                };
+                let destination = if let Some(path) = kask_destination_path.or(global_destination_path) {
+                    path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} was outside the project.",
+                                input.destination_path
+                            )
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} could not be resolved.",
+                                input.destination_path
+                            )
+                        })
+                    })?
+                };
+                if let Some(parent) = destination.parent() {
+                    fs.create_dir(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                }
+                futures::select! {
+                    result = fs.rename(&source, &destination, fs::RenameOptions { overwrite: true, ignore_if_exists: false, create_parents: false }).fuse() => {
+                        result.map_err(|e| {
+                            format!(
+                                "Failed to move {} to {}: {e}",
+                                input.source_path, input.destination_path
+                            )
+                        })?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Move cancelled by user".to_string());
+                    }
+                }
+                return Ok(format!(
+                    "Moved {} to {}",
+                    input.source_path, input.destination_path
+                ));
             }
 
             if global_source_path.is_some() || global_destination_path.is_some() {
@@ -333,9 +440,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(MovePathTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .to_string_lossy()
             .into_owned();
@@ -404,9 +509,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(MovePathTool::new(project));
-        let destination_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let destination_path = agent_skills::global_skills_dir()
             .join("exported-skill")
             .to_string_lossy()
             .into_owned();

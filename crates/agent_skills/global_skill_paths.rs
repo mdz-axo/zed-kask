@@ -402,13 +402,21 @@ mod tests {
     use serde_json::json;
     use util::path;
 
+    // zed-kask: D28 — derive the `~`-prefixed global skills path from
+    // `global_skills_dir()` rather than upstream's hardcoded `~/.agents/skills`.
+    fn tilde_global_skills_dir() -> PathBuf {
+        let dir = global_skills_dir();
+        if let Ok(rel) = dir.strip_prefix(paths::home_dir()) {
+            PathBuf::from("~").join(rel)
+        } else {
+            dir
+        }
+    }
+
     #[gpui::test]
     async fn test_resolve_creatable_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill");
+        let input_path = tilde_global_skills_dir().join("my-skill");
         let expected_path = global_skills_dir().join("my-skill");
 
         let resolved = resolve_creatable_global_skill_path(&input_path, fs.as_ref())
@@ -430,11 +438,7 @@ mod tests {
         )
         .await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .join("SKILL.md");
+        let input_path = tilde_global_skills_dir().join("my-skill").join("SKILL.md");
         let resolved = resolve_global_skill_path(&input_path, fs.as_ref())
             .await
             .expect("global skill file should resolve");
@@ -464,9 +468,7 @@ mod tests {
         .await
         .expect("skill directory should be symlinked");
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = tilde_global_skills_dir()
             .join("my-skill")
             .join("references")
             .join("guide.md");
@@ -584,12 +586,13 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(paths::home_dir(), json!({ ".agents": {} }))
-            .await;
+        let skills_dir = global_skills_dir();
+        if let Some(parent) = skills_dir.parent() {
+            fs.create_dir(parent).await.unwrap();
+        }
         fs.insert_tree(path!("/tmp"), json!({ "outside.txt": "outside" }))
             .await;
 
-        let skills_dir = global_skills_dir();
         fs.create_symlink(&skills_dir, PathBuf::from(path!("/")))
             .await
             .expect("global skills directory should be symlinked to root");
@@ -626,16 +629,17 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
         fs.insert_tree(
             paths::home_dir(),
             json!({
-                ".agents": {},
                 "outside.txt": "outside",
             }),
         )
         .await;
-
-        let skills_dir = global_skills_dir();
+        if let Some(parent) = skills_dir.parent() {
+            fs.create_dir(parent).await.unwrap();
+        }
         fs.create_symlink(&skills_dir, paths::home_dir().clone())
             .await
             .expect("global skills directory should be symlinked to home");
@@ -673,25 +677,24 @@ mod tests {
         .await
         .unwrap();
 
-        let linked_skill_file = PathBuf::from("~/.agents/skills/linked-skill/SKILL.md");
+        let tilde_skills = tilde_global_skills_dir();
+        let linked_skill_file = tilde_skills.join("linked-skill/SKILL.md");
         let located = locate_global_skill_path(&linked_skill_file, fs.as_ref(), false)
             .await
             .expect("a linked skill's files are readable");
         assert!(located.is_linked);
 
         for path in [
-            "~/.agents/skills/linked-skill",
-            "~/.agents/skills/linked-skill/SKILL.md",
-            "~/.agents/skills",
+            tilde_skills.join("linked-skill"),
+            tilde_skills.join("linked-skill/SKILL.md"),
+            tilde_skills.clone(),
         ] {
             apply_global_skill_file_operation(
                 fs.as_ref(),
-                GlobalSkillFileOperation::Delete {
-                    path: PathBuf::from(path),
-                },
+                GlobalSkillFileOperation::Delete { path: path.clone() },
             )
             .await
-            .expect_err(path);
+            .expect_err(&path.display().to_string());
         }
         assert!(
             fs.is_file(path!("/elsewhere/linked-skill/SKILL.md").as_ref())
@@ -701,7 +704,7 @@ mod tests {
         apply_global_skill_file_operation(
             fs.as_ref(),
             GlobalSkillFileOperation::Delete {
-                path: PathBuf::from("~/.agents/skills/real-skill"),
+                path: tilde_skills.join("real-skill"),
             },
         )
         .await

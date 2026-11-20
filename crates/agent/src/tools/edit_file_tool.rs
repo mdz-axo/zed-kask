@@ -1,11 +1,13 @@
-use super::deserialize_maybe_stringified;
+use super::deserialize_teaching_field;
 pub(crate) use super::edit_session::PartialEdit;
 pub use super::edit_session::{Edit, EditSessionOutput as EditFileToolOutput};
 use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{
+    AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
+};
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
@@ -26,7 +28,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 /// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// Supported paths outside the project are the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`, outside producer-owned `{server}-mcp/` folders).
 ///
 /// `read_file` prefixes each line of its output with a line number right-aligned in a
 /// 6-character field followed by a single tab, then the line's actual content. When you
@@ -37,7 +39,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
+    /// WARNING: For files in the project, you MUST start each path with one of the project's root directories. Outside the project, paths under the global skills directory or the Kask artifacts directory (`~/Documents/zk-data`, outside `{server}-mcp/`) are also supported.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -54,13 +56,15 @@ pub struct EditFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To edit a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: PathBuf,
 
     /// List of edit operations to apply sequentially.
     /// Each edit finds `old_text` in the file and replaces it with `new_text`.
-    #[serde(deserialize_with = "deserialize_maybe_stringified")]
+    /// `deserialize_edits_field` also tolerates a stringified JSON array and
+    /// teaches on rejection (field + received shape + accepted shape).
+    #[serde(deserialize_with = "deserialize_edits_field")]
     pub edits: Vec<Edit>,
 }
 
@@ -68,8 +72,38 @@ pub struct EditFileToolInput {
 struct EditFileToolPartialInput {
     #[serde(default)]
     path: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    #[serde(default, deserialize_with = "deserialize_partial_edits_field")]
     edits: Option<Vec<PartialEdit>>,
+}
+
+// Per-field teaching deserializers (lisp-repair L1): the error names the
+// field, the received shape, and the accepted shape — an error that does not
+// teach produces identical retries.
+
+fn deserialize_edits_field<'de, D>(deserializer: D) -> Result<Vec<Edit>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "edits",
+        "an array of edit objects like [{\"old_text\": \"...\", \"new_text\": \"...\"}] (stringified JSON also accepted)",
+        true,
+    )
+}
+
+fn deserialize_partial_edits_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<PartialEdit>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "edits",
+        "an array of partial edit objects (stringified JSON also accepted)",
+        true,
+    )
 }
 
 pub struct EditFileTool {
@@ -150,11 +184,12 @@ impl EditFileTool {
                                         }
                                     }
 
-                                    if let Some(current_session) = &mut session
-                                        && let Err(error) = current_session.process_edit(parsed.edits.as_deref(), event_stream, cx)
-                                    {
-                                        log::error!("Failed to process edit: {}", error);
-                                        return EditSessionResult::Failed { error, session };
+                                    if let Some(current_session) = &mut session {
+                                        let outcome = current_session.process_edit(parsed.edits.as_deref(), event_stream, cx);
+                                        if let Err(error) = outcome {
+                                            log::error!("Failed to process edit: {}", error);
+                                            return EditSessionResult::Failed { error, session };
+                                        }
                                     }
                                 }
                             }
@@ -183,7 +218,8 @@ impl EditFileTool {
                                     }
                                 };
 
-                                return match session.finalize_edit(full_input.edits, event_stream, cx).await {
+                                let outcome = session.finalize_edit(full_input.edits, event_stream, cx).await;
+                                return match outcome {
                                     Ok(()) => EditSessionResult::Completed(session),
                                     Err(error) => {
                                         log::error!("Failed to finalize edit: {}", error);
@@ -204,7 +240,7 @@ impl EditFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: error.to_string(),
+                                error: map_tool_input_error(error),
                                 session,
                             };
                         }
@@ -262,13 +298,10 @@ impl AgentTool for EditFileTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
-            run_session(
-                self.process_streaming_edits(&mut input, &event_stream, cx)
-                    .await,
-                &event_stream,
-                cx,
-            )
-            .await
+            let processed = self
+                .process_streaming_edits(&mut input, &event_stream, cx)
+                .await;
+            run_session(processed, &event_stream, cx).await
         })
     }
 
@@ -404,10 +437,13 @@ mod tests {
         // first line of the multi-line `old_text` omits its leading
         // indentation while subsequent lines include theirs, so the indent
         // delta computed from the first line must not be applied to the
-        // following lines. `old_text` also omits the `self.extra` line, so
-        // the query lines don't correspond one-to-one to the matched buffer
-        // rows and the indent pairing must follow the fuzzy match's
-        // alignment instead of assuming equal line counts.
+        // following lines.
+        // zed-kask: D101 — upstream's version of this test also omitted the
+        // `self.extra` line from `old_text`, pinning the gap-skip match whose
+        // span replacement DROPPED that row (the live eaten-`#[gpui::test]`
+        // class). The fork includes the row (contiguous 1:1 pairing); the
+        // gap variant is refused at the matcher level
+        // (`test_query_omitting_a_buffer_line_does_not_match`).
         let content = concat!(
             "class Outer:\n",
             "    def method(self):\n",
@@ -429,6 +465,7 @@ mod tests {
                         edits: vec![Edit {
                             old_text: concat!(
                                 "self.target_a = \"before\"\n",
+                                "        self.extra = \"row\"\n",
                                 "        self.target_b = \"before\"\n",
                                 "        self.target_c = \"before\"\n",
                                 "        self.target_d = \"before\"",
@@ -436,6 +473,7 @@ mod tests {
                             .into(),
                             new_text: concat!(
                                 "self.target_a = \"after\"\n",
+                                "        self.extra = \"row\"\n",
                                 "        self.target_b = \"after\"\n",
                                 "        self.target_c = \"after\"\n",
                                 "        self.target_d = \"after\"",
@@ -452,8 +490,8 @@ mod tests {
         let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
             panic!("expected success");
         };
-        // The matched range includes the `self.extra` row, so it is replaced
-        // along with the rest of the match.
+        // The `self.extra` row survives the edit: the span replacement
+        // covers exactly the paired lines.
         assert_eq!(
             new_text,
             concat!(
@@ -461,6 +499,7 @@ mod tests {
                 "    def method(self):\n",
                 "        self.kept = \"unchanged\"\n",
                 "        self.target_a = \"after\"\n",
+                "        self.extra = \"row\"\n",
                 "        self.target_b = \"after\"\n",
                 "        self.target_c = \"after\"\n",
                 "        self.target_d = \"after\"\n",
@@ -505,6 +544,49 @@ mod tests {
             new_text,
             "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
         );
+    }
+
+    /// zed-kask: D78 — a multi-edit call that fails at a later edit leaves
+    /// the file exactly as it was. Before, earlier edits stayed applied and
+    /// saved behind the error (22 recorded curator incidents).
+    #[gpui::test]
+    async fn test_streaming_edit_failure_leaves_file_unchanged(cx: &mut TestAppContext) {
+        let original = "line 1\ndup\ndup\n";
+        let (edit_tool, _project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": original})).await;
+        let result = cx
+            .update(|cx| {
+                edit_tool.clone().run(
+                    ToolInput::resolved(EditFileToolInput {
+                        path: "root/file.txt".into(),
+                        edits: vec![
+                            Edit {
+                                old_text: "line 1".into(),
+                                new_text: "changed line 1".into(),
+                            },
+                            Edit {
+                                old_text: "dup".into(),
+                                new_text: "x".into(),
+                            },
+                        ],
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditFileToolOutput::Error { error, diff, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(error.contains("matched multiple locations"), "{error}");
+        assert!(error.contains("No edits were applied"), "{error}");
+        assert!(diff.is_empty(), "reported diff must be empty: {diff}");
+        let on_disk = fs
+            .load(std::path::Path::new(path!("/root/file.txt")))
+            .await
+            .unwrap();
+        assert_eq!(on_disk, original);
     }
 
     #[gpui::test]
@@ -627,14 +709,10 @@ mod tests {
         let (edit_tool, _project, _action_log, fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .join("SKILL.md");
         let skill_file = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("SKILL.md");
+        let input_path = skill_file.clone();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -858,6 +936,45 @@ mod tests {
         assert!(
             error.contains("cancelled"),
             "Expected cancellation error but got: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_orphaned_by_stream_end_produces_truncation_message(
+        cx: &mut TestAppContext,
+    ) {
+        // When the LLM stream ends (e.g. MaxTokens) before sending
+        // is_input_complete=true, the turn loop drains streaming_tool_inputs,
+        // dropping the sender. The edit_file tool's input.next() returns
+        // Err("tool input was not fully received"), which map_tool_input_error
+        // translates to a truncation-specific message so the model knows to
+        // retry with a simpler call instead of treating it as an arbitrary
+        // failure.
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello world"})).await;
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+
+        // Send a partial so the edit session starts
+        sender.send_partial(json!({"path": "root/file.txt"}));
+        cx.run_until_parked();
+
+        // Drop the sender WITHOUT sending Full — simulates the stream-end drain
+        drop(sender);
+        cx.run_until_parked();
+
+        let result = task.await;
+        let EditFileToolOutput::Error { error, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("token limit"),
+            "Expected truncation message mentioning token limit, but got: {error}"
+        );
+        assert!(
+            !error.contains("tool input was not fully received"),
+            "Should not leak the generic channel-closed error string, but got: {error}"
         );
     }
 
@@ -1310,12 +1427,14 @@ mod tests {
             error.contains("Could not find matching text for edit at index 1"),
             "Expected error about edit 1 failing, got: {error}"
         );
-        // Ensure that first edit was applied successfully and that we saved the buffer
+        // zed-kask: D78 — upstream kept edit 1 applied and saved after edit 2
+        // failed. The fork restores the pre-call text: a failed call changes
+        // nothing, and the error says so.
         assert_eq!(input_path, Some(PathBuf::from("root/file.txt")));
-        assert_eq!(
-            diff,
-            "@@ -1,3 +1,3 @@\n-line 1\n+MODIFIED\n line 2\n line 3\n"
-        );
+        assert!(error.contains("No edits were applied"), "{error}");
+        assert_eq!(diff, "");
+        let buffer_text = buffer.read_with(cx, |buffer, _cx| buffer.text());
+        assert_eq!(buffer_text, "line 1\nline 2\nline 3\n");
     }
 
     #[gpui::test]
@@ -3227,9 +3346,15 @@ mod tests {
         }))
         .unwrap_err();
 
-        // When the model uses incorrect field names, the error should
-        // tell it what to fix.
-        assert_eq!(err.to_string(), "missing field `old_text`");
+        // When the model uses incorrect field names, the error should tell it
+        // what to fix. L1 (lisp-repair): the teaching wrapper names the field,
+        // the received shape, and the accepted shape, and surfaces the inner
+        // missing-field detail (before L1 the message was only "missing field
+        // `old_text`" — no field name, no accepted shape).
+        assert_eq!(
+            err.to_string(),
+            "edits: received an array, expected an array of edit objects like [{\"old_text\": \"...\", \"new_text\": \"...\"}] (stringified JSON also accepted) — missing field `old_text`"
+        );
     }
 
     async fn setup_test_with_fs(

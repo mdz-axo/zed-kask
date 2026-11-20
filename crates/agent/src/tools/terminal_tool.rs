@@ -21,6 +21,7 @@ use crate::sandboxing::{
     sandboxing_enabled_for_project,
 };
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use hkask_types::maybe_string::deserialize_optional_u64_from_maybe_string;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -32,7 +33,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+/// Do not use shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values yourself before calling this tool, or ask the user for the literal value to use. Inside single-quoted strings these characters are safe and should be left as-is — for example, a sed regex like `s/\1\${PATH:-\3}/g` legitimately contains `${...}` and `\1` capture-group references that must not be rewritten or expanded.
 ///
 /// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
 ///
@@ -50,13 +51,20 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values first or ask the user for the literal value to use. Inside single-quoted strings (e.g. a sed regex like `s/\1\${PATH:-\3}/g`) these characters are safe and must not be rewritten.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
+    ///
+    /// Omit this field (or pass an empty string) to default to the single project root; this is only valid in single-root projects.
+    #[serde(default)]
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_maybe_string"
+    )]
     pub timeout_ms: Option<u64>,
     /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
@@ -74,7 +82,7 @@ pub struct TerminalToolInput {
 ///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+/// Do not use shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values yourself before calling this tool, or ask the user for the literal value to use. Inside single-quoted strings these characters are safe and should be left as-is — for example, a sed regex like `s/\1\${PATH:-\3}/g` legitimately contains `${...}` and `\1` capture-group references that must not be rewritten or expanded.
 ///
 /// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
 ///
@@ -92,13 +100,20 @@ pub struct TerminalToolInput {
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxedTerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values first or ask the user for the literal value to use. Inside single-quoted strings (e.g. a sed regex like `s/\1\${PATH:-\3}/g`) these characters are safe and must not be rewritten.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
+    ///
+    /// Omit this field (or pass an empty string) to default to the single project root; this is only valid in single-root projects.
+    #[serde(default)]
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_maybe_string"
+    )]
     pub timeout_ms: Option<u64>,
     /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
@@ -423,6 +438,29 @@ async fn run_terminal_tool(
 ) -> Result<String, String> {
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
+    let is_private_inference =
+        event_stream.calling_provenance() == hkask_types::InferenceProvenance::PrivateInference;
+
+    // zed-kask: S123-F01 (D100 private-thread terminal perimeter) — refuse
+    // unsandboxed execution and outbound network escalations before any
+    // authorization prompt or command dispatch.
+    if is_private_inference {
+        if sandbox_input.unsandboxed == Some(true) {
+            return Err(
+                "D100 private-thread boundary refused `unsandboxed: true`: commands on \
+                 privacy-marked threads cannot run outside the OS sandbox."
+                    .to_string(),
+            );
+        }
+        if sandbox_input.allow_all_hosts == Some(true) || !sandbox_input.allow_hosts.is_empty() {
+            return Err(
+                "D100 private-thread boundary refused outbound network escalation \
+                 (`allow_hosts` / `allow_all_hosts`): commands on privacy-marked threads \
+                 run without network access."
+                    .to_string(),
+            );
+        }
+    }
 
     let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
         cx.update(|cx| {
@@ -468,6 +506,13 @@ async fn run_terminal_tool(
     let unsandboxed_floor = sandboxing
         && (event_stream.unsandboxed_granted_for_thread()
             || event_stream.sandbox_fallback_granted_for_thread());
+    if is_private_inference && unsandboxed_floor {
+        return Err(
+            "D100 private-thread boundary refused unsandboxed execution: standing unsandboxed \
+             grants are not permitted on privacy-marked threads."
+                .to_string(),
+        );
+    }
     let fs_unrestricted_floor = sandboxing && floor.allow_fs_write_all;
     let net_unrestricted_floor = sandboxing && matches!(floor.network, NetworkRequest::AnyHost);
 
@@ -728,7 +773,10 @@ async fn run_terminal_tool(
             sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForThisThread);
             None
         } else {
-            let effective = event_stream.effective_sandbox_request(&request, &persistent);
+            let mut effective = event_stream.effective_sandbox_request(&request, &persistent);
+            if is_private_inference {
+                effective.network = NetworkRequest::None;
+            }
             if !can_restrict_to_hosts && matches!(effective.network, NetworkRequest::Hosts(_)) {
                 return Err(
                     "This platform or project has a saved host-specific network grant, but cannot enforce host-specific sandboxed network access. Request `allow_all_hosts: true` if the command needs network access."
@@ -778,6 +826,14 @@ async fn run_terminal_tool(
                     log::warn!(
                         "Failed to create a sandbox for an agent terminal command: {error:?}"
                     );
+
+                    if is_private_inference {
+                        return Err(format!(
+                            "D100 private-thread boundary refused unsandboxed fallback: the OS \
+                             sandbox could not be created ({}).",
+                            error.user_facing_message()
+                        ));
+                    }
 
                     let decision = cx
                         .update(|cx| {
@@ -1033,7 +1089,29 @@ async fn run_terminal_tool(
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    // zed-kask: D100 — when the terminal output was truncated by COMMAND_OUTPUT_LIMIT,
+    // store the full untruncated scrollback in the thread's D100-isolated BLAKE3
+    // SpilloverVault (`kask://spillover/<blake3>`) so the model can inspect
+    // slices via `read_file` without writing plaintext files to `/tmp`.
+    let spillover_path = if output.truncated && !output.output.is_empty() {
+        let full_scrollback = terminal.full_output(cx).ok().flatten();
+        let spill_source = full_scrollback
+            .as_deref()
+            .filter(|full| full.len() >= output.output.len())
+            .unwrap_or(&output.output);
+        Some(write_output_spillover(spill_source, &event_stream))
+    } else {
+        None
+    };
+
+    let result = process_content(
+        output,
+        &input.command,
+        timed_out,
+        user_stopped,
+        selection,
+        spillover_path.as_deref(),
+    );
     Ok(match sandbox_note {
         Some(note) => format!("{note}\n\n{result}"),
         None => result,
@@ -1194,6 +1272,20 @@ impl TerminalOutputSelection {
     }
 }
 
+/// Store the full terminal output in the thread's `D100`-isolated `BLAKE3`
+/// [`SpilloverVault`](hkask_condenser::spillover::SpilloverVault) so the model
+/// can inspect bounded line ranges via `read_file` without writing unencrypted
+/// temporary files to `/tmp`.
+fn write_output_spillover(output: &str, event_stream: &ToolCallEventStream) -> String {
+    let privacy = crate::kask_thread_state::provenance_to_spillover_privacy(
+        event_stream.calling_provenance(),
+    );
+    event_stream
+        .spillover_vault()
+        .put(TerminalTool::NAME, output, privacy)
+        .uri
+}
+
 fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection) -> String {
     match (selection.head_lines, selection.tail_lines) {
         (None, None) => output.to_string(),
@@ -1215,7 +1307,14 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
                 .copied()
                 .collect::<Vec<_>>()
                 .join("\n");
-            let tail_start = lines.len().saturating_sub(tail_lines);
+            // Tail starts after the head to avoid duplicating overlapping
+            // lines when head + tail >= total lines. Clamp tail_start to
+            // at least head_lines so the tail begins where the head ends.
+            let tail_start = lines
+                .len()
+                .saturating_sub(tail_lines)
+                .max(head_lines)
+                .min(lines.len());
             let tail = lines[tail_start..].join("\n");
             format!("{head}\n\n{tail}")
         }
@@ -1246,9 +1345,19 @@ fn process_content(
     timed_out: bool,
     user_stopped: bool,
     selection: TerminalOutputSelection,
+    spillover_path: Option<&str>,
 ) -> String {
     let content = output.output.trim();
-    let content = select_terminal_output_lines(content, selection);
+    let mut content = select_terminal_output_lines(content, selection);
+    if output.truncated && !selection.is_enabled() && content.len() > COMMAND_OUTPUT_LIMIT as usize
+    {
+        let mut end_ix = COMMAND_OUTPUT_LIMIT as usize;
+        while !content.is_char_boundary(end_ix) {
+            end_ix -= 1;
+        }
+        end_ix = content[..end_ix].rfind('\n').unwrap_or(end_ix);
+        content.truncate(end_ix);
+    }
     let is_empty = content.is_empty();
 
     // On Windows, recognize the kernel-style diagnostics WSL prints when a
@@ -1262,10 +1371,19 @@ fn process_content(
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
-        format!(
-            "Command output too long. The first {} bytes:\n\n{content}",
-            content.len(),
-        )
+        if let Some(path) = spillover_path {
+            format!(
+                "Command output too long. The first {} bytes are shown below. \
+                 \nThe full output was saved to: {path} \
+                 \nYou can re-read it with the `read_file` tool if you need more.\n\n{content}",
+                content.len(),
+            )
+        } else {
+            format!(
+                "Command output too long. The first {} bytes:\n\n{content}",
+                content.len(),
+            )
+        }
     } else {
         content
     };
@@ -1340,9 +1458,18 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
 
         match worktrees.next() {
             Some(worktree) => {
+                // zed-kask teaching error (therapy 2026-11-16, P3): the bare
+                // refusal made agents retry the same `cd` shape (nine live
+                // receipts 2026-11-10..13) — name the roots so the retry
+                // carries the valid inputs. Resolution semantics unchanged.
+                let mut root_names = vec![worktree.read(cx).root_name_str().to_string()];
+                root_names.extend(
+                    worktrees.map(|worktree| worktree.read(cx).root_name_str().to_string()),
+                );
                 anyhow::ensure!(
-                    worktrees.next().is_none(),
-                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+                    root_names.len() == 1,
+                    "'.' is ambiguous in multi-root workspaces — name one of the roots explicitly: {}",
+                    root_names.join(", "),
                 );
                 Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
             }
@@ -1364,7 +1491,19 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
             return Ok(Some(dir));
         }
 
-        anyhow::bail!("`cd` directory {cd:?} was not in any root directory in the project.");
+        // zed-kask teaching error (therapy 2026-11-16, P3): name the valid
+        // roots — agents kept retrying home-directory and bare-`cd` shapes
+        // against this refusal (nine live receipts 2026-11-10..13).
+        let root_names = worktree_roots
+            .iter()
+            .map(|(name, path)| format!("{name} ({})", path.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "`cd` directory {cd:?} was not in any root directory in the project. \
+             Roots: {root_names}. `cd` into a project root by name or path (not the \
+             home directory), or omit `cd` to run in the default root.",
+        );
     }
 }
 
@@ -1416,6 +1555,55 @@ fn resolve_cd_in_worktrees(
 mod tests {
     use super::*;
     use util::paths::PathStyle::{Unix, Windows};
+
+    /// zed-kask (therapy 2026-11-16, P3): both `cd` rejections name the
+    /// project's valid roots — the bare refusals made agents retry the same
+    /// shape (nine live receipts 2026-11-10..13: `cd /home/…` and bare `cd`
+    /// against single-root projects). The error is the recovery input list.
+    #[gpui::test]
+    async fn test_cd_rejections_name_the_project_roots(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/alpha", serde_json::json!({})).await;
+        fs.insert_tree("/beta", serde_json::json!({})).await;
+        let project =
+            project::Project::test(fs.clone(), ["/alpha".as_ref(), "/beta".as_ref()], cx).await;
+
+        // A directory outside every root: the refusal names the roots with
+        // their paths and teaches the recovery.
+        let err = cx
+            .update(|cx| working_dir("/home/mdz-axolotl", &project, cx))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("was not in any root directory"), "{msg}");
+        assert!(msg.contains("alpha (/alpha)"), "{msg}");
+        assert!(msg.contains("beta (/beta)"), "{msg}");
+        assert!(msg.contains("omit `cd`"), "{msg}");
+
+        // Bare `cd` in a multi-root workspace: the ambiguity error names
+        // the roots by name.
+        let err = cx.update(|cx| working_dir(".", &project, cx)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("'.' is ambiguous"), "{msg}");
+        assert!(msg.contains("alpha"), "{msg}");
+        assert!(msg.contains("beta"), "{msg}");
+
+        // The single-root project still resolves both forms — the enriched
+        // errors did not change resolution semantics.
+        fs.insert_tree("/solo", serde_json::json!({})).await;
+        let solo = project::Project::test(fs.clone(), ["/solo".as_ref()], cx).await;
+        let by_name = cx
+            .update(|cx| working_dir("solo", &solo, cx))
+            .unwrap()
+            .expect("cd by root name resolves");
+        assert_eq!(by_name, Path::new("/solo"));
+        let by_dot = cx
+            .update(|cx| working_dir(".", &solo, cx))
+            .unwrap()
+            .expect("bare cd resolves in a single-root project");
+        assert_eq!(by_dot, Path::new("/solo"));
+    }
 
     #[test]
     fn test_resolve_cd_uses_project_path_style() {
@@ -1615,6 +1803,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1788,7 +1977,7 @@ mod tests {
             },
         );
 
-        assert_eq!(result, "one\ntwo\n\ntwo\nthree");
+        assert_eq!(result, "one\ntwo\n\nthree");
     }
 
     #[test]
@@ -1855,6 +2044,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert_eq!(result, "```\none\n\nfour\n```");
@@ -1874,6 +2064,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("failed with exit code 1"));
@@ -1895,6 +2086,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: None,
             },
+            None,
         );
 
         assert!(result.contains("timed out"));
@@ -1916,6 +2108,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("user stopped"));
@@ -1939,6 +2132,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(!result.contains("Showing"));
@@ -1956,6 +2150,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1980,6 +2175,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2004,6 +2200,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2029,6 +2226,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2044,6 +2242,72 @@ mod tests {
     }
 
     #[test]
+    fn test_process_content_truncated_with_spillover_path() {
+        // When the terminal output is truncated and a spillover path is
+        // provided, the message must include the path so the model can
+        // re-read the full output with `read_file`.
+        // zed-kask: upstream's `process_content` now takes `ProcessOutput`
+        // (the fork's test previously built an ACP v1 TerminalOutputResponse).
+        let output = ProcessOutput::new(
+            "line one\nline two\nline three".to_string(),
+            true, // truncated
+        );
+
+        let spillover_uri =
+            "kask://spillover/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+            Some(spillover_uri),
+        );
+
+        assert!(
+            result.contains("Command output too long"),
+            "Expected truncation message, got: {result}"
+        );
+        assert!(
+            result.contains(spillover_uri),
+            "Expected spillover URI in message, got: {result}"
+        );
+        assert!(
+            result.contains("read_file"),
+            "Expected read_file hint in message, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_process_content_truncated_without_spillover_path() {
+        // When truncated but no spillover path is provided (e.g. the spillover
+        // write failed), the message should still include the truncated output
+        // without a spillover path reference.
+        let output = ProcessOutput::new(
+            "line one\nline two".to_string(),
+            true, // truncated
+        );
+
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+            None,
+        );
+
+        assert!(
+            result.contains("Command output too long"),
+            "Expected truncation message, got: {result}"
+        );
+        assert!(
+            !result.contains("read_file"),
+            "Should not mention read_file when no spillover path, got: {result}"
+        );
+    }
+
+    #[test]
     fn test_process_content_with_success_empty_output() {
         let output = ProcessOutput::new("".to_string(), false)
             .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
@@ -2054,6 +2318,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2074,6 +2339,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2099,6 +2365,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2118,6 +2385,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2142,6 +2410,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -3865,5 +4134,367 @@ mod tests {
             acp_thread::SandboxNetworkAccess::None => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }
+    }
+
+    #[gpui::test]
+    async fn spillover_truncated_terminal_round_trips_through_read_file_without_tmp_files(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+        use hkask_condenser::engine::CondenserEngine;
+        use hkask_condenser::spillover::SpilloverVault;
+        use language_model::LanguageModelToolResultContent;
+        use std::sync::{Arc, Mutex};
+
+        struct EngineCondenser(Mutex<CondenserEngine>);
+        impl crate::ThreadCondenser for EngineCondenser {
+            fn compress_tool_result(&self, tool_name: &str, output: &str) -> String {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .compress(tool_name, output, None)
+                    .content
+            }
+        }
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, false));
+
+        let full_output: String = (1..=700)
+            .map(|i| {
+                format!(
+                    "cargo-step-{i:04}: checking module_target_{i:04} marker=DEEP_SPILL_LINE_{i:04}_OK padding_0123456789abcdef\n"
+                )
+            })
+            .collect();
+        assert!(full_output.len() > 4 * COMMAND_OUTPUT_LIMIT as usize);
+
+        let proc_out = ProcessOutput::new(full_output.clone(), true)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(proc_out),
+            )
+        }));
+
+        let vault = SpilloverVault::new();
+        let actor = hkask_types::WebID::for_agent_name("spillover-test");
+        let (term_stream, mut rx) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            actor,
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        #[allow(clippy::arc_with_non_send_sync)]
+        let term_tool = Arc::new(TerminalTool::new(project, environment));
+
+        let term_task = cx.update(|cx| {
+            term_tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "cargo check".to_string(),
+                    cd: "root".to_string(),
+                    ..Default::default()
+                }),
+                term_stream.with_spillover_vault(vault.clone()),
+                cx,
+            )
+        });
+        let _ = rx.expect_update_fields().await;
+        let term_out = term_task.await.expect("terminal tool succeeds");
+        assert!(
+            !term_out.contains("/tmp/"),
+            "truncated terminal output must not write /tmp spillover paths: {term_out}"
+        );
+
+        // Even after Thread::run_tool condenses the 16 KiB preview, the full 700-line
+        // spillover URI must survive and resolve lines past the 16 KiB preview cutoff.
+        let condenser = EngineCondenser(Mutex::new(CondenserEngine::new()));
+        let parts = crate::thread::condense_tool_output_with_spillover(
+            &condenser,
+            "terminal",
+            vec![LanguageModelToolResultContent::Text(Arc::from(term_out))],
+            &vault,
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        let delivered: String = parts.iter().filter_map(|p| p.to_str()).collect();
+        let uri = hkask_condenser::spillover::extract_spillover_uris(&delivered)
+            .into_iter()
+            .next()
+            .expect("condensed terminal output must retain kask://spillover/<blake3> handle");
+
+        let (read_stream, _) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            actor,
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        let slice = cx
+            .update(|cx| {
+                read_tool.run(
+                    crate::ToolInput::resolved(crate::ReadFileToolInput {
+                        path: uri,
+                        start_line: Some(505),
+                        end_line: Some(515),
+                    }),
+                    read_stream.with_spillover_vault(vault),
+                    cx,
+                )
+            })
+            .await
+            .expect("read_file resolves spillover slice");
+        assert!(
+            slice
+                .to_str()
+                .unwrap_or_default()
+                .contains("DEEP_SPILL_LINE_0510_OK")
+        );
+    }
+
+    #[gpui::test]
+    async fn spillover_d100_private_boundary_blocks_public_reads_and_allows_inherited_subagent(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+        use hkask_condenser::spillover::SpilloverPrivacy;
+        use std::sync::Arc;
+
+        crate::tests::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project, action_log, false));
+
+        let mut parent_kask = crate::kask_thread_state::KaskThreadState::new();
+        parent_kask.set_private_inference(true);
+        let receipt = parent_kask.spillover_vault().put(
+            "terminal",
+            "line 1\nSECRET_D100_PAYLOAD_77\nline 3\n",
+            SpilloverPrivacy::Private,
+        );
+
+        let child_kask = crate::kask_thread_state::KaskThreadState::inherit_from(&parent_kask);
+        let outsider_kask = crate::kask_thread_state::KaskThreadState::new();
+        let actor = hkask_types::WebID::for_agent_name("d100-check");
+
+        // Inherited private subagent reads parent's private spillover.
+        let (child_stream, _) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            actor,
+            hkask_types::InferenceProvenance::from_private_flag(child_kask.is_private_inference()),
+        );
+        let child_ok = cx
+            .update(|cx| {
+                read_tool.clone().run(
+                    crate::ToolInput::resolved(crate::ReadFileToolInput {
+                        path: receipt.uri.clone(),
+                        start_line: Some(1),
+                        end_line: Some(3),
+                    }),
+                    child_stream.with_spillover_vault(child_kask.spillover_vault()),
+                    cx,
+                )
+            })
+            .await
+            .expect("inherited private subagent must read parent spillover");
+        assert!(
+            child_ok
+                .to_str()
+                .unwrap_or_default()
+                .contains("SECRET_D100_PAYLOAD_77")
+        );
+
+        // Same thread unmarked to PublicProvider is refused fail-closed.
+        let (unmarked_stream, _) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            actor,
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        let unmarked_err = cx
+            .update(|cx| {
+                read_tool.clone().run(
+                    crate::ToolInput::resolved(crate::ReadFileToolInput {
+                        path: receipt.uri.clone(),
+                        start_line: Some(1),
+                        end_line: Some(3),
+                    }),
+                    unmarked_stream.with_spillover_vault(parent_kask.spillover_vault()),
+                    cx,
+                )
+            })
+            .await
+            .expect_err("unmarked public turn must not read private spillover");
+        assert!(
+            unmarked_err
+                .to_str()
+                .unwrap_or_default()
+                .contains("[permission_denied]")
+        );
+
+        // Separate thread vault is isolated (NotFound).
+        let (outsider_stream, _) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            actor,
+            hkask_types::InferenceProvenance::PrivateInference,
+        );
+        assert!(
+            cx.update(|cx| {
+                read_tool.run(
+                    crate::ToolInput::resolved(crate::ReadFileToolInput {
+                        path: receipt.uri,
+                        start_line: Some(1),
+                        end_line: Some(3),
+                    }),
+                    outsider_stream.with_spillover_vault(outsider_kask.spillover_vault()),
+                    cx,
+                )
+            })
+            .await
+            .is_err()
+        );
+    }
+
+    #[gpui::test]
+    async fn spillover_condensed_mcp_json_preserves_valid_part0_recovers_elided_items_and_rehydrates_from_db(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+        use hkask_condenser::engine::CondenserEngine;
+        use hkask_condenser::spillover::{SpilloverPrivacy, SpilloverVault};
+        use language_model::{LanguageModelToolResult, LanguageModelToolResultContent};
+        use std::sync::{Arc, Mutex};
+
+        struct EngineCondenser(Mutex<CondenserEngine>);
+        impl crate::ThreadCondenser for EngineCondenser {
+            fn compress_tool_result(&self, tool_name: &str, output: &str) -> String {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .compress(tool_name, output, None)
+                    .content
+            }
+        }
+
+        crate::tests::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project, action_log, false));
+
+        // Single-line compact MCP JSON (> 3 KiB on one line) with 40 items.
+        let compact_mcp = serde_json::to_string(&serde_json::json!({
+            "series_id": "FRED_TEST",
+            "observations": (0..40).map(|i| serde_json::json!({
+                "date": format!("2025-01-{:02}", (i % 28) + 1),
+                "tag": format!("INTERIOR_OBS_{i:04}"),
+                "value": 3.25
+            })).collect::<Vec<_>>()
+        }))
+        .unwrap();
+
+        let condenser = EngineCondenser(Mutex::new(CondenserEngine::new()));
+        let vault = SpilloverVault::new();
+        let parts = crate::thread::condense_tool_output_with_spillover(
+            &condenser,
+            "fred_get_observations",
+            vec![LanguageModelToolResultContent::Text(Arc::from(
+                compact_mcp.as_str(),
+            ))],
+            &vault,
+            hkask_types::InferenceProvenance::PrivateInference,
+        );
+        assert_eq!(parts.len(), 2, "expected JSON primary + spillover notice");
+        let part0 = parts[0].to_str().unwrap();
+        assert!(
+            serde_json::from_str::<serde_json::Value>(part0).is_ok(),
+            "Part 0 must remain valid JSON"
+        );
+        assert!(
+            !part0.contains("INTERIOR_OBS_0020"),
+            "interior item 20 should be elided in condensed Part 0"
+        );
+
+        let notice = parts[1].to_str().unwrap();
+        let uri = hkask_condenser::spillover::extract_spillover_uris(notice)
+            .into_iter()
+            .next()
+            .expect("spillover URI in notice");
+
+        let (read_stream, _) = crate::ToolCallEventStream::test_for_actor_with_provenance(
+            hkask_types::WebID::for_agent_name("mcp-json-test"),
+            hkask_types::InferenceProvenance::PrivateInference,
+        );
+        let recovered = cx
+            .update(|cx| {
+                read_tool.run(
+                    crate::ToolInput::resolved(crate::ReadFileToolInput {
+                        path: uri.clone(),
+                        start_line: Some(1),
+                        end_line: Some(250),
+                    }),
+                    read_stream.with_spillover_vault(vault),
+                    cx,
+                )
+            })
+            .await
+            .expect("pretty-projected compact JSON slice read succeeds");
+        assert!(
+            recovered
+                .to_str()
+                .unwrap_or_default()
+                .contains("INTERIOR_OBS_0020")
+        );
+
+        // Rehydration from saved DbThread messages preserves private history gate.
+        let mut tool_results = collections::IndexMap::default();
+        tool_results.insert(
+            "t1".into(),
+            LanguageModelToolResult {
+                tool_use_id: "t1".into(),
+                tool_name: Arc::from("fred_get_observations"),
+                is_error: false,
+                content: parts,
+                output: Some(serde_json::Value::String(compact_mcp)),
+            },
+        );
+        let saved_messages = vec![Arc::new(crate::thread::Message::Agent(
+            crate::thread::AgentMessage {
+                content: Vec::new(),
+                tool_results,
+                reasoning_details: None,
+            },
+        ))];
+        let mut restored_kask = crate::kask_thread_state::KaskThreadState::new();
+        let msg_id = acp_thread::ClientUserMessageId::new();
+        restored_kask.record_request_provenance(
+            Some(&msg_id),
+            acp_thread::RequestProvenance {
+                provider: "ollama".into(),
+                model: "qwen3:8b".into(),
+                private: true,
+                memory_status: None,
+            },
+        );
+        crate::thread::rehydrate_spillover_vault_from_db_messages(&restored_kask, &saved_messages);
+        assert!(
+            restored_kask
+                .spillover_vault()
+                .read_slice(&uri, Some(1), Some(250), SpilloverPrivacy::Public)
+                .is_err()
+        );
+        assert!(
+            restored_kask
+                .spillover_vault()
+                .read_slice(&uri, Some(1), Some(250), SpilloverPrivacy::Private)
+                .unwrap()
+                .text
+                .contains("INTERIOR_OBS_0020")
+        );
     }
 }

@@ -7,7 +7,7 @@ use gpui::{App, AppContext as _, AssetSource};
 use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -91,10 +91,42 @@ pub struct WorktreeContext {
     pub rules_file: Option<RulesFileContext>,
 }
 
+/// YAML frontmatter on a rules file, Cline-compatible. When `always_apply`
+/// is true (or frontmatter is absent), the rules are always included in the
+/// system prompt. When false with non-empty `globs`, the rules are only
+/// included if a file matching one of the globs is open or mentioned.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuleFrontmatter {
+    /// File globs that activate this rule. Empty means "always apply".
+    #[serde(default)]
+    pub globs: Vec<String>,
+    /// When true, the rule is always included regardless of `globs`.
+    #[serde(default = "default_always_apply", rename = "alwaysApply")]
+    pub always_apply: bool,
+}
+
+impl Default for RuleFrontmatter {
+    fn default() -> Self {
+        Self {
+            globs: Vec::new(),
+            always_apply: true,
+        }
+    }
+}
+
+fn default_always_apply() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<RelPath>,
     pub text: String,
+    /// Parsed YAML frontmatter, if present. When `None`, the rules file had
+    /// no frontmatter and `always_apply` defaults to `true` (I2 — upstream
+    /// Zed compatibility).
+    #[serde(skip)]
+    pub frontmatter: Option<RuleFrontmatter>,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
     #[serde(skip)]
@@ -150,7 +182,9 @@ mod tests {
             skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
+            audience: None,
         };
         let summary = SkillSummary::from(&skill);
 
@@ -164,6 +198,42 @@ mod tests {
         let context = ProjectContext::new(vec![]);
         assert!(!context.has_skills);
         assert!(context.skills.is_empty());
+    }
+
+    #[test]
+    fn release_build_ignores_cwd_prompt_overrides() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let untrusted_prompts = temp.path().join("assets").join("prompts");
+        std::fs::create_dir_all(&untrusted_prompts).expect("create assets/prompts");
+        std::fs::write(
+            untrusted_prompts.join("terminal_assistant_prompt.hbs"),
+            "INJECTED",
+        )
+        .expect("write hbs");
+
+        assert_eq!(
+            PromptBuilder::resolve_dev_repo_path(true, false, Some(temp.path().to_path_buf())),
+            None,
+            "release builds must never treat cwd as a prompt-override repo"
+        );
+        assert_eq!(
+            PromptBuilder::resolve_dev_repo_path(true, true, Some(temp.path().to_path_buf())),
+            Some(temp.path().to_path_buf()),
+            "debug builds running on a PTY may resolve dev prompt overrides"
+        );
+        assert_eq!(
+            PromptBuilder::resolve_dev_repo_path(false, true, Some(temp.path().to_path_buf())),
+            None,
+            "non-PTY launches do not resolve cwd prompt overrides"
+        );
+
+        let release_dir = PromptBuilder::resolve_template_overrides_dir(Some(temp.path()), false);
+        assert_ne!(
+            release_dir, untrusted_prompts,
+            "release template watcher must never resolve <cwd>/assets/prompts"
+        );
+        let debug_dir = PromptBuilder::resolve_template_overrides_dir(Some(temp.path()), true);
+        assert_eq!(debug_dir, untrusted_prompts);
     }
 
     // Hidden-skill filtering used to live here, but it's now the
@@ -194,12 +264,28 @@ pub struct PromptBuilder {
 }
 
 impl PromptBuilder {
+    fn resolve_dev_repo_path(
+        stdout_is_a_pty: bool,
+        is_debug_build: bool,
+        current_dir: Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        (is_debug_build && stdout_is_a_pty)
+            .then_some(current_dir)
+            .flatten()
+    }
+
+    fn resolve_template_overrides_dir(repo_path: Option<&Path>, is_debug_build: bool) -> PathBuf {
+        paths::prompt_overrides_dir(if is_debug_build { repo_path } else { None })
+    }
+
     pub fn load(fs: Arc<dyn Fs>, stdout_is_a_pty: bool, cx: &mut App) -> Arc<Self> {
         Self::new(Some(PromptLoadingParams {
             fs: fs.clone(),
-            repo_path: stdout_is_a_pty
-                .then(|| std::env::current_dir().log_err())
-                .flatten(),
+            repo_path: Self::resolve_dev_repo_path(
+                stdout_is_a_pty,
+                cfg!(debug_assertions),
+                std::env::current_dir().log_err(),
+            ),
             cx,
         }))
         .log_err()
@@ -240,7 +326,10 @@ impl PromptBuilder {
         params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
+        let templates_dir = Self::resolve_template_overrides_dir(
+            params.repo_path.as_deref(),
+            cfg!(debug_assertions),
+        );
         params.cx.background_spawn(async move {
             let Some(parent_dir) = templates_dir.parent() else {
                 return;

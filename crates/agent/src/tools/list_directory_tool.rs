@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_kask_artifacts_path, resolve_project_path,
 };
 use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput};
 use agent_client_protocol::v2::schema as acp;
@@ -17,12 +17,12 @@ use util::markdown::MarkdownInlineCode;
 
 /// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// Supported paths outside the project are the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.
+    /// For directories in the project, start with a root directory name (never an absolute path). Outside the project, paths under the global skills directory or the Kask artifacts directory (`~/Documents/zk-data`) are also supported.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -43,7 +43,7 @@ pub struct ListDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// To list a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
+    /// To list a global agent skill directory, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
 }
@@ -75,6 +75,49 @@ impl ListDirectoryTool {
         for entry in entries {
             let display = entry.path.to_string_lossy().into_owned();
             if entry.is_dir {
+                folders.push(display);
+            } else {
+                files.push(display);
+            }
+        }
+        folders.sort();
+        files.sort();
+
+        let mut output = String::new();
+        if !folders.is_empty() {
+            writeln!(output, "# Folders:\n{}", folders.join("\n")).unwrap();
+        }
+        if !files.is_empty() {
+            writeln!(output, "\n# Files:\n{}", files.join("\n")).unwrap();
+        }
+        if output.is_empty() {
+            writeln!(output, "{input_path} is empty.").unwrap();
+        }
+        Ok(output)
+    }
+
+    // zed-kask: D28 — list contents of a directory under Kask visible artifacts directly via fs.
+    async fn list_kask_artifacts_directory(
+        canonical_path: &Path,
+        fs: &dyn fs::Fs,
+        input_path: &str,
+    ) -> Result<String, String> {
+        if let Ok(Some(metadata)) = fs.metadata(canonical_path).await
+            && !metadata.is_dir
+        {
+            return Err(format!("{input_path} is not a directory."));
+        }
+        let mut entries = fs
+            .read_dir(canonical_path)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut folders = Vec::new();
+        let mut files = Vec::new();
+        while let Some(entry) = futures::StreamExt::next(&mut entries).await {
+            let path = entry.map_err(|err| err.to_string())?;
+            let display = path.to_string_lossy().into_owned();
+            if fs.is_dir(&path).await {
                 folders.push(display);
             } else {
                 files.push(display);
@@ -227,9 +270,8 @@ impl AgentTool for ListDirectoryTool {
 
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
-            // Fast path: a global skill resource lives outside any worktree, so
-            // standard project-path resolution would refuse it. If the path
-            // expands and resolves under the global skills tree, list it directly.
+            // Fast path: global skill resources and Kask artifacts
+            // (`~/Documents/zk-data`) live outside any worktree.
             let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
             if let Some(skill_path) = global_skill_files
                 .resolve(Path::new(&input.path), cx)
@@ -242,6 +284,12 @@ impl AgentTool for ListDirectoryTool {
                     cx,
                 )
                 .await;
+            }
+            if let Some(kask_path) =
+                resolve_kask_artifacts_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                return Self::list_kask_artifacts_directory(&kask_path, fs.as_ref(), &input.path)
+                    .await;
             }
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 

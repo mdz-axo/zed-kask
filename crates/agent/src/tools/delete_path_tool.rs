@@ -1,6 +1,8 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    global_skill_settings_kind, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_mcp_owned_kask_artifacts_path,
+    detect_symlink_escape, global_skill_settings_kind, mcp_owned_artifacts_error,
+    resolve_writable_kask_artifacts_descendant_path, resolves_to_kask_artifacts_dir,
+    sensitive_settings_kind,
 };
 use crate::{
     AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -22,7 +24,7 @@ use util::markdown::MarkdownInlineCode;
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 ///
-/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
+/// Supported paths outside the project are descendants of the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`, outside producer-owned `{server}-mcp/` folders).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
     /// The path of the file or directory to delete.
@@ -108,10 +110,30 @@ impl AgentTool for DeletePathTool {
                         .to_string(),
                 );
             }
+            if resolves_to_kask_artifacts_dir(Path::new(&path), fs.as_ref()).await {
+                return Err(
+                    "Cannot delete the Kask artifacts directory itself. Delete a subdirectory or file beneath it instead."
+                        .to_string(),
+                );
+            }
+            if let Some(server) =
+                detect_mcp_owned_kask_artifacts_path(Path::new(&path), fs.as_ref()).await
+            {
+                return Err(mcp_owned_artifacts_error(
+                    "Cannot delete path: path is inside a producer-owned folder under the Kask artifacts directory.",
+                    &server,
+                ));
+            }
 
             let global_skill_path = global_skill_files
                 .resolve_descendant(Path::new(&path), cx)
                 .await;
+            // zed-kask: D28 — Kask visible artifacts directory descendant.
+            let kask_artifacts_path = if global_skill_path.is_none() {
+                resolve_writable_kask_artifacts_descendant_path(Path::new(&path), fs.as_ref()).await
+            } else {
+                None
+            };
 
             let symlink_escape_target = project.read_with(cx, |project, cx| {
                 detect_symlink_escape(project, &path, &canonical_roots, cx)
@@ -165,6 +187,39 @@ impl AgentTool for DeletePathTool {
 
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
+            }
+
+            if let Some(kask_path) = kask_artifacts_path {
+                // zed-kask: D28 — delete path under Kask visible artifacts dir.
+                let metadata = fs
+                    .metadata(&kask_path)
+                    .await
+                    .map_err(|e| format!("Deleting {path}: {e}"))?
+                    .ok_or_else(|| format!("Deleting {path}: path not found"))?;
+
+                futures::select! {
+                    result = async {
+                        if metadata.is_dir {
+                            fs.remove_dir(
+                                &kask_path,
+                                fs::RemoveOptions {
+                                    recursive: true,
+                                    ..fs::RemoveOptions::default()
+                                },
+                            )
+                            .await
+                        } else {
+                            fs.remove_file(&kask_path, fs::RemoveOptions::default()).await
+                        }
+                    }.fuse() => {
+                        result.map_err(|e| format!("Deleting {path}: {e}"))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Delete cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!("Deleted {path}"));
             }
 
             if global_skill_path.is_some() {
@@ -297,9 +352,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .to_string_lossy()
             .into_owned();
@@ -360,9 +413,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("references")
             .join("notes.md")
@@ -404,9 +455,7 @@ mod tests {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(DeletePathTool::new(project, action_log));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .to_string_lossy()
             .into_owned();
 
@@ -430,6 +479,84 @@ mod tests {
             ),
             "Deleting the skills root should fail before requesting authorization",
         );
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_kask_artifacts_allows_skill_file_and_protects_root_and_mcp(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let artifacts_root = crate::kask_artifacts_dir();
+        let scratch_file = artifacts_root
+            .join("skills")
+            .join("prompt-enhance")
+            .join("scratch.json");
+        let mcp_file = artifacts_root.join("media-mcp").join("clip.mp4");
+        fs.insert_tree(
+            scratch_file.parent().unwrap(),
+            json!({ "scratch.json": "{}" }),
+        )
+        .await;
+        fs.insert_tree(mcp_file.parent().unwrap(), json!({ "clip.mp4": "bytes" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+
+        // Reject deleting the Kask artifacts root itself.
+        let root_err = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(DeletePathToolInput {
+                        path: artifacts_root.to_string_lossy().into_owned(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("must reject deleting kask_artifacts_dir root");
+        assert!(root_err.contains("Cannot delete the Kask artifacts directory itself"));
+
+        // Reject deleting inside `{server}-mcp/`.
+        let mcp_err = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(DeletePathToolInput {
+                        path: mcp_file.to_string_lossy().into_owned(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("must reject deleting inside media-mcp");
+        assert!(mcp_err.contains("The `media` MCP server owns this path"));
+        assert!(fs.is_file(&mcp_file).await);
+
+        // Allow deleting a skill run scratch file under `kask_artifacts_dir`.
+        cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(DeletePathToolInput {
+                    path: scratch_file.to_string_lossy().into_owned(),
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .expect("must delete scratch file under kask_artifacts_dir/skills");
+        assert!(!fs.is_file(&scratch_file).await);
     }
 
     #[gpui::test]

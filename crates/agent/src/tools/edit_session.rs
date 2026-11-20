@@ -2,6 +2,10 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
+use super::tool_permissions::{
+    detect_mcp_owned_kask_artifacts_path, mcp_owned_artifacts_error,
+    resolve_creatable_kask_artifacts_descendant_path, resolves_to_kask_artifacts_dir,
+};
 use crate::{GlobalSkillFiles, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -293,11 +297,28 @@ pub(crate) async fn run_session(
             error,
             session: Some(session),
         } => {
+            // zed-kask: D78 — a failed edit call is all-or-nothing. Edits
+            // stream into the buffer as they resolve, so a failure at edit N
+            // used to leave edits 1..N-1 applied and saved while the tool
+            // reported an error. Restore the pre-call text before saving.
+            // The condition is the pipeline's own edits-applied record, not
+            // the buffer diff: a buffer changed externally mid-call must
+            // never be reverted, and an external change alone must not
+            // claim a rollback happened.
+            let tool_edits_applied = session.tool_edits_applied();
+            if tool_edits_applied {
+                session.restore_original_text(cx);
+            }
             session
                 .context
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+            let error = if tool_edits_applied {
+                format!("{error}\nNo edits were applied; the file is unchanged.")
+            } else {
+                error
+            };
             if diff.is_empty() {
                 event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             }
@@ -358,7 +379,7 @@ pub(crate) struct EditSession {
 /// disk. `project_path` is `Some` for files that live inside one of the
 /// project's worktrees (i.e. that the standard project-path machinery can
 /// resolve), and `None` for global skill files reached through the
-/// `~/.agents/skills` allowlist.
+/// the global skills directory allowlist.
 struct EditSessionTarget {
     abs_path: PathBuf,
     project_path: Option<ProjectPath>,
@@ -376,6 +397,11 @@ struct WritePipeline {
 struct EditPipeline {
     current_edit: Option<EditPipelineEntry>,
     file_changed_since_last_read: bool,
+    /// Whether this pipeline has applied any edit to the buffer. D78's
+    /// all-or-nothing rollback keys on this, not on the buffer diff: an
+    /// externally-changed buffer must never be reverted (and an external
+    /// change alone must not claim the rollback happened).
+    edits_applied: bool,
 }
 
 enum EditPipelineEntry {
@@ -400,6 +426,7 @@ impl Pipeline {
             EditSessionMode::Edit => Self::Edit(EditPipeline {
                 current_edit: None,
                 file_changed_since_last_read,
+                edits_applied: false,
             }),
         }
     }
@@ -614,7 +641,7 @@ impl EditPipeline {
                 }
 
                 let char_ops = streaming_diff.push_new(&reindented);
-                apply_char_operations(
+                self.edits_applied |= apply_char_operations(
                     &char_ops,
                     buffer,
                     original_snapshot,
@@ -660,7 +687,7 @@ impl EditPipeline {
                     streaming_diff.push_new(&final_text)
                 };
                 char_ops.extend(streaming_diff.finish());
-                apply_char_operations(
+                self.edits_applied |= apply_char_operations(
                     &char_ops,
                     buffer,
                     &original_snapshot,
@@ -689,7 +716,7 @@ impl EditSession {
         cx: &mut AsyncApp,
     ) -> Result<Self, String> {
         let target = if let Some(abs_path) =
-            resolve_global_skill_path_for_edit_session(mode, &path, &context, cx).await?
+            resolve_external_path_for_edit_session(mode, &path, &context, cx).await?
         {
             EditSessionTarget {
                 abs_path,
@@ -845,6 +872,30 @@ impl EditSession {
         Ok(())
     }
 
+    /// Replace the buffer with the text it held when the session opened.
+    fn restore_original_text(&self, cx: &mut AsyncApp) {
+        let original = self.old_text.clone();
+        agent_edit_buffer(
+            &self.buffer,
+            [(
+                0..self.buffer.read_with(cx, |b, _| b.len()),
+                original.as_str(),
+            )],
+            &self.context.action_log,
+            cx,
+        );
+    }
+
+    /// Whether this session's pipelines applied any edit to the buffer —
+    /// the D78 rollback key. Deliberately not derived from the buffer diff:
+    /// an external change mid-call is not a tool edit.
+    fn tool_edits_applied(&self) -> bool {
+        match &self.pipeline {
+            Pipeline::Write(write) => write.content_written,
+            Pipeline::Edit(edit) => edit.edits_applied,
+        }
+    }
+
     async fn compute_new_text_and_diff(&self, cx: &mut AsyncApp) -> (String, String) {
         let new_snapshot = self.buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let (new_text, unified_diff) = cx
@@ -928,7 +979,7 @@ fn apply_char_operations(
     edit_cursor: &mut usize,
     action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
-) {
+) -> bool {
     let mut edits: Vec<_> = Vec::new();
     for op in ops {
         match op {
@@ -947,8 +998,11 @@ fn apply_char_operations(
             }
         }
     }
-    if !edits.is_empty() {
+    if edits.is_empty() {
+        false
+    } else {
         agent_edit_buffer(buffer, edits, action_log, cx);
+        true
     }
 }
 
@@ -1159,7 +1213,7 @@ async fn resolve_dirty_buffer(
 
 /// Mirrors [`resolve_path`]'s pre-auth validation for the global-skill
 /// branch: returns `Ok(Some(abs_path))` if the path lives under
-/// `~/.agents/skills` and is in a valid state for the requested mode,
+/// the global skills directory and is in a valid state for the requested mode,
 /// `Ok(None)` if the path isn't a global skill at all (so the caller should
 /// fall through to project-path resolution), or `Err(message)` if the path
 /// is a global skill but can't be used (missing in Edit mode, parent
@@ -1169,14 +1223,37 @@ async fn resolve_dirty_buffer(
 /// without prompting the user — same contract as [`resolve_path`]. The
 /// idea is that "file doesn't exist" or "parent isn't a directory" are
 /// model mistakes, not decisions the user should be asked to approve.
-async fn resolve_global_skill_path_for_edit_session(
+async fn resolve_external_path_for_edit_session(
     mode: EditSessionMode,
     path: &PathBuf,
     context: &EditSessionContext,
     cx: &mut AsyncApp,
 ) -> Result<Option<PathBuf>, String> {
+    let fs = context
+        .project
+        .read_with(cx, |project, _cx| project.fs().clone());
+    if let Some(server) = detect_mcp_owned_kask_artifacts_path(path, fs.as_ref()).await {
+        let prefix = match mode {
+            EditSessionMode::Edit => {
+                "Can't edit file: path is inside a producer-owned folder under the Kask artifacts directory."
+            }
+            EditSessionMode::Write => {
+                "Can't create or overwrite file: path is inside a producer-owned folder under the Kask artifacts directory."
+            }
+        };
+        return Err(mcp_owned_artifacts_error(prefix, &server));
+    }
+    if resolves_to_kask_artifacts_dir(path, fs.as_ref()).await {
+        return Err(match mode {
+            EditSessionMode::Edit => "Can't edit file: path is a directory".to_string(),
+            EditSessionMode::Write => "Can't write to file: path is a directory".to_string(),
+        });
+    }
     let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&context.project, cx));
-    let Some(abs_path) = global_skill_files.resolve_creatable(path, cx).await else {
+    let Some(abs_path) = (match global_skill_files.resolve_creatable(path, cx).await {
+        Some(abs_path) => Some(abs_path),
+        None => resolve_creatable_kask_artifacts_descendant_path(path, fs.as_ref()).await,
+    }) else {
         return Ok(None);
     };
 
@@ -1265,10 +1342,41 @@ fn resolve_path(
 
             let parent_project_path = project.find_project_path(&parent_path, cx);
 
-            let parent_entry = parent_project_path
+            // Error accuracy (card 6c88e56d): distinguish a parent that is
+            // outside the file-tool sandbox (a refusal — the parent often
+            // exists on disk, e.g. under ~/Documents/zk-data) from a parent
+            // that simply does not exist in the project yet. Both collapsed
+            // into "doesn't exist" before, sending agents down the wrong
+            // recovery path.
+            let parent_entry = match parent_project_path
                 .as_ref()
                 .and_then(|path| project.entry_for_path(path, cx))
-                .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
+            {
+                Some(entry) => entry,
+                None => {
+                    if super::tool_permissions::resolve_creatable_project_path(
+                        project,
+                        &parent_path.to_string_lossy(),
+                        cx,
+                    )
+                    .is_none()
+                    {
+                        return Err(
+                            "Can't create file: the parent directory is outside the file-tool \
+                             sandbox (allowed roots: project worktrees, global skills, and Kask \
+                             artifacts outside `{server}-mcp/`); use `terminal` for scratch \
+                             paths such as `/tmp`"
+                                .to_string(),
+                        );
+                    }
+                    return Err(
+                        "Can't create file: parent directory doesn't exist in the project — \
+                         create it with create_directory first (or fall back to terminal \
+                         mkdir -p)"
+                            .to_string(),
+                    );
+                }
+            };
 
             if !parent_entry.is_dir() {
                 return Err("Can't create file: parent is not a directory".to_string());

@@ -6,7 +6,7 @@ use fs::Fs;
 use gpui::{App, Entity, Task};
 use project::{AgentId, Project};
 
-use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
+use crate::ThreadStore;
 
 #[derive(Clone)]
 pub struct NativeAgentServer {
@@ -35,22 +35,7 @@ impl AgentServer for NativeAgentServer {
         _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
-        log::debug!("NativeAgentServer::connect");
-        let fs = self.fs.clone();
-        let thread_store = self.thread_store.clone();
-        cx.spawn(async move |cx| {
-            log::debug!("Creating templates for native agent");
-            let templates = Templates::new();
-
-            log::debug!("Creating native agent entity");
-            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
-
-            // Create the connection wrapper
-            let connection = NativeAgentConnection(agent);
-            log::debug!("NativeAgentServer connection established successfully");
-
-            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
-        })
+        crate::NativeAgent::build_connection(self.thread_store.clone(), self.fs.clone(), cx)
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

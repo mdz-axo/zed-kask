@@ -1,4 +1,3 @@
-use super::deserialize_maybe_stringified;
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -188,11 +187,65 @@ fn read_global_skill_file(
     Ok(result_text.into())
 }
 
+fn read_spillover_slice(
+    input: &ReadFileToolInput,
+    event_stream: &ToolCallEventStream,
+) -> Result<LanguageModelToolResultContent, LanguageModelToolResultContent> {
+    let privacy = crate::kask_thread_state::provenance_to_spillover_privacy(
+        event_stream.calling_provenance(),
+    );
+    let slice = event_stream
+        .spillover_vault()
+        .read_slice(&input.path, input.start_line, input.end_line, privacy)
+        .map_err(tool_content_err)?;
+
+    let mut result_text = if slice.text.is_empty() {
+        format!(
+            "[Requested start_line={} exceeds total_lines={} for `{}` (tool `{}`).]",
+            slice.start_line, slice.total_lines, slice.uri, slice.tool_name
+        )
+    } else {
+        format_with_line_numbers(&slice.text, slice.start_line)
+    };
+
+    if slice.has_more_lines {
+        let next_start = slice.end_line.saturating_add(1);
+        let next_end = next_start
+            .saturating_add(hkask_condenser::spillover::DEFAULT_SLICE_LINES - 1)
+            .min(slice.total_lines as u32);
+        if !result_text.ends_with('\n') {
+            result_text.push('\n');
+        }
+        result_text.push_str(&format!(
+            "[Showing lines {}-{} of {} from `{}` ({} raw bytes, tool `{}`). Call `read_file` with `start_line: {}` and `end_line: {}` to inspect further.]",
+            slice.start_line,
+            slice.end_line,
+            slice.total_lines,
+            slice.uri,
+            slice.raw_bytes,
+            slice.tool_name,
+            next_start,
+            next_end,
+        ));
+    }
+
+    let markdown = MarkdownCodeBlock {
+        tag: &slice.uri,
+        text: &result_text,
+    }
+    .to_string();
+    event_stream.update_fields(|update| update.content(vec![markdown.into()]));
+
+    Ok(result_text.into())
+}
+
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_kask_artifacts_path, resolve_project_path,
 };
 use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline};
+// zed-kask: D28 — shared maybe-string line-number deserialization.
+use hkask_types::maybe_string::deserialize_optional_u32_from_maybe_string;
 
 /// Reads the content of the given file in the project.
 ///
@@ -204,13 +257,15 @@ use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, outline
 ///   Use `grep` or `terminal` to inspect the full content of very long lines.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
+/// - A skill's `SKILL.md` cannot be read: it is a discovery-only catalog entry, and this tool
+///   refuses it. Invoke the `skill` tool instead. Other files inside a skill directory are readable.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// Supported paths outside the project are the global skills directory and the Kask visible artifacts directory (`~/Documents/zk-data`).
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.
+    /// For files in the project, start with a root directory name (never an absolute path). Outside the project, paths under the global skills directory or the Kask artifacts directory (`~/Documents/zk-data`) are also supported.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -223,14 +278,20 @@ pub struct ReadFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To read a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub end_line: Option<u32>,
 }
 
@@ -269,26 +330,43 @@ impl AgentTool for ReadFileTool {
         input: Result<Self::Input, serde_json::Value>,
         cx: &mut App,
     ) -> SharedString {
-        if let Ok(input) = input
-            && let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx)
-            && let Some(path) = self
-                .project
-                .read(cx)
-                .short_full_path_for_project_path(&project_path, cx)
-        {
-            match (input.start_line, input.end_line) {
-                (Some(start), Some(end)) => {
-                    format!("Read file `{path}` (lines {}-{})", start, end,)
+        if let Ok(input) = input {
+            if hkask_condenser::spillover::is_spillover_uri(&input.path) {
+                let short_uri = if input.path.len() > 29 {
+                    format!("{}…", &input.path[..29])
+                } else {
+                    input.path.clone()
+                };
+                return match (input.start_line, input.end_line) {
+                    (Some(start), Some(end)) => {
+                        format!("Read spillover `{short_uri}` (lines {start}-{end})")
+                    }
+                    (Some(start), None) => {
+                        format!("Read spillover `{short_uri}` (from line {start})")
+                    }
+                    _ => format!("Read spillover `{short_uri}`"),
                 }
-                (Some(start), None) => {
-                    format!("Read file `{path}` (from line {})", start)
-                }
-                _ => format!("Read file `{path}`"),
+                .into();
             }
-            .into()
-        } else {
-            "Read file".into()
+            if let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx)
+                && let Some(path) = self
+                    .project
+                    .read(cx)
+                    .short_full_path_for_project_path(&project_path, cx)
+            {
+                return match (input.start_line, input.end_line) {
+                    (Some(start), Some(end)) => {
+                        format!("Read file `{path}` (lines {}-{})", start, end,)
+                    }
+                    (Some(start), None) => {
+                        format!("Read file `{path}` (from line {})", start)
+                    }
+                    _ => format!("Read file `{path}`"),
+                }
+                .into();
+            }
         }
+        "Read file".into()
     }
 
     fn run(
@@ -304,12 +382,20 @@ impl AgentTool for ReadFileTool {
                 .recv()
                 .await
                 .map_err(tool_content_err)?;
+            if crate::tool_input_validation::is_unsupported_binary_read_path(&input.path) {
+                return Err(tool_content_err(format!(
+                    "Cannot read binary/media file `{}` as text with `read_file`.",
+                    input.path
+                )));
+            }
+            if hkask_condenser::spillover::is_spillover_uri(&input.path) {
+                return read_spillover_slice(&input, &event_stream);
+            }
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
             // Fast path: if the model passes a path that resolves under the
-            // global skills directory, read it directly. Global skills live
-            // outside any worktree, so the standard project-path machinery
-            // would refuse them.
+            // global skills directory or the Kask visible artifacts directory
+            // (`~/Documents/zk-data`), read it directly.
             let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
             if let Some(skill_path) = global_skill_files
                 .resolve(Path::new(&input.path), cx)
@@ -321,6 +407,26 @@ impl AgentTool for ReadFileTool {
                     .map_err(tool_content_err)?;
                 return read_global_skill_file(
                     &skill_path,
+                    content,
+                    input.start_line,
+                    input.end_line,
+                    &input.path,
+                    &event_stream,
+                );
+            }
+            // zed-kask: D28 — Kask visible artifacts directory read path.
+            if let Some(kask_path) =
+                resolve_kask_artifacts_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                if fs.is_dir(&kask_path).await {
+                    return Err(tool_content_err(format!(
+                        "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
+                        input.path
+                    )));
+                }
+                let content = fs.load(&kask_path).await.map_err(tool_content_err)?;
+                return read_global_skill_file(
+                    &kask_path,
                     content,
                     input.start_line,
                     input.end_line,
@@ -1660,6 +1766,37 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_read_binary_audio_file_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "track.mp3": "ID3\u{0003}binary" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(ReadFileToolInput {
+                        path: "root/track.mp3".to_string(),
+                        start_line: None,
+                        end_line: None,
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        let err =
+            result.expect_err("read_file must reject binary/audio files before opening a buffer");
+        assert!(
+            error_text(err).contains("binary/media file"),
+            "error should explain why binary/media files cannot be read as text"
+        );
+    }
+
+    #[gpui::test]
     async fn test_read_file_symlink_escape_requests_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1905,6 +2042,93 @@ mod test {
         assert_eq!(
             text.as_ref(),
             "     1\t# Spec\n     2\t\n     3\tReference body."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_allows_global_skill_catalog_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
+        // the body from disk and injects it; `read_file` can also read it.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let catalog_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        fs.create_dir(catalog_path.parent().unwrap()).await.unwrap();
+        fs.insert_file(
+            &catalog_path,
+            b"---\nname: my-skill\n---\nSENTINEL_SKILL_BODY_TEXT".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: catalog_path.to_string_lossy().into_owned(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let content = result.expect("reading a SKILL.md must succeed (body injection restored)");
+        let text = format!("{content:?}");
+        assert!(
+            text.contains("SENTINEL_SKILL_BODY_TEXT"),
+            "read_file must return the SKILL.md body content: {text}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_allows_kask_artifacts_including_mcp_outputs(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let mcp_output = crate::kask_artifacts_dir()
+            .join("corpus-mcp")
+            .join("cache")
+            .join("summary.md");
+        fs.create_dir(mcp_output.parent().unwrap()).await.unwrap();
+        fs.insert_file(&mcp_output, b"ARTIFACTS_READ_OK\n".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, false));
+
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(ReadFileToolInput {
+                        path: mcp_output.to_string_lossy().into_owned(),
+                        start_line: None,
+                        end_line: None,
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .expect("read_file must allow reading files under kask_artifacts_dir");
+
+        let text = format!("{result:?}");
+        assert!(
+            text.contains("ARTIFACTS_READ_OK"),
+            "expected artifact content, got: {text}"
         );
     }
 

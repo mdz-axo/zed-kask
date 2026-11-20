@@ -1,6 +1,8 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    global_skill_settings_kind, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_mcp_owned_kask_artifacts_path,
+    detect_symlink_escape, expand_and_normalize_absolute_path, global_skill_settings_kind,
+    mcp_owned_artifacts_error, resolve_creatable_kask_artifacts_path,
+    resolve_creatable_project_path, sensitive_settings_kind,
 };
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
@@ -26,17 +28,17 @@ use std::path::{Path, PathBuf};
 ///
 #[cfg_attr(
     any(target_os = "linux", target_os = "macos"),
-    doc = "This tool can also create a directory **outside** the project. When agent terminal \
-    commands are sandboxed, doing so grants those commands write access to exactly that new \
-    directory — so, rather than requesting write access to a broad existing parent (e.g. your \
-    home directory) just to create something inside it, create the specific directory here \
-    first and then write into it. The only other supported path outside the project is \
-    `~/.agents/skills` or a descendant, for global agent skills."
+    doc = "This tool can also create a directory **outside** the project. Paths under the global \
+    skills directory or the Kask visible artifacts directory (`~/Documents/zk-data`, outside \
+    producer-owned `{server}-mcp/` folders) are created directly without a `reason`. For any \
+    other path outside the project, when agent terminal commands are sandboxed, creating it \
+    grants those commands write access to exactly that new directory."
 )]
 #[cfg_attr(
     not(any(target_os = "linux", target_os = "macos")),
-    doc = "The only supported path outside the project is `~/.agents/skills` or a descendant, \
-    for global agent skills."
+    doc = "Outside the project, supported paths are the global skills directory and the Kask \
+    visible artifacts directory (`~/Documents/zk-data`, outside producer-owned `{server}-mcp/` \
+    folders)."
 )]
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
@@ -52,7 +54,7 @@ pub struct CreateDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// To create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
+    /// To create a global agent skill directory, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
 
@@ -60,8 +62,9 @@ pub struct CreateDirectoryToolInput {
         any(target_os = "linux", target_os = "macos"),
         doc = "Justification for creating a directory **outside** the project, shown to the \
         user (attributed to you) in the approval prompt that grants sandboxed terminal \
-        commands write access to it. Required only for out-of-project paths; ignored for \
-        paths inside the project or the global skills dir."
+        commands write access to it. Required only for sandbox-granted out-of-project paths; \
+        ignored for paths inside the project, the global skills dir, the Kask artifacts dir, \
+        or when unsandboxed access is active."
     )]
     #[cfg_attr(
         not(any(target_os = "linux", target_os = "macos")),
@@ -115,24 +118,38 @@ impl AgentTool for CreateDirectoryTool {
 
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
-            // Resolve where this directory lives. The global agent-skills dir is a
-            // special case allowed outside the project; anything else outside the
-            // project is handled as a narrow sandbox write grant below.
+            // zed-kask: D28 — Kask visible artifacts directory guard.
+            if let Some(server) =
+                detect_mcp_owned_kask_artifacts_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                return Err(mcp_owned_artifacts_error(
+                    "Cannot create directory: path is inside a producer-owned folder under the Kask artifacts directory.",
+                    &server,
+                ));
+            }
+
+            // Resolve where this directory lives. The global agent-skills dir and
+            // the Kask visible artifacts dir (`~/Documents/zk-data`, outside
+            // `{server}-mcp/`) are allowed outside the project; anything else
+            // outside the project is handled as a narrow sandbox write grant below.
             let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
             let global_skill_directory = global_skill_files
                 .resolve_creatable(Path::new(&input.path), cx)
                 .await;
+            let kask_artifacts_directory = if global_skill_directory.is_none() {
+                resolve_creatable_kask_artifacts_path(Path::new(&input.path), fs.as_ref()).await
+            } else {
+                None
+            };
             let in_project = project.read_with(cx, |project, cx| {
-                project.find_project_path(&input.path, cx).is_some()
+                // Creatable resolution: `find_project_path` resolves relative
+                // paths through existing snapshot entries only, which
+                // misclassified not-yet-existing in-project paths as outside
+                // the project (observed live 2026-10-24; card 6c88e56d).
+                resolve_creatable_project_path(project, &input.path, cx).is_some()
             });
 
-            // A path outside the project (and not the global skills dir) can only
-            // be created as a narrow sandbox write grant: create the directory and
-            // grant sandboxed terminal commands write access to exactly it. The
-            // sandbox approval prompt — which shows the real, canonicalized target
-            // — fully replaces the normal permission and symlink-escape prompts
-            // here.
-            if global_skill_directory.is_none() && !in_project {
+            if global_skill_directory.is_none() && kask_artifacts_directory.is_none() && !in_project {
                 return create_out_of_project_directory(&project, &input, &event_stream, cx).await;
             }
 
@@ -202,6 +219,20 @@ impl AgentTool for CreateDirectoryTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            if let Some(kask_directory) = kask_artifacts_directory {
+                // zed-kask: D28 — create directory under Kask visible artifacts dir.
+                futures::select! {
+                    result = fs.create_dir(&kask_directory).fuse() => {
+                        result.map_err(|e| format!("Creating directory {destination_path}: {e}"))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Create directory cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!("Created directory {destination_path}"));
+            }
+
             if global_skill_directory.is_some() {
                 let create_directory = GlobalSkillFileOperation::CreateDirectory {
                     path: PathBuf::from(&input.path),
@@ -219,7 +250,7 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             let create_entry = project.update(cx, |project, cx| {
-                match project.find_project_path(&input.path, cx) {
+                match resolve_creatable_project_path(project, &input.path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
                     None => Err("Path to create was outside the project".to_string()),
                 }
@@ -253,16 +284,63 @@ async fn create_out_of_project_directory(
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    // Narrowing a grant to a brand-new directory only makes sense when the
-    // project's terminal commands are sandboxed, and only on platforms that can
-    // grant a not-yet-existing directory. Otherwise keep the historical
-    // "outside the project" rejection.
-    let sandboxing = project.read_with(cx, |project, cx| {
-        crate::sandboxing::sandboxing_enabled_for_project(project, cx)
+    let sandboxing_available = project.read_with(cx, |project, cx| {
+        crate::sandboxing::sandboxing_available_for_project(project, cx)
     });
     let platform_supported = cfg!(any(target_os = "linux", target_os = "macos"));
-    if !sandboxing || !platform_supported {
+    if !sandboxing_available || !platform_supported {
         return Err("Path to create was outside the project".to_string());
+    }
+
+    // Align with `fetch_tool`: when unsandboxed access is granted (either via
+    // persistent `sandbox_permissions.allow_unsandboxed` or a thread-scoped
+    // unsandboxed grant), terminal commands already run without isolation, so
+    // `sandboxing_enabled_for_project` is false while `build_request_tools`
+    // still exposes out-of-project `create_directory`. Honor tool permissions
+    // and sensitive-settings protection, then create directly via `fs`.
+    let unsandboxed = cx.update(|cx| event_stream.unsandboxed_access_granted(cx));
+    if unsandboxed {
+        let decision = cx.update(|cx| {
+            decide_permission_for_path(
+                CreateDirectoryTool::NAME,
+                &input.path,
+                AgentSettings::get_global(cx),
+            )
+        });
+        if let ToolPermissionDecision::Deny(reason) = decision {
+            return Err(reason);
+        }
+
+        let absolute = resolve_absolute_path(project, &input.path, cx)
+            .ok_or_else(|| format!("Couldn't resolve `{}` to an absolute path.", input.path))?;
+        let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+        let canonical_roots = canonicalize_worktree_roots(project, &fs, cx).await;
+        let sensitive_kind =
+            sensitive_settings_kind(&absolute, &canonical_roots, fs.as_ref()).await;
+        let needs_confirm = matches!(decision, ToolPermissionDecision::Confirm)
+            || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
+        if needs_confirm {
+            let authorize = cx.update(|cx| {
+                let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
+                let context = crate::ToolPermissionContext::new(
+                    CreateDirectoryTool::NAME,
+                    vec![input.path.clone()],
+                );
+                authorize_with_sensitive_settings(sensitive_kind, context, &title, event_stream, cx)
+            });
+            authorize.await.map_err(|e| e.to_string())?;
+        }
+
+        let display = absolute.display().to_string();
+        futures::select! {
+            result = fs.create_dir(&absolute).fuse() => {
+                result.map_err(|error| format!("Creating directory {display}: {error}"))?;
+            }
+            _ = event_stream.cancelled_by_user().fuse() => {
+                return Err("Create directory cancelled by user".to_string());
+            }
+        }
+        return Ok(format!("Created directory {display}"));
     }
 
     let Some(reason) = input
@@ -325,18 +403,16 @@ fn resolve_absolute_path(
     cx: &mut AsyncApp,
 ) -> Option<PathBuf> {
     let path = Path::new(raw);
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let base = project.read_with(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-        })?;
-        base.join(path)
-    };
-    util::paths::normalize_lexically(&absolute).ok()
+    if let Some(expanded) = expand_and_normalize_absolute_path(path) {
+        return Some(expanded);
+    }
+    let base = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    })?;
+    util::paths::normalize_lexically(&base.join(path)).ok()
 }
 
 #[cfg(test)]
@@ -374,13 +450,8 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(CreateDirectoryTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .to_string_lossy()
-            .into_owned();
         let created_path = agent_skills::global_skills_dir().join("my-skill");
+        let input_path = created_path.to_string_lossy().into_owned();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -466,6 +537,153 @@ mod tests {
                 Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Non-skill global path should not emit an agent-skills authorization prompt",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_allows_kask_artifacts_dir_and_refuses_mcp_subdir(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let run_dir = crate::kask_artifacts_dir()
+            .join("skills")
+            .join("prompt-enhance")
+            .join("2026-11-18-test")
+            .join("revisions");
+
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: run_dir.to_string_lossy().into_owned(),
+                        reason: None,
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "create_directory must allow skill run directories under kask_artifacts_dir without reason: {result:?}"
+        );
+        assert!(fs.is_dir(&run_dir).await);
+
+        let mcp_dir = crate::kask_artifacts_dir()
+            .join("corpus-mcp")
+            .join("cache")
+            .join("sub");
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let mcp_err = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: mcp_dir.to_string_lossy().into_owned(),
+                        reason: Some("attempting to create under corpus-mcp".into()),
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("create_directory must refuse producer-owned {server}-mcp/ folders");
+        assert!(
+            mcp_err.contains("The `corpus` MCP server owns this path"),
+            "unexpected error: {mcp_err}"
+        );
+        assert!(!fs.is_dir(&mcp_dir).await);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[gpui::test]
+    async fn test_create_directory_outside_project_succeeds_when_allow_unsandboxed_is_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.sandbox_permissions.allow_unsandboxed = true;
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let scratch_dir = PathBuf::from(path!("/tmp/kask-unsandboxed-scratch"));
+
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: scratch_dir.to_string_lossy().into_owned(),
+                        reason: Some("scratch workspace".into()),
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "allow_unsandboxed: true must not reject out-of-project create_directory: {result:?}"
+        );
+        assert!(fs.is_dir(&scratch_dir).await);
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_creates_nested_in_project_paths_that_do_not_exist_yet(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+
+        // A relative, not-yet-existing in-project path — creation is this
+        // tool's purpose, but `find_project_path` resolves relative paths
+        // through existing snapshot entries only, which misclassified such
+        // paths as "outside the project" (observed live 2026-10-24; card
+        // 6c88e56d). The terminal `mkdir -p` fallback was the workaround.
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: "agents/skills/new-skill".to_string(),
+                        reason: None,
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "nested in-project creation must succeed: {result:?}"
+        );
+        assert!(
+            fs.is_dir(std::path::Path::new(
+                "/root/project/agents/skills/new-skill"
+            ))
+            .await
         );
     }
 
