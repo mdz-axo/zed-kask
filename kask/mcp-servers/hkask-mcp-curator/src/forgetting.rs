@@ -1,0 +1,1181 @@
+//! Distillation-gated episodic forgetting — the automatic leg of the
+//! goldfish principle (operator ruling 2026-09-04: therapy-driven
+//! per-session passes plus automatic forgetting; budgets are deprecated,
+//! so the policy is time-based and distillation-gated, never count-based).
+//!
+//! Named "forgetting" per the operator's 2026-09-04 naming ruling — one
+//! forgets memories; "retirement" was a workplace metaphor that didn't
+//! survive review. Distinct from "decay" (memory-system-specification.md
+//! §7): decay is the confidence curve R(t) = exp(-t/S); forgetting is
+//! deletion — the forgotten rows are removed from the database (operator
+//! ruling 2026-09-04: there is no "expired" state; memories age and are
+//! forgotten or deleted). Two mechanisms, two names.
+//!
+//! A thread's shared-copy turns are deleted — and their embeddings
+//! deleted — once the thread's newest distillation watermark has aged
+//! past the forgetting threshold, and only the turns that watermark
+//! COVERS: a turn is covered exactly when its `observed_at` is at or
+//! before the watermark's `through` position (the same boundary the
+//! distillation pass uses to select pending turns). Turns added after
+//! the last distillation pass are not covered — their lessons are not
+//! proven extracted — so they survive with their embeddings until a
+//! later pass distills them and the advanced watermark ages past the
+//! threshold. The watermark proves the lessons were extracted; nothing
+//! without that proof is deleted. Because deletion is scoped to rows the
+//! pass READ as covered (never a blind prefix delete), a turn racing in
+//! during the pass is uncovered by construction and survives.
+//!
+//! Since the 2026-09-04 single-copy ruling there is no separate
+//! curator-perspective original to preserve: a turn's content lives only
+//! in its shared-copy chunks, so forgetting the shared copies forgets
+//! the covered turns (the lessons stay).
+//!
+//! A thread whose every turn is covered keeps the fast whole-entity path
+//! (all its content is proven distilled, including legacy embeddings no
+//! passage text can attribute). When a covered chunk's passage text also
+//! appears in an uncovered chunk, the ambiguous embedding rows are KEPT —
+//! a duplicate surviving recall is a bounded leak; deleting it would
+//! erase an uncovered chunk's semantic recall, the exact loss this pass
+//! exists to prevent.
+//!
+//! The pass also sweeps vector rows orphaned from their metadata (KNN's
+//! inner join already ignores them; the sweep reclaims the space).
+//!
+//! Pinned by the tests below: only qualifying threads are forgotten,
+//! shared copies only, coverage-scoped deletion, idempotence, and the
+//! orphan sweep.
+
+use crate::distillation::{WATERMARK_PREFIX, parse_watermark_through};
+use crate::thread_turns::SHARED_TURN_PREFIX;
+use hkask_memory::{MemoryStore, MemoryStoreError};
+use hkask_storage::HMem;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+/// Default forgetting age (days) for a distilled thread's shared-copy
+/// turns (read from `HKASK_MEMORY_FORGETTING_DAYS`, injected from
+/// `kask.memory.forgetting_days`). 0 disables the pass.
+pub(crate) const DEFAULT_FORGETTING_DAYS: u64 = 7;
+
+/// Forgetting age threshold.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ForgettingConfig {
+    pub days: u64,
+}
+
+impl Default for ForgettingConfig {
+    fn default() -> Self {
+        Self {
+            days: DEFAULT_FORGETTING_DAYS,
+        }
+    }
+}
+
+impl ForgettingConfig {
+    /// Read from env. Malformed values warn naming the value and fall
+    /// back to the default — never a silent fallback.
+    pub(crate) fn from_env() -> Self {
+        Self {
+            days: match std::env::var("HKASK_MEMORY_FORGETTING_DAYS") {
+                Ok(raw) => parse_days_value(&raw),
+                Err(_) => DEFAULT_FORGETTING_DAYS,
+            },
+        }
+    }
+}
+
+/// Pure parse: malformed values warn naming the value and fall back to
+/// the default — never a silent fallback.
+fn parse_days_value(raw: &str) -> u64 {
+    match raw.trim().parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(
+                target: "hkask.mcp.curator.forgetting",
+                env = "HKASK_MEMORY_FORGETTING_DAYS",
+                value = %raw,
+                "Malformed forgetting setting — using default"
+            );
+            DEFAULT_FORGETTING_DAYS
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ForgettingOutcome {
+    pub threads_examined: usize,
+    pub threads_forgotten: usize,
+    pub turns_deleted: usize,
+    pub embeddings_deleted: usize,
+    pub orphans_swept: usize,
+}
+
+/// One forgetting pass: delete the shared-copy turns (and their embeddings)
+/// that the newest distillation watermark of each thread COVERS, for every
+/// thread whose watermark has aged past `min_age_days`, then sweep orphaned
+/// vector rows.
+pub(crate) fn forget_distilled_threads(
+    memory: &MemoryStore,
+    now: chrono::DateTime<chrono::Utc>,
+    min_age_days: u64,
+) -> Result<ForgettingOutcome, MemoryStoreError> {
+    let cutoff = now - chrono::Duration::days(min_age_days as i64);
+    let mut outcome = ForgettingOutcome::default();
+
+    // Latest-only is an invariant, not a read-time reconciliation policy.
+    // Duplicate marker rows are surfaced and skipped until therapy removes
+    // them; the forgetting pass never chooses one version on the user's behalf.
+    let mut watermarks_by_thread: HashMap<String, Vec<HMem>> = HashMap::new();
+    for watermark in memory.h_mems_by_entity_prefix(WATERMARK_PREFIX)? {
+        if watermark.attribute != "distilled_through" {
+            continue;
+        }
+        let Some(thread_id) = watermark.entity.strip_prefix(WATERMARK_PREFIX) else {
+            continue;
+        };
+        watermarks_by_thread
+            .entry(thread_id.to_string())
+            .or_default()
+            .push(watermark);
+    }
+    outcome.threads_examined = watermarks_by_thread.len();
+
+    for (thread_id, mut watermarks) in watermarks_by_thread {
+        if watermarks.len() != 1 {
+            tracing::warn!(
+                target: "hkask.mcp.curator.forgetting",
+                thread_id = %thread_id,
+                count = watermarks.len(),
+                "Multiple distillation watermarks violate the latest-only invariant — no turns deleted"
+            );
+            continue;
+        }
+        let Some(newest) = watermarks.pop() else {
+            continue;
+        };
+        if newest.observed_at >= cutoff {
+            continue; // still inside the grace window
+        }
+        // The coverage boundary: turns at or before `through` are proven
+        // distilled. Without a parseable `through` there is no proof — the
+        // thread is skipped rather than guessed at.
+        let Some(through) = parse_watermark_through(&newest) else {
+            tracing::warn!(
+                target: "hkask.mcp.curator.forgetting",
+                thread_id = %thread_id,
+                "Watermark carries no parseable `through` position — no coverage proof, thread skipped"
+            );
+            continue;
+        };
+        let shared_entity = format!("{SHARED_TURN_PREFIX}{thread_id}");
+        // Exact read, by the entity index: this thread's turns only. The
+        // prefix read scanned the whole table once per aged watermark and
+        // returned the turns of any thread whose id began with this one's.
+        let turns = memory.h_mems_by_entity(&shared_entity)?;
+        let (covered, uncovered): (Vec<&HMem>, Vec<&HMem>) =
+            turns.iter().partition(|turn| turn.observed_at <= through);
+
+        let (deleted_rows, deleted_embeddings) = if uncovered.is_empty() {
+            // Everything the thread holds is proven distilled (including
+            // legacy embeddings no passage text can attribute) — the whole
+            // entity can go. Embeddings are deleted first so the count is
+            // captured here; the entity delete is self-cleaning (it sweeps
+            // the emptied entity's references itself) and would find nothing
+            // left to remove. Exact, like the read above: a sibling thread
+            // whose id begins with this one's keeps its turns.
+            let deleted_embeddings = memory.delete_embeddings_by_entity(&shared_entity)?;
+            let deleted_rows = memory.delete_h_mems_by_entity(&shared_entity)?;
+            (deleted_rows, deleted_embeddings)
+        } else {
+            // Delete only the rows READ as covered — per id, never a blind
+            // prefix delete. A turn racing in (observed_at > through) is
+            // uncovered by construction and untouched.
+            // Embeddings carry no timestamp; their link to a chunk is the
+            // shared passage text (ingest writes both from one string).
+            // A passage that also appears in an uncovered chunk cannot be
+            // attributed — keep those rows (conservative: a bounded leak
+            // beats erasing an uncovered chunk's semantic recall).
+            // The counted embedding delete runs BEFORE the h_mem deletions:
+            // delete_h_mem self-cleans the deleted row's passage embedding
+            // (f9e29adc65), so deleting the h_mems first would leave this
+            // counted call nothing to remove — the same embeddings-first
+            // ordering the whole-entity branch uses to capture its count.
+            let uncovered_passages: HashSet<&str> = uncovered
+                .iter()
+                .filter_map(|turn| turn.value.as_str())
+                .collect();
+            let covered_passages: Vec<String> = covered
+                .iter()
+                .filter_map(|turn| turn.value.as_str())
+                .filter(|passage| !uncovered_passages.contains(*passage))
+                .map(str::to_string)
+                .collect();
+            let deleted_embeddings =
+                memory.delete_embeddings_by_entity_passages(&shared_entity, &covered_passages)?;
+            let mut deleted_rows = 0;
+            for turn in &covered {
+                memory.delete_h_mem(&turn.id)?;
+                deleted_rows += 1;
+            }
+            (deleted_rows, deleted_embeddings)
+        };
+        // Count the thread only when work was done — a qualifying thread
+        // whose covered turns are already deleted (a prior pass) is a no-op,
+        // not a second forgetting. Pinned by forgetting_is_idempotent.
+        if deleted_rows > 0 || deleted_embeddings > 0 {
+            outcome.turns_deleted += deleted_rows;
+            outcome.embeddings_deleted += deleted_embeddings;
+            outcome.threads_forgotten += 1;
+        }
+    }
+
+    outcome.orphans_swept = memory.delete_orphaned_embeddings()?;
+    Ok(outcome)
+}
+
+/// One forgetting pass over the curator's own DB. Store failures warn
+/// and skip — the timer must survive every outcome.
+pub(crate) fn run_forgetting_pass(
+    db: &crate::CuratorDb,
+    now: chrono::DateTime<chrono::Utc>,
+    forgetting_days: u64,
+) -> ForgettingOutcome {
+    let stores = db.get();
+    let Some(memory) = stores.memory.as_ref() else {
+        tracing::warn!(
+            target: "hkask.mcp.curator.forgetting",
+            "Curator memory store unavailable — forgetting pass skipped (store self-heals on next open)"
+        );
+        return ForgettingOutcome::default();
+    };
+    match forget_distilled_threads(memory, now, forgetting_days) {
+        Ok(outcome) => {
+            hkask_types::regulation::RegulationSpan::Curation.emit("memory_forgotten");
+            outcome
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.curator.forgetting",
+                %error,
+                "Memory forgetting pass failed — skipped this cycle"
+            );
+            ForgettingOutcome::default()
+        }
+    }
+}
+
+/// Reason a code citation (`schema:citation` / `cito:Citation`) inside an
+/// `h_mem` row is stale relative to the live workspace tree (Study 3 / C5,
+/// reference model: `codex-rs/memories/write/src/lib.rs` `phase2_workspace_diff`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CitationStalenessReason {
+    /// Cited repository-relative file path does not exist in the live tree.
+    MissingFile { path: String },
+    /// Cited `file:line` exceeds the live file's line count.
+    LineOutOfBounds {
+        path: String,
+        cited_line: usize,
+        actual_lines: usize,
+    },
+    /// Cited `D<N>` divergence seam is absent from `DIVERGENCE.md`.
+    MissingDivergenceSeam { seam_id: String },
+}
+
+/// One `h_mem` row flagged as a `therapy` candidate by the deterministic
+/// code-citation staleness sweep. Never auto-deleted (branch-switch safe).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleCitationCandidate {
+    pub h_mem_id: String,
+    pub entity: String,
+    pub attribute: String,
+    pub reasons: Vec<CitationStalenessReason>,
+}
+
+/// Aggregate result of a read-only code-citation staleness sweep.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct CitationStalenessOutcome {
+    pub rows_scanned: usize,
+    pub citations_checked: usize,
+    pub candidates: Vec<StaleCitationCandidate>,
+    /// Always `0` by construction: the sweep flags therapy candidates without
+    /// deleting rows across transient branch switches.
+    pub rows_deleted: usize,
+    /// Knowledge-layer rows skipped because they carry the private-inference
+    /// mark and the current call context is public.
+    pub excluded_private: usize,
+}
+
+const REPO_PATH_PREFIXES: &[&str] = &["crates/", "kask/", ".agents/", "docs/", "assets/"];
+
+const REPO_ROOT_FILES: &[&str] = &["DIVERGENCE.md", ".rules", "Cargo.toml"];
+
+/// Deterministically extract repository-relative `file` / `file:line` citations
+/// and `D<N>` divergence-seam IDs from free text or JSON-serialized `h_mem` values.
+pub fn extract_code_citations(text: &str) -> (Vec<(String, Option<usize>)>, Vec<String>) {
+    let mut files: Vec<(String, Option<usize>)> = Vec::new();
+    let mut seams: Vec<String> = Vec::new();
+    let mut seen_files: HashSet<(String, Option<usize>)> = HashSet::new();
+    let mut seen_seams: HashSet<String> = HashSet::new();
+
+    for raw_token in text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '`' | '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+            )
+    }) {
+        let token = raw_token.trim_matches(|c: char| matches!(c, '.' | '!' | '?' | '*'));
+        if token.is_empty() {
+            continue;
+        }
+
+        // Check `D<digits>` seam token (e.g. `D28`, `D107`).
+        if let Some(digits) = token.strip_prefix('D')
+            && !digits.is_empty()
+            && digits.len() <= 4
+            && digits.chars().all(|c| c.is_ascii_digit())
+            && seen_seams.insert(token.to_string())
+        {
+            seams.push(token.to_string());
+            continue;
+        }
+
+        let trimmed = token.strip_prefix("zed-kask/").unwrap_or(token);
+        let is_repo_path = REPO_PATH_PREFIXES.iter().any(|p| trimmed.starts_with(p))
+            || REPO_ROOT_FILES.iter().any(|f| {
+                trimmed == *f
+                    || trimmed
+                        .strip_prefix(f)
+                        .is_some_and(|rest| rest.starts_with(':'))
+            });
+        if !is_repo_path {
+            continue;
+        }
+
+        let (path_part, line_part) = match trimmed.split_once(':') {
+            Some((path, rest)) => {
+                // Handle `:42` or `:42-55` -> take start line 42.
+                let start_digits = rest.split('-').next().unwrap_or("");
+                let parsed = start_digits.parse::<usize>().ok().filter(|&n| n > 0);
+                (path, parsed)
+            }
+            None => (trimmed, None),
+        };
+
+        // Ignore directory-only prefixes (ending with `/`), glob patterns, or
+        // parent-directory traversal segments that could escape `repo_root`.
+        if path_part.is_empty()
+            || path_part.ends_with('/')
+            || path_part.contains('*')
+            || path_part.contains('{')
+            || path_part.split('/').any(|seg| seg == "..")
+        {
+            continue;
+        }
+
+        let key = (path_part.to_string(), line_part);
+        if seen_files.insert(key.clone()) {
+            files.push(key);
+        }
+    }
+
+    (files, seams)
+}
+
+/// Parse live `| D<N> |` seam IDs from `{repo_root}/DIVERGENCE.md`.
+/// Returns `None` if `DIVERGENCE.md` is not present at `repo_root`.
+pub fn parse_live_divergence_seams(repo_root: &Path) -> Option<HashSet<String>> {
+    let content = std::fs::read_to_string(repo_root.join("DIVERGENCE.md")).ok()?;
+    let mut seams = HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("| D") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() {
+                seams.insert(format!("D{digits}"));
+            }
+        }
+    }
+    Some(seams)
+}
+
+/// Collect decoded string leaves from a JSON `Value` so escaped newlines (`\n`)
+/// and quotes (`\"`) inside `h_mem.value` act as real delimiters rather than
+/// trailing garbage glued onto path tokens.
+fn collect_json_strings(value: &serde_json::Value, out: &mut String) {
+    match value {
+        serde_json::Value::String(s) => {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(s);
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_strings(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values() {
+                collect_json_strings(v, out);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+/// Deterministic read-only sweep of knowledge-layer `h_mem` rows against the
+/// live workspace tree and `DIVERGENCE.md`.
+///
+/// Flags rows whose cited files are missing, whose `file:line` exceeds the
+/// live file's line count, or whose `D<N>` seam is absent from `DIVERGENCE.md`
+/// as `therapy` candidates. Never deletes any row (`rows_deleted == 0`),
+/// preventing accidental memory loss across branch switches.
+pub fn sweep_stale_code_citations(
+    memory: &MemoryStore,
+    repo_root: &Path,
+) -> Result<CitationStalenessOutcome, MemoryStoreError> {
+    #[derive(Clone, Copy)]
+    enum PathState {
+        Missing,
+        Dir,
+        File(usize),
+    }
+
+    let live_seams = parse_live_divergence_seams(repo_root);
+    let mut path_state_cache: HashMap<String, PathState> = HashMap::new();
+    let mut outcome = CitationStalenessOutcome::default();
+
+    for row in memory.h_mems_by_entity_prefix("")? {
+        if row.entity.starts_with(SHARED_TURN_PREFIX) || row.entity.starts_with(WATERMARK_PREFIX) {
+            continue;
+        }
+        if !crate::call_admits(&row) {
+            outcome.excluded_private += 1;
+            continue;
+        }
+        outcome.rows_scanned += 1;
+
+        let mut text = String::new();
+        collect_json_strings(&row.value, &mut text);
+        let (file_cites, seam_cites) = extract_code_citations(&text);
+        let mut reasons = Vec::new();
+
+        for (path, cited_line) in file_cites {
+            outcome.citations_checked += 1;
+            let state = *path_state_cache.entry(path.clone()).or_insert_with(|| {
+                let full = repo_root.join(&path);
+                if full.is_dir() {
+                    return PathState::Dir;
+                }
+                if !full.is_file() {
+                    return PathState::Missing;
+                }
+                match std::fs::read_to_string(&full) {
+                    Ok(content) => PathState::File(content.lines().count()),
+                    Err(_) => PathState::Missing,
+                }
+            });
+            match (state, cited_line) {
+                (PathState::Missing, _) | (PathState::Dir, Some(_)) => {
+                    reasons.push(CitationStalenessReason::MissingFile { path });
+                }
+                (PathState::Dir, None) => {}
+                (PathState::File(actual), Some(line)) if line > actual => {
+                    reasons.push(CitationStalenessReason::LineOutOfBounds {
+                        path,
+                        cited_line: line,
+                        actual_lines: actual,
+                    });
+                }
+                (PathState::File(_), _) => {}
+            }
+        }
+
+        if let Some(live_seams) = live_seams.as_ref() {
+            for seam_id in seam_cites {
+                outcome.citations_checked += 1;
+                if !live_seams.contains(&seam_id) {
+                    reasons.push(CitationStalenessReason::MissingDivergenceSeam { seam_id });
+                }
+            }
+        }
+
+        if !reasons.is_empty() {
+            outcome.candidates.push(StaleCitationCandidate {
+                h_mem_id: row.id.to_string(),
+                entity: row.entity,
+                attribute: row.attribute,
+                reasons,
+            });
+        }
+    }
+
+    Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_storage::{EmbeddingStore, HMem, HMemStore};
+    use hkask_types::WebID;
+    use std::sync::Arc;
+
+    fn store_with_driver() -> (
+        MemoryStore,
+        Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    ) {
+        let driver = SqliteDriver::in_memory_driver();
+        let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store");
+        let embedding_store =
+            EmbeddingStore::from_driver(driver.clone(), hkask_storage::embedding_dim())
+                .expect("embedding store");
+        (MemoryStore::new(h_mem_store, embedding_store), driver)
+    }
+
+    fn seed_turn(
+        memory: &MemoryStore,
+        entity: &str,
+        value: &str,
+        observed: chrono::DateTime<chrono::Utc>,
+    ) {
+        let h_mem = HMem::new(
+            entity,
+            "turn",
+            serde_json::Value::String(value.to_string()),
+            WebID::new(),
+        );
+        let mut h_mem = h_mem;
+        h_mem.observed_at = observed;
+        memory.store(h_mem).expect("seed turn");
+    }
+
+    fn seed_watermark(
+        memory: &MemoryStore,
+        thread_id: &str,
+        observed: chrono::DateTime<chrono::Utc>,
+    ) {
+        let h_mem = HMem::new(
+            &format!("{WATERMARK_PREFIX}{thread_id}"),
+            "distilled_through",
+            serde_json::json!({"through": observed.to_rfc3339(), "turns": 1}),
+            WebID::new(),
+        );
+        let mut h_mem = h_mem;
+        h_mem.observed_at = observed;
+        memory.store(h_mem).expect("seed watermark");
+    }
+
+    fn seed_embedding(memory: &MemoryStore, entity: &str, passage: &str, vector_first: f32) {
+        let mut vector = vec![0.0f32; hkask_storage::embedding_dim()];
+        vector[0] = vector_first;
+        vector[1] = 1.0 - vector_first;
+        memory
+            .store_embedding(entity, &vector, "test-model", Some(passage))
+            .expect("seed embedding");
+    }
+
+    /// Only threads whose single watermark has aged past the threshold
+    /// are forgotten — and only their shared-copy turns. Recent
+    /// threads, never-distilled threads, curator-perspective originals,
+    /// and the watermarks themselves are untouched.
+    #[test]
+    fn forgetting_deletes_only_aged_distilled_shared_turns() {
+        let (memory, driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(10);
+
+        // Old-watermark thread: two shared turns (covered by the watermark —
+        // written before its `through` position) + one private original.
+        let covered_turn = old - chrono::Duration::days(1);
+        seed_turn(
+            &memory,
+            "curator:thread:old-thread",
+            "old turn 1",
+            covered_turn,
+        );
+        seed_turn(
+            &memory,
+            "curator:thread:old-thread",
+            "old turn 2",
+            covered_turn,
+        );
+
+        seed_embedding(&memory, "curator:thread:old-thread", "old turn 1", 1.0);
+        seed_watermark(&memory, "old-thread", old);
+
+        // Recent-watermark thread: must survive.
+        let recent = now - chrono::Duration::days(1);
+        seed_turn(
+            &memory,
+            "curator:thread:recent-thread",
+            "recent turn",
+            recent,
+        );
+        seed_embedding(&memory, "curator:thread:recent-thread", "recent turn", 1.0);
+        seed_watermark(&memory, "recent-thread", recent);
+
+        // Never-distilled thread: must survive (no watermark).
+        seed_turn(
+            &memory,
+            "curator:thread:undistilled",
+            "undistilled turn",
+            recent,
+        );
+        seed_embedding(
+            &memory,
+            "curator:thread:undistilled",
+            "undistilled turn",
+            1.0,
+        );
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(
+            outcome.threads_examined, 2,
+            "two watermarked threads examined"
+        );
+        assert_eq!(
+            outcome.threads_forgotten, 1,
+            "only the aged thread is forgotten"
+        );
+        assert_eq!(
+            outcome.turns_deleted, 2,
+            "both shared turns of the aged thread are deleted"
+        );
+        assert_eq!(
+            outcome.embeddings_deleted, 1,
+            "the aged thread's embedding is deleted"
+        );
+
+        assert!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:old-thread")
+                .expect("query")
+                .is_empty(),
+            "the aged thread's shared turns are deleted"
+        );
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:recent-thread")
+                .expect("query")
+                .len(),
+            1,
+            "the recent thread survives the grace window"
+        );
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:undistilled")
+                .expect("query")
+                .len(),
+            1,
+            "a never-distilled thread is never forgotten — no watermark, no proof of extraction"
+        );
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix(WATERMARK_PREFIX)
+                .expect("query")
+                .len(),
+            2,
+            "watermarks are never deleted — they are the idempotence markers"
+        );
+        let stored_rows = driver
+            .query_optional("SELECT count(*) FROM hmems", &[])
+            .expect("raw row count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            stored_rows, 4,
+            "the two forgotten turns must be physically absent"
+        );
+    }
+
+    /// expect: "Forgetting deletes only what the watermark proves was
+    /// distilled — turns added after the last pass stay recallable." [P1]
+    /// pre: the thread's watermark (through = T) has aged past the
+    /// threshold, and the thread holds covered turns (observed_at ≤ T) plus
+    /// turns added after the last distillation pass (observed_at > T), each
+    /// with its own embedding.
+    /// post: covered turns and their embeddings are hard-deleted; the newer
+    /// turns and their embeddings survive, and semantic recall returns the
+    /// surviving chunk but never the forgotten one. The pass deletes only
+    /// rows it read as covered — a turn racing in (observed_at > T) is
+    /// uncovered by construction and can never be swept by a prefix delete.
+    #[test]
+    fn forgetting_preserves_turns_newer_than_the_watermark() {
+        let (memory, driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let through = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:mixed",
+            "covered turn",
+            through - chrono::Duration::days(1),
+        );
+        seed_turn(
+            &memory,
+            "curator:thread:mixed",
+            "newer turn",
+            now - chrono::Duration::days(1),
+        );
+        seed_embedding(&memory, "curator:thread:mixed", "covered turn", 1.0);
+        seed_embedding(&memory, "curator:thread:mixed", "newer turn", 0.0);
+        seed_watermark(&memory, "mixed", through);
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(
+            outcome.threads_forgotten, 1,
+            "the covered half is work done"
+        );
+        assert_eq!(outcome.turns_deleted, 1, "only the covered turn is deleted");
+        assert_eq!(
+            outcome.embeddings_deleted, 1,
+            "only the covered embedding is deleted"
+        );
+
+        let surviving: Vec<String> = memory
+            .h_mems_by_entity_prefix("curator:thread:mixed")
+            .expect("query")
+            .into_iter()
+            .filter_map(|turn| turn.value.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            surviving,
+            vec!["newer turn".to_string()],
+            "the turn added after the last distillation pass must survive"
+        );
+
+        // Semantic recall through the real KNN seam: the surviving chunk is
+        // reachable, the forgotten chunk is not.
+        let mut probe = vec![0.0f32; hkask_storage::embedding_dim()];
+        probe[1] = 1.0; // the newer turn's direction
+        let passages: Vec<Option<String>> = memory
+            .search_similar(&probe, 10, "test-model", None)
+            .expect("knn")
+            .results
+            .into_iter()
+            .map(|hit| hit.embedding.passage_text)
+            .collect();
+        assert!(
+            passages.contains(&Some("newer turn".to_string())),
+            "the newer turn's embedding must stay recallable: {passages:?}"
+        );
+        assert!(
+            !passages.contains(&Some("covered turn".to_string())),
+            "the forgotten chunk's embedding must leave semantic recall: {passages:?}"
+        );
+
+        let embedding_rows: i64 = driver
+            .query_optional(
+                "SELECT count(*) FROM embeddings WHERE entity_ref = ?",
+                &[hkask_storage::database::value::DbValue::Text(
+                    "curator:thread:mixed".to_string(),
+                )],
+            )
+            .expect("embedding count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            embedding_rows, 1,
+            "exactly the newer turn's embedding remains"
+        );
+    }
+
+    /// expect: "An embedding whose passage cannot be attributed to one side of
+    /// the coverage boundary is kept, never guessed away." [P1]
+    /// pre: a covered chunk and an uncovered chunk share the same passage text
+    /// (duplicate content straddling the watermark).
+    /// post: both h_mems behave precisely (the covered one deleted by id, the
+    /// uncovered one kept), but the ambiguous embedding rows are KEPT — the
+    /// conservative direction: a duplicate embedding surviving recall is a
+    /// bounded leak until the thread fully forgets; deleting it would erase
+    /// an uncovered chunk's semantic recall, the exact loss this pass must
+    /// never commit.
+    #[test]
+    fn forgetting_keeps_ambiguous_passage_embeddings() {
+        let (memory, driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let through = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:dup",
+            "duplicate text",
+            through - chrono::Duration::days(1),
+        );
+        seed_turn(
+            &memory,
+            "curator:thread:dup",
+            "duplicate text",
+            now - chrono::Duration::days(1),
+        );
+        seed_turn(
+            &memory,
+            "curator:thread:dup",
+            "distinct covered",
+            through - chrono::Duration::days(1),
+        );
+        seed_embedding(&memory, "curator:thread:dup", "duplicate text", 1.0);
+        seed_embedding(&memory, "curator:thread:dup", "duplicate text", 0.0);
+        seed_embedding(&memory, "curator:thread:dup", "distinct covered", 1.0);
+        seed_watermark(&memory, "dup", through);
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(outcome.turns_deleted, 2, "the covered h_mems go by id");
+        assert_eq!(
+            outcome.embeddings_deleted, 1,
+            "only the unambiguous covered embedding goes"
+        );
+
+        let surviving: Vec<String> = memory
+            .h_mems_by_entity_prefix("curator:thread:dup")
+            .expect("query")
+            .into_iter()
+            .filter_map(|turn| turn.value.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            surviving,
+            vec!["duplicate text".to_string()],
+            "the uncovered duplicate h_mem survives"
+        );
+        let embedding_rows: i64 = driver
+            .query_optional(
+                "SELECT count(*) FROM embeddings WHERE entity_ref = ?",
+                &[hkask_storage::database::value::DbValue::Text(
+                    "curator:thread:dup".to_string(),
+                )],
+            )
+            .expect("embedding count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            embedding_rows, 2,
+            "both ambiguous duplicate embeddings are kept, plus nothing else"
+        );
+    }
+
+    /// expect: "Without a parseable coverage boundary the pass deletes
+    /// nothing." [P1]
+    /// pre: the thread's watermark has aged past the threshold but
+    /// carries no `through` position (malformed value).
+    /// post: the thread is examined but skipped — no proof of coverage, no
+    /// deletion. Failing closed beats deleting unproven content.
+    #[test]
+    fn forgetting_skips_threads_without_a_parseable_watermark() {
+        let (memory, _driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let through = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:malformed",
+            "some turn",
+            through - chrono::Duration::days(1),
+        );
+        let h_mem = HMem::new(
+            &format!("{WATERMARK_PREFIX}malformed"),
+            "distilled_through",
+            serde_json::json!({"not_through": true}),
+            WebID::new(),
+        );
+        let mut h_mem = h_mem;
+        h_mem.observed_at = through;
+        memory.store(h_mem).expect("seed malformed watermark");
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(outcome.threads_examined, 1);
+        assert_eq!(
+            outcome.threads_forgotten, 0,
+            "no coverage proof — nothing may be deleted"
+        );
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:malformed")
+                .expect("query")
+                .len(),
+            1,
+            "the unproven thread is untouched"
+        );
+    }
+
+    /// Multiple marker versions are invalid control state, not a compatibility
+    /// shape. Forgetting surfaces the violation and deletes no turn.
+    #[test]
+    fn forgetting_rejects_multiple_watermarks_for_one_thread() {
+        let (memory, _driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:duplicate-markers",
+            "must survive",
+            old - chrono::Duration::days(1),
+        );
+        seed_watermark(&memory, "duplicate-markers", old);
+        seed_watermark(
+            &memory,
+            "duplicate-markers",
+            old + chrono::Duration::hours(1),
+        );
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(outcome.threads_examined, 1);
+        assert_eq!(outcome.threads_forgotten, 0);
+        assert_eq!(
+            memory
+                .h_mems_by_entity_prefix("curator:thread:duplicate-markers")
+                .expect("query")
+                .len(),
+            1
+        );
+    }
+
+    fn seed_old_distilled_thread() -> (
+        hkask_memory::MemoryStore,
+        Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+        chrono::DateTime<chrono::Utc>,
+    ) {
+        let (memory, driver) = store_with_driver();
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:old-thread",
+            "old turn",
+            old - chrono::Duration::days(1),
+        );
+        seed_embedding(&memory, "curator:thread:old-thread", "old turn", 1.0);
+        seed_watermark(&memory, "old-thread", old);
+        (memory, driver, now)
+    }
+
+    /// The pass is idempotent: deleted turns stay deleted, deleted
+    /// embeddings stay deleted, a second pass changes nothing.
+    #[test]
+    fn forgetting_is_idempotent() {
+        let (memory, _driver, now) = seed_old_distilled_thread();
+
+        let first = forget_distilled_threads(&memory, now, 7).expect("first pass");
+        assert_eq!(first.turns_deleted, 1);
+        let second = forget_distilled_threads(&memory, now, 7).expect("second pass");
+        assert_eq!(
+            second,
+            ForgettingOutcome {
+                threads_examined: 1,
+                threads_forgotten: 0,
+                turns_deleted: 0,
+                embeddings_deleted: 0,
+                orphans_swept: 0,
+            },
+            "a second pass must be a no-op — deleted turns stay deleted"
+        );
+    }
+
+    /// mcp-tool-review CU-14 pin: the pass reads and deletes one thread's
+    /// turns, exactly. A thread whose id begins with an aged thread's id
+    /// keeps its turns and its embedding — the prefix read returned them as
+    /// the aged thread's own and the pass deleted them without a watermark
+    /// of theirs. (Production thread ids are UUIDs, which never prefix one
+    /// another; the exact read removes the dependence on that.)
+    #[test]
+    fn forgetting_never_deletes_a_sibling_threads_turns() {
+        let (memory, _driver, now) = seed_old_distilled_thread();
+        let old = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:old-thread-2",
+            "sibling turn",
+            old - chrono::Duration::days(1),
+        );
+        seed_embedding(&memory, "curator:thread:old-thread-2", "sibling turn", 1.0);
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("pass");
+        assert_eq!(
+            outcome.turns_deleted, 1,
+            "only the watermarked thread's turn"
+        );
+        assert_eq!(outcome.embeddings_deleted, 1);
+        assert_eq!(
+            memory
+                .h_mems_by_entity("curator:thread:old-thread-2")
+                .expect("query")
+                .len(),
+            1,
+            "a never-distilled sibling is never forgotten"
+        );
+        assert!(
+            memory
+                .has_embedding_for_passage("curator:thread:old-thread-2", "sibling turn")
+                .expect("embedding"),
+            "the sibling's embedding survives"
+        );
+    }
+
+    /// The orphan sweep removes vector rows whose metadata row is gone.
+    /// KNN's inner join already ignores them; the sweep reclaims space
+    /// (and cleans up after therapy SQL passes that delete metadata
+    /// without vec access).
+    #[test]
+    fn forgetting_sweeps_orphaned_vectors() {
+        let (memory, driver, now) = seed_old_distilled_thread();
+
+        // Orphan the embedding: delete the metadata row directly, leaving
+        // the vector row (the shape a metadata-only SQL deletion leaves).
+        driver
+            .execute(
+                "DELETE FROM embeddings WHERE entity_ref = ?",
+                &[hkask_storage::database::value::DbValue::Text(
+                    "curator:thread:old-thread".to_string(),
+                )],
+            )
+            .expect("orphan the metadata row");
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("forgetting pass");
+        assert_eq!(outcome.orphans_swept, 1, "the orphaned vector row is swept");
+    }
+
+    /// The forgetting age parse: malformed values fall back to the
+    /// default (the warn lives in the parse, mirroring the distillation
+    /// config's pure-parse test — env mutation is unsafe under the
+    /// crate's `forbid(unsafe_code)`).
+    #[test]
+    fn forgetting_config_parse_falls_back_on_malformed() {
+        assert_eq!(parse_days_value("14"), 14);
+        assert_eq!(parse_days_value(" 21 "), 21);
+        assert_eq!(parse_days_value("soon"), DEFAULT_FORGETTING_DAYS);
+        assert_eq!(parse_days_value(""), DEFAULT_FORGETTING_DAYS);
+    }
+
+    #[test]
+    fn stale_code_citation_sweep_flags_orphans_without_deleting_rows() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = dir.path();
+
+        // Create live file (5 lines) and DIVERGENCE.md with D28 only.
+        std::fs::create_dir_all(root.join("crates/agent/src")).unwrap();
+        std::fs::write(
+            root.join("crates/agent/src/live.rs"),
+            "line1\nline2\nline3\nline4\nline5\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("DIVERGENCE.md"),
+            "| D28 | Standardized Artifact Storage | `crates/agent/src/db.rs` | ok |\n",
+        )
+        .unwrap();
+
+        let (memory, _driver) = store_with_driver();
+        let owner = hkask_types::WebID::from_persona(b"curator");
+
+        // 1. Valid citation + valid seam -> NOT flagged.
+        memory
+            .store(HMem::new(
+                "code:valid",
+                "lesson",
+                serde_json::json!({"text": "D28 lives at crates/agent/src/live.rs:3"}),
+                owner,
+            ))
+            .unwrap();
+
+        // 2. Deleted file -> MissingFile.
+        memory
+            .store(HMem::new(
+                "code:deleted_file",
+                "lesson",
+                serde_json::json!({"text": "See crates/agent/src/deleted.rs:42"}),
+                owner,
+            ))
+            .unwrap();
+
+        // 3. Out-of-bounds line -> LineOutOfBounds.
+        memory
+            .store(HMem::new(
+                "code:shifted_line",
+                "lesson",
+                serde_json::json!({"text": "Check crates/agent/src/live.rs:999"}),
+                owner,
+            ))
+            .unwrap();
+
+        // 4. Removed D-seam -> MissingDivergenceSeam.
+        memory
+            .store(HMem::new(
+                "code:removed_seam",
+                "lesson",
+                serde_json::json!({"text": "Retired seam D999 was removed"}),
+                owner,
+            ))
+            .unwrap();
+
+        let outcome = sweep_stale_code_citations(&memory, root).expect("sweep succeeds");
+        assert_eq!(outcome.rows_scanned, 4);
+        assert_eq!(
+            outcome.rows_deleted, 0,
+            "branch-switch safety: sweep must never auto-delete rows"
+        );
+        assert_eq!(outcome.candidates.len(), 3);
+
+        let by_entity: HashMap<&str, &Vec<CitationStalenessReason>> = outcome
+            .candidates
+            .iter()
+            .map(|c| (c.entity.as_str(), &c.reasons))
+            .collect();
+        assert_eq!(
+            by_entity["code:deleted_file"],
+            &vec![CitationStalenessReason::MissingFile {
+                path: "crates/agent/src/deleted.rs".to_string()
+            }]
+        );
+        assert_eq!(
+            by_entity["code:shifted_line"],
+            &vec![CitationStalenessReason::LineOutOfBounds {
+                path: "crates/agent/src/live.rs".to_string(),
+                cited_line: 999,
+                actual_lines: 5,
+            }]
+        );
+        assert_eq!(
+            by_entity["code:removed_seam"],
+            &vec![CitationStalenessReason::MissingDivergenceSeam {
+                seam_id: "D999".to_string()
+            }]
+        );
+
+        // Verify zero rows were deleted from the store (branch-switch preservation).
+        assert_eq!(
+            memory.h_mems_by_entity_prefix("code:").unwrap().len(),
+            4,
+            "all 4 rows must remain intact for operator therapy review"
+        );
+    }
+
+    #[test]
+    fn stale_code_citation_sweep_decodes_json_strings_and_admits_existing_dirs() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("crates/agent/src")).unwrap();
+        std::fs::write(root.join("crates/agent/src/live.rs"), "a\nb\nc\n").unwrap();
+
+        let (memory, _driver) = store_with_driver();
+        let owner = hkask_types::WebID::from_persona(b"curator");
+        memory
+            .store(HMem::new(
+                "code:json_escaped_and_dir",
+                "lesson",
+                serde_json::json!({
+                    "note": "See \"crates/agent\" and crates/agent/src/live.rs\nLine 2: crates/agent/src/live.rs:2\n"
+                }),
+                owner,
+            ))
+            .unwrap();
+
+        let outcome = sweep_stale_code_citations(&memory, root).expect("sweep succeeds");
+        assert_eq!(outcome.rows_scanned, 1);
+        assert!(
+            outcome.candidates.is_empty(),
+            "decoded JSON newlines/quotes and existing dirs must not false-positive: {:?}",
+            outcome.candidates
+        );
+    }
+}
