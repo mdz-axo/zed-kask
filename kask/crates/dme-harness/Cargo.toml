@@ -1,0 +1,26 @@
+[package]
+name = "dme-harness"
+version.workspace = true
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Direct-model-edit live-replication harness (Rust; operator ruling 2026-11-06)"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+hkask-types.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+# The probe leg's client: blocking requests against a llama.cpp server
+# the operator runs. The harness links no inference engine and launches
+# no server.
+reqwest = { workspace = true, features = ["blocking", "json"] }
+# The GGUF reader/writer (src/gguf.rs, src/gguf_writer.rs): typed parse errors.
+thiserror = { workspace = true }
+
+[[bin]]
+name = "dme-harness"
+path = "src/main.rs"
+
+[lints]
+workspace = true
