@@ -233,6 +233,38 @@ fn limit_of(requested: Option<u32>) -> Result<usize, McpToolError> {
     }
 }
 
+/// Request for `nostr_publish_article` (NIP-23 `kind: 30023` long-form Markdown article).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishArticleRequest {
+    /// Stable ASCII slug (`d` tag, 1..=128 `[a-zA-Z0-9._-]`). Reusing a slug updates the article.
+    pub slug: String,
+    /// Human-readable article title (`title` tag, 1..=200 chars).
+    pub title: String,
+    /// Markdown body (1..=64000 chars).
+    pub content: String,
+    /// Optional short summary (`summary` tag, <=500 chars).
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Optional hashtags (`t` tags, at most 16).
+    #[serde(default)]
+    pub hashtags: Option<Vec<String>>,
+}
+
+/// Request for `nostr_publish_list` (NIP-51 `kind: 10000` Mute list or `kind: 10003` Bookmark list).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishListRequest {
+    /// List kind: `10000` (Mute list) or `10003` (Bookmark list). Any other kind is refused.
+    pub kind: u16,
+    /// Event IDs (`note`, `nevent`, or 64-char hex) stored as `e` tags (e.g. bookmarks).
+    #[serde(default)]
+    pub event_ids: Option<Vec<String>>,
+    /// Author pubkeys (`npub`, `nprofile`, or 64-char hex) stored as `p` tags (e.g. muted authors).
+    #[serde(default)]
+    pub pubkeys: Option<Vec<String>>,
+}
+
 fn npub_of(public_key: &PublicKey) -> String {
     hkask_nostr_core::encode_npub(&public_key.to_bytes())
 }
@@ -2132,6 +2164,183 @@ impl NostrClientServer {
                 relays: targets,
             };
             let signed = ipc.sign_nostr_follows(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Publish a NIP-23 kind 30023 long-form Markdown article (https://nostr-nips.com/nip-23). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish). Contacts the local relay and usable seed relays, and reads the signed event back by id."
+    )]
+    pub async fn nostr_publish_article(
+        &self,
+        Parameters(request): Parameters<PublishArticleRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_article", async {
+            let slug = request.slug.trim().to_string();
+            let title = request.title.trim().to_string();
+            if slug.is_empty() || title.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "slug and title must both be non-empty",
+                ));
+            }
+            if request.content.trim().is_empty() || request.content.chars().count() > 64_000 {
+                return Err(McpToolError::invalid_argument(
+                    "content must be non-empty and at most 64000 characters",
+                ));
+            }
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrArticleWire {
+                created_at: now_secs,
+                slug,
+                title,
+                summary: request.summary,
+                published_at: now_secs,
+                hashtags: request.hashtags.unwrap_or_default(),
+                content: request.content,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_article(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Publish an updated NIP-51 replaceable list: kind 10000 (Mute list) or kind 10003 (Bookmark list) (https://nostr-nips.com/nip-51). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because replaceable lists overwrite prior state."
+    )]
+    pub async fn nostr_publish_list(
+        &self,
+        Parameters(request): Parameters<PublishListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_list", async {
+            if request.kind != 10_000 && request.kind != 10_003 {
+                return Err(McpToolError::invalid_argument(
+                    "kind must be 10000 (mute list) or 10003 (bookmark list)",
+                ));
+            }
+            let mut event_ids_hex = Vec::new();
+            for raw in request.event_ids.unwrap_or_default() {
+                let hex = identifiers::parse_event_id(&raw)
+                    .map_err(|error| refused("event_ids", error))?
+                    .to_hex();
+                if !event_ids_hex.contains(&hex) {
+                    event_ids_hex.push(hex);
+                }
+            }
+            let mut pubkeys_hex = Vec::new();
+            for raw in request.pubkeys.unwrap_or_default() {
+                let hex = identifiers::parse_public_key(&raw)
+                    .map_err(|error| refused("pubkeys", error))?
+                    .to_hex();
+                if !pubkeys_hex.contains(&hex) {
+                    pubkeys_hex.push(hex);
+                }
+            }
+            if event_ids_hex.len() + pubkeys_hex.len() > 500 {
+                return Err(McpToolError::invalid_argument(
+                    "list exceeds maximum of 500 entries",
+                ));
+            }
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrListWire {
+                created_at: now_secs,
+                kind: request.kind,
+                event_ids_hex,
+                pubkeys_hex,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_list(wire).await.map_err(|e| {
                 McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
             })?;
             let event: Event = serde_json::from_value(signed).map_err(|e| {

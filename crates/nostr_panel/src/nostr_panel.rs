@@ -416,8 +416,8 @@ mod tests {
         let tools = all_tool_names();
         assert_eq!(
             tools.len(),
-            24,
-            "17 client tools, 4 relay tools, and 3 Blossom tools"
+            26,
+            "19 client tools, 4 relay tools, and 3 Blossom tools"
         );
         for tool in tools {
             assert!(prompt.contains(tool), "the prompt never names `{tool}`");
@@ -454,8 +454,10 @@ mod tests {
     #[test]
     fn the_only_advertised_publishing_tool_is_nostr_publish_note() {
         const RULED_WRITING_TOOLS: &[&str] = &[
+            "nostr_publish_article",
             "nostr_publish_deletion",
             "nostr_publish_follows",
+            "nostr_publish_list",
             "nostr_publish_note",
             "nostr_publish_reaction",
             "nostr_publish_reply",

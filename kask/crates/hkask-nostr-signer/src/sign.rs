@@ -36,6 +36,21 @@ pub const REACTION_KIND: u16 = 7;
 /// Comment kind (NIP-22: <https://nostr-nips.com/nip-22>).
 pub const COMMENT_KIND: u16 = 1111;
 
+/// Long-form Markdown article kind (NIP-23: <https://nostr-nips.com/nip-23>).
+pub const ARTICLE_KIND: u16 = 30_023;
+
+/// Maximum Markdown characters in one NIP-23 `kind: 30023` article.
+pub const MAX_ARTICLE_CHARS: usize = 64_000;
+
+/// Mute list kind (NIP-51: <https://nostr-nips.com/nip-51>).
+pub const MUTE_LIST_KIND: u16 = 10_000;
+
+/// Bookmark list kind (NIP-51: <https://nostr-nips.com/nip-51>).
+pub const BOOKMARK_LIST_KIND: u16 = 10_003;
+
+/// Maximum entries in one NIP-51 list (`kind: 10000` or `kind: 10003`).
+pub const MAX_LIST_ITEMS: usize = 500;
+
 /// Blossom authorization token kind (BUD-11).
 pub const BLOSSOM_AUTH_KIND: u16 = 24_242;
 
@@ -95,6 +110,12 @@ pub enum SignError {
     /// A NIP-02 follow list violated its protocol invariants.
     #[error("invalid follow list payload: {reason}")]
     InvalidFollows { reason: &'static str },
+    /// A NIP-23 long-form article violated its protocol invariants.
+    #[error("invalid article payload: {reason}")]
+    InvalidArticle { reason: &'static str },
+    /// A NIP-51 list (`kind: 10000` / `kind: 10003`) violated its protocol invariants.
+    #[error("invalid list payload: {reason}")]
+    InvalidList { reason: &'static str },
     /// The operating system did not supply random bytes for the signature's
     /// auxiliary randomness.
     #[error("the operating system did not supply random bytes")]
@@ -424,6 +445,127 @@ pub fn sign_reply(
         ];
         sign_verified_parts(key, COMMENT_KIND, created_at, tags, content)
     }
+}
+
+/// Validated metadata for a NIP-23 `kind: 30023` long-form Markdown article
+/// (<https://nostr-nips.com/nip-23>).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleDraft {
+    pub slug: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub published_at: u64,
+    pub hashtags: Vec<String>,
+}
+
+/// Sign a NIP-23 `kind: 30023` long-form Markdown article.
+pub fn sign_article(
+    key: &SecretKey,
+    created_at: u64,
+    content_markdown: &str,
+    draft: &ArticleDraft,
+) -> Result<Event, SignError> {
+    let slug = draft.slug.trim();
+    if slug.is_empty()
+        || slug.len() > 128
+        || !slug
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err(SignError::InvalidArticle {
+            reason: "article slug must be 1..=128 ASCII [a-zA-Z0-9._-] characters",
+        });
+    }
+    let title = draft.title.trim();
+    if title.is_empty() || title.chars().count() > 200 {
+        return Err(SignError::InvalidArticle {
+            reason: "article title must be 1..=200 characters",
+        });
+    }
+    let chars = content_markdown.chars().count();
+    if content_markdown.trim().is_empty() || chars > MAX_ARTICLE_CHARS {
+        return Err(SignError::InvalidArticle {
+            reason: "article markdown body must be non-empty and at most 64000 characters",
+        });
+    }
+    if draft.hashtags.len() > 16 {
+        return Err(SignError::InvalidArticle {
+            reason: "at most 16 hashtags are allowed per article",
+        });
+    }
+    let mut tags = vec![
+        vec!["d".to_string(), slug.to_string()],
+        vec!["title".to_string(), title.to_string()],
+        vec!["published_at".to_string(), draft.published_at.to_string()],
+    ];
+    if let Some(summary) = draft.summary.as_deref().map(str::trim)
+        && !summary.is_empty()
+    {
+        if summary.chars().count() > 500 {
+            return Err(SignError::InvalidArticle {
+                reason: "article summary must be at most 500 characters",
+            });
+        }
+        tags.push(vec!["summary".to_string(), summary.to_string()]);
+    }
+    let mut seen_tags = std::collections::HashSet::new();
+    for raw in &draft.hashtags {
+        let tag = raw.trim().trim_start_matches('#').to_ascii_lowercase();
+        if tag.is_empty() || tag.len() > 64 {
+            return Err(SignError::InvalidArticle {
+                reason: "each hashtag must be 1..=64 characters",
+            });
+        }
+        if seen_tags.insert(tag.clone()) {
+            tags.push(vec!["t".to_string(), tag]);
+        }
+    }
+    sign_verified_parts(key, ARTICLE_KIND, created_at, tags, content_markdown)
+}
+
+/// Sign a NIP-51 replaceable list: `kind: 10000` (Mute list) or `kind: 10003`
+/// (Bookmark list) (<https://nostr-nips.com/nip-51>).
+pub fn sign_list(
+    key: &SecretKey,
+    created_at: u64,
+    kind: u16,
+    event_ids_hex: &[String],
+    pubkeys_hex: &[String],
+) -> Result<Event, SignError> {
+    if kind != MUTE_LIST_KIND && kind != BOOKMARK_LIST_KIND {
+        return Err(SignError::InvalidList {
+            reason: "only NIP-51 mute lists (kind 10000) and bookmark lists (kind 10003) are signed here",
+        });
+    }
+    if event_ids_hex.len() + pubkeys_hex.len() > MAX_LIST_ITEMS {
+        return Err(SignError::InvalidList {
+            reason: "list exceeds maximum of 500 entries",
+        });
+    }
+    let mut tags = Vec::with_capacity(event_ids_hex.len() + pubkeys_hex.len());
+    let mut seen_e = std::collections::HashSet::new();
+    for id in event_ids_hex {
+        if !is_lower_sha256_hex(id) {
+            return Err(SignError::InvalidList {
+                reason: "each event id must be 64 lowercase hex characters",
+            });
+        }
+        if seen_e.insert(id.as_str()) {
+            tags.push(vec!["e".to_string(), id.clone()]);
+        }
+    }
+    let mut seen_p = std::collections::HashSet::new();
+    for pk in pubkeys_hex {
+        if !is_lower_sha256_hex(pk) {
+            return Err(SignError::InvalidList {
+                reason: "each pubkey must be 64 lowercase hex characters",
+            });
+        }
+        if seen_p.insert(pk.as_str()) {
+            tags.push(vec!["p".to_string(), pk.clone()]);
+        }
+    }
+    sign_verified_parts(key, kind, created_at, tags, "")
 }
 
 /// Sign a NIP-09 `kind: 5` event deletion request (<https://nostr-nips.com/nip-09>)
@@ -1008,6 +1150,70 @@ mod tests {
             sign_note_with_imeta_and_quote(&key, 1_700_000_000, "hi", &[], Some(&bad_quote))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn sign_article_emits_nip23_kind_30023_and_validates_slug_and_title() {
+        let key = SecretKey::from_bytes(&[9u8; 32]).expect("valid test key");
+        let draft = ArticleDraft {
+            slug: "co-research-notes-2026".to_string(),
+            title: "Co-Research Notes".to_string(),
+            summary: Some("A short abstract".to_string()),
+            published_at: 1_700_000_000,
+            hashtags: vec!["#nostr".to_string(), "research".to_string()],
+        };
+        let event = sign_article(&key, 1_700_000_000, "# Heading\n\nBody.", &draft)
+            .expect("valid article signs");
+        assert_eq!(event.kind(), ARTICLE_KIND);
+        Event::from_json(&event.to_json()).expect("round-trip verifies");
+        assert!(
+            event
+                .tags()
+                .iter()
+                .any(|t| t == &["d", "co-research-notes-2026"])
+        );
+        assert!(
+            event
+                .tags()
+                .iter()
+                .any(|t| t == &["title", "Co-Research Notes"])
+        );
+        assert!(event.tags().iter().any(|t| t == &["t", "nostr"]));
+
+        let bad_slug = ArticleDraft {
+            slug: "bad slug!".to_string(),
+            ..draft
+        };
+        assert!(matches!(
+            sign_article(&key, 1_700_000_000, "body", &bad_slug),
+            Err(SignError::InvalidArticle { .. })
+        ));
+    }
+
+    #[test]
+    fn sign_list_allows_only_nip51_mute_and_bookmark_kinds() {
+        let key = SecretKey::from_bytes(&[10u8; 32]).expect("valid test key");
+        let ev = sign_list(
+            &key,
+            1_700_000_000,
+            BOOKMARK_LIST_KIND,
+            &["aa".repeat(32), "aa".repeat(32)],
+            &[],
+        )
+        .expect("bookmark list signs");
+        assert_eq!(ev.kind(), BOOKMARK_LIST_KIND);
+        assert_eq!(ev.tags(), &[vec!["e".to_string(), "aa".repeat(32)]]);
+        Event::from_json(&ev.to_json()).expect("round-trip verifies");
+
+        let mute = sign_list(&key, 1_700_000_000, MUTE_LIST_KIND, &[], &["bb".repeat(32)])
+            .expect("mute list signs");
+        assert_eq!(mute.kind(), MUTE_LIST_KIND);
+        assert_eq!(mute.tags(), &[vec!["p".to_string(), "bb".repeat(32)]]);
+
+        assert!(matches!(
+            sign_list(&key, 1_700_000_000, 10_001, &[], &[]),
+            Err(SignError::InvalidList { .. })
+        ));
     }
 
     #[test]

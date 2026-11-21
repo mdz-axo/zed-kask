@@ -55,8 +55,10 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_notifications",
     "nostr_prepare_zap",
     "nostr_profile",
+    "nostr_publish_article",
     "nostr_publish_deletion",
     "nostr_publish_follows",
+    "nostr_publish_list",
     "nostr_publish_note",
     "nostr_publish_nutzap",
     "nostr_publish_reaction",
@@ -225,6 +227,40 @@ pub struct NostrRepostWire {
 pub struct NostrFollowsWire {
     pub created_at: u64,
     pub followed_pubkeys_hex: Vec<String>,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-23 `kind: 30023` long-form
+/// Markdown article (<https://nostr-nips.com/nip-23>). Gated by
+/// `host/sign_nostr_note` and NEVER bypassed by `autopublish`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrArticleWire {
+    pub created_at: u64,
+    pub slug: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub published_at: u64,
+    #[serde(default)]
+    pub hashtags: Vec<String>,
+    pub content: String,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-51 replaceable list:
+/// `kind: 10000` (Mute list) or `kind: 10003` (Bookmark list)
+/// (<https://nostr-nips.com/nip-51>). Gated by `host/sign_nostr_note` and NEVER
+/// bypassed by `autopublish`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrListWire {
+    pub created_at: u64,
+    pub kind: u16,
+    #[serde(default)]
+    pub event_ids_hex: Vec<String>,
+    #[serde(default)]
+    pub pubkeys_hex: Vec<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }

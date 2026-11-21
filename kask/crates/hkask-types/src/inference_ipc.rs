@@ -199,6 +199,15 @@ pub enum InferenceMethod {
     /// Gated by [`NOSTR_SIGN_GRANT`] and always requires native operator confirmation.
     SignNostrFollows,
 
+    /// Sign a NIP-23 `kind: 30023` long-form Markdown article (<https://nostr-nips.com/nip-23>).
+    /// Gated by [`NOSTR_SIGN_GRANT`] and always requires native operator confirmation.
+    SignNostrArticle,
+
+    /// Sign a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list
+    /// (<https://nostr-nips.com/nip-51>). Gated by [`NOSTR_SIGN_GRANT`] and
+    /// always requires native operator confirmation.
+    SignNostrList,
+
     /// Unlock `hkask-mcp-wallet`'s SQLCipher database by requesting the
     /// keychain-held passphrase over the authenticated IPC socket (D110).
     /// Gated by [`WALLET_DB_UNLOCK_GRANT`]. Returns `InferenceOutcome::WalletDbKey`.
@@ -343,6 +352,12 @@ pub struct InferenceParams {
     /// NIP-02 follow list payload for `InferenceMethod::SignNostrFollows`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_follows: Option<crate::nostr_wire::NostrFollowsWire>,
+    /// NIP-23 long-form article payload for `InferenceMethod::SignNostrArticle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_article: Option<crate::nostr_wire::NostrArticleWire>,
+    /// NIP-51 bookmark/mute list payload for `InferenceMethod::SignNostrList`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_list: Option<crate::nostr_wire::NostrListWire>,
 }
 
 /// A response from the zed inference bridge to the MCP server.

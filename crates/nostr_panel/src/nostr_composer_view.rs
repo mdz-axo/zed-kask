@@ -17,8 +17,8 @@ use ui::{Label, LabelSize, prelude::*};
 use util::ResultExt as _;
 
 use crate::nostr_composer::{
-    CHAR_WARNING_THRESHOLD, ComposerState, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome,
-    QuoteContext, ReplyContext,
+    CHAR_WARNING_THRESHOLD, ComposerState, PUBLISH_ARTICLE_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL,
+    PublishOutcome, QuoteContext, ReplyContext, slugify_article_title,
 };
 use crate::nostr_event_model::host_of;
 use crate::nostr_viewer::{invoke, short_hex};
@@ -29,8 +29,11 @@ pub(crate) struct NotePublished;
 /// Self-contained GPUI view for the collapsible compose drawer + publish receipt.
 pub(crate) struct NostrComposerView {
     composer: ComposerState,
+    article_mode: bool,
     composer_editor: Option<Entity<editor::Editor>>,
     composer_media_editor: Option<Entity<editor::Editor>>,
+    article_title_editor: Option<Entity<editor::Editor>>,
+    article_slug_editor: Option<Entity<editor::Editor>>,
     _composer_subscription: Option<gpui::Subscription>,
     _publish_task: Option<Task<()>>,
 }
@@ -41,8 +44,11 @@ impl NostrComposerView {
     pub(crate) fn new() -> Self {
         Self {
             composer: ComposerState::new(),
+            article_mode: false,
             composer_editor: None,
             composer_media_editor: None,
+            article_title_editor: None,
+            article_slug_editor: None,
             _composer_subscription: None,
             _publish_task: None,
         }
@@ -54,6 +60,36 @@ impl NostrComposerView {
 
     pub(crate) fn has_draft(&self) -> bool {
         self.composer.has_draft()
+    }
+
+    fn ensure_article_editors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
+        let title_ed = if let Some(existing) = &self.article_title_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::single_line(window, cx);
+                e.set_placeholder_text("Article title (NIP-23 kind:30023)…", window, cx);
+                e
+            });
+            self.article_title_editor = Some(ed.clone());
+            ed
+        };
+        let slug_ed = if let Some(existing) = &self.article_slug_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::single_line(window, cx);
+                e.set_placeholder_text("Optional slug (auto-generated from title)", window, cx);
+                e
+            });
+            self.article_slug_editor = Some(ed.clone());
+            ed
+        };
+        (title_ed, slug_ed)
     }
 
     fn browse_media_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -248,33 +284,72 @@ impl NostrComposerView {
         };
         let reply_target = self.composer.reply_target.clone();
         let quote_target = self.composer.quote_target.clone();
+        let is_article = self.article_mode && reply_target.is_none() && quote_target.is_none();
+        let (article_title, article_slug) = if is_article {
+            let title = self
+                .article_title_editor
+                .as_ref()
+                .map(|ed| ed.read(cx).text(cx).trim().to_string())
+                .unwrap_or_default();
+            let raw_slug = self
+                .article_slug_editor
+                .as_ref()
+                .map(|ed| ed.read(cx).text(cx).trim().to_string())
+                .unwrap_or_default();
+            let slug = if raw_slug.is_empty() {
+                slugify_article_title(&title)
+            } else {
+                raw_slug
+            };
+            if title.is_empty() || slug.is_empty() {
+                self.composer.finish_publish_err(
+                    "Enter an article title (and ASCII slug) before publishing.".to_string(),
+                );
+                cx.notify();
+                return;
+            }
+            (title, slug)
+        } else {
+            (String::new(), String::new())
+        };
         cx.notify();
 
-        let (tool, args) = match reply_target {
-            Some(target) => (
-                PUBLISH_REPLY_TOOL,
+        let (tool, args) = if is_article {
+            (
+                PUBLISH_ARTICLE_TOOL,
                 json!({
+                    "slug": article_slug,
+                    "title": article_title,
                     "content": payload.content,
-                    "root_event_id": target.root_event_id,
-                    "reply_to_event_id": target.reply_to_event_id,
-                    "target_pubkey": target.target_pubkey,
-                    "root_kind": target.root_kind,
-                    "created_at": payload.created_at,
                 }),
-            ),
-            None => {
-                let mut note_args = json!({
-                    "content": payload.content,
-                    "created_at": payload.created_at,
-                });
-                if !payload.media_paths.is_empty() {
-                    note_args["media_paths"] = json!(payload.media_paths);
+            )
+        } else {
+            match reply_target {
+                Some(target) => (
+                    PUBLISH_REPLY_TOOL,
+                    json!({
+                        "content": payload.content,
+                        "root_event_id": target.root_event_id,
+                        "reply_to_event_id": target.reply_to_event_id,
+                        "target_pubkey": target.target_pubkey,
+                        "root_kind": target.root_kind,
+                        "created_at": payload.created_at,
+                    }),
+                ),
+                None => {
+                    let mut note_args = json!({
+                        "content": payload.content,
+                        "created_at": payload.created_at,
+                    });
+                    if !payload.media_paths.is_empty() {
+                        note_args["media_paths"] = json!(payload.media_paths);
+                    }
+                    if let Some(quote) = quote_target {
+                        note_args["quote_event_id"] = json!(quote.event_id);
+                        note_args["quote_pubkey"] = json!(quote.target_pubkey);
+                    }
+                    (PUBLISH_TOOL, note_args)
                 }
-                if let Some(quote) = quote_target {
-                    note_args["quote_event_id"] = json!(quote.event_id);
-                    note_args["quote_pubkey"] = json!(quote.target_pubkey);
-                }
-                (PUBLISH_TOOL, note_args)
             }
         };
         let task = match invoke(NOSTR_CLIENT_SERVER, tool, args) {
@@ -426,7 +501,15 @@ impl NostrComposerView {
             return None;
         }
         let editor = self.ensure_composer_editor(window, cx);
-        let media_editor = if self.composer.reply_target.is_none() {
+        let top_level =
+            self.composer.reply_target.is_none() && self.composer.quote_target.is_none();
+        let is_article = self.article_mode && top_level;
+        let article_editors = if is_article {
+            Some(self.ensure_article_editors(window, cx))
+        } else {
+            None
+        };
+        let media_editor = if self.composer.reply_target.is_none() && !is_article {
             Some(self.ensure_composer_media_editor(window, cx))
         } else {
             None
@@ -501,6 +584,66 @@ impl NostrComposerView {
                         cx.stop_propagation();
                     }
                 }))
+                .when(top_level, |this| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                ui::Button::new("nostr-compose-mode-note", "Note")
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(!is_article)
+                                    .disabled(publishing)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.article_mode = false;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new("nostr-compose-mode-article", "Article (NIP-23)")
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(is_article)
+                                    .disabled(publishing)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Compose a long-form Markdown article (NIP-23 kind:30023)",
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.article_mode = true;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                })
+                .when_some(article_editors, |this, (title_ed, slug_ed)| {
+                    this.child(
+                        v_flex()
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(title_ed),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(slug_ed),
+                            ),
+                    )
+                })
                 .when_some(reply_banner, |this, banner| {
                     this.child(
                         h_flex()

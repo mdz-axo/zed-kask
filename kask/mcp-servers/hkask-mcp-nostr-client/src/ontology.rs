@@ -29,8 +29,10 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // The ruled publish path is a step of the operator's procedure: the
         // editor signs on the operator's approval and the step sends the
         // signed event, as the relay's sync is a step of archiving.
-        "nostr_publish_deletion"
+        "nostr_publish_article"
+        | "nostr_publish_deletion"
         | "nostr_publish_follows"
+        | "nostr_publish_list"
         | "nostr_publish_note"
         | "nostr_publish_reaction"
         | "nostr_publish_reply"
@@ -54,8 +56,10 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         "nostr_fetch_events"
         | "nostr_thread"
         | "nostr_notifications"
+        | "nostr_publish_article"
         | "nostr_publish_deletion"
         | "nostr_publish_follows"
+        | "nostr_publish_list"
         | "nostr_publish_note"
         | "nostr_publish_reaction"
         | "nostr_publish_reply"

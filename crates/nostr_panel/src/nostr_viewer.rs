@@ -54,12 +54,12 @@
 //!   fetches their images and loads their videos into `MediaWidget`. Media
 //!   from non-followed authors stays at its placeholder until clicked.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::nostr_composer::{
-    PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL,
-    QUICK_REACTIONS, QuoteContext, ReplyContext, sanitize_untrusted_text,
+    PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL, PUBLISH_REACTION_TOOL,
+    PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext, sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -162,6 +162,10 @@ pub struct NostrViewer {
     /// The follows read's own epoch and failure, so a stale answer is
     /// not applied and a failed read is visible.
     follows_request: Request,
+    /// Operator's NIP-51 bookmarked event IDs (`kind: 10003`, `e` tags).
+    bookmarked_ids: BTreeSet<String>,
+    /// Operator's NIP-51 muted author pubkeys (`kind: 10000`, `p` tags).
+    muted_pubkeys: BTreeSet<String>,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -460,6 +464,8 @@ impl NostrViewer {
             reactions_request: Request::new(),
             follows: None,
             follows_request: Request::new(),
+            bookmarked_ids: BTreeSet::new(),
+            muted_pubkeys: BTreeSet::new(),
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -492,7 +498,214 @@ impl NostrViewer {
         if !self.started {
             self.started = true;
             self.load_archive(cx);
+            self.load_nip51_lists(cx);
         }
+    }
+
+    /// Load the operator's newest NIP-51 bookmark (`kind: 10003`) and mute
+    /// (`kind: 10000`) lists from the local archive.
+    fn load_nip51_lists(&mut self, cx: &mut Context<Self>) {
+        let Some(mine) = self.my_pubkey_hex(cx) else {
+            return;
+        };
+        let Ok(task) = invoke(
+            NOSTR_RELAY_SERVER,
+            ARCHIVE_TOOL,
+            json!({ "authors": [mine], "kinds": [10_000, 10_003], "limit": 10 }),
+        ) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let Ok(content) = content_of(ARCHIVE_TOOL, task.await) else {
+                return;
+            };
+            let Some(Ok(Surfaced::Feed(feed))) = parse_surfaced(&content, FeedOrigin::Archive)
+            else {
+                return;
+            };
+            let mut newest_mute: Option<(u64, BTreeSet<String>)> = None;
+            let mut newest_bookmarks: Option<(u64, BTreeSet<String>)> = None;
+            for row in &feed.rows {
+                match row.event.kind {
+                    10_000 => {
+                        if newest_mute
+                            .as_ref()
+                            .is_none_or(|(at, _)| row.event.created_at >= *at)
+                        {
+                            newest_mute = Some((row.event.created_at, follows_of(&row.event)));
+                        }
+                    }
+                    10_003 => {
+                        if newest_bookmarks
+                            .as_ref()
+                            .is_none_or(|(at, _)| row.event.created_at >= *at)
+                        {
+                            let ids = row
+                                .event
+                                .tags
+                                .iter()
+                                .filter_map(|tag| {
+                                    (tag.first().map(String::as_str) == Some("e"))
+                                        .then(|| tag.get(1).filter(|v| !v.is_empty()).cloned())
+                                        .flatten()
+                                })
+                                .collect();
+                            newest_bookmarks = Some((row.event.created_at, ids));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            this.update(cx, |this, cx| {
+                if let Some((_, muted)) = newest_mute {
+                    this.muted_pubkeys = muted;
+                }
+                if let Some((_, bookmarked)) = newest_bookmarks {
+                    this.bookmarked_ids = bookmarked;
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn toggle_bookmark(&mut self, event_id: String, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        let mut next = self.bookmarked_ids.clone();
+        let adding = if next.contains(&event_id) {
+            next.remove(&event_id);
+            false
+        } else {
+            next.insert(event_id.clone());
+            true
+        };
+        let ids: Vec<String> = next.iter().cloned().collect();
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PUBLISH_LIST_TOOL,
+            json!({ "kind": 10_003, "event_ids": ids }),
+        ) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            this.bookmarked_ids = next;
+                            this.reaction_feedback = Some((
+                                event_id,
+                                true,
+                                if adding {
+                                    "Bookmarked (NIP-51 kind:10003)".to_string()
+                                } else {
+                                    "Removed bookmark (NIP-51 kind:10003)".to_string()
+                                },
+                            ));
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                event_id,
+                                false,
+                                "Bookmark update failed: no relay accepted.".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((event_id, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback =
+                            Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
+    fn toggle_mute(&mut self, event_id: String, author_hex: String, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        let mut next = self.muted_pubkeys.clone();
+        let muting = if next.contains(&author_hex) {
+            next.remove(&author_hex);
+            false
+        } else {
+            next.insert(author_hex.clone());
+            true
+        };
+        let pubkeys: Vec<String> = next.iter().cloned().collect();
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PUBLISH_LIST_TOOL,
+            json!({ "kind": 10_000, "pubkeys": pubkeys }),
+        ) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            this.muted_pubkeys = next;
+                            this.reaction_feedback = Some((
+                                event_id,
+                                true,
+                                if muting {
+                                    "Muted author (NIP-51 kind:10000)".to_string()
+                                } else {
+                                    "Unmuted author (NIP-51 kind:10000)".to_string()
+                                },
+                            ));
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                event_id,
+                                false,
+                                "Mute list update failed: no relay accepted.".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((event_id, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback =
+                            Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
     }
 
     fn activate_tab(&mut self, tab: ViewerTab, cx: &mut Context<Self>) {
@@ -2378,6 +2591,11 @@ impl NostrViewer {
                             .my_pubkey_hex(cx)
                             .as_deref()
                             .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
+                        let is_bookmarked = self.bookmarked_ids.contains(&event.id);
+                        let is_muted = self.muted_pubkeys.contains(&event.author);
+                        let bm_event_id = event.id.clone();
+                        let mute_event_id = event.id.clone();
+                        let mute_author_hex = event.author.clone();
                         let meta_expanded = self.detail_meta_expanded;
                         PopoverMenu::new("nostr-detail-more-menu")
                             .trigger_with_tooltip(
@@ -2394,6 +2612,9 @@ impl NostrViewer {
                                 let dm_author_name = dm_author_name.clone();
                                 let steer_prompt = steer_prompt.clone();
                                 let quote_target = quote_target.clone();
+                                let bm_event_id = bm_event_id.clone();
+                                let mute_event_id = mute_event_id.clone();
+                                let mute_author_hex = mute_author_hex.clone();
                                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                                     menu = menu
                                         .entry("Quote note (NIP-10)", None, {
@@ -2411,6 +2632,28 @@ impl NostrViewer {
                                                     .log_err();
                                             }
                                         })
+                                        .entry(
+                                            if is_bookmarked {
+                                                "Remove bookmark (NIP-51)"
+                                            } else {
+                                                "Bookmark (NIP-51)"
+                                            },
+                                            None,
+                                            {
+                                                let viewer = viewer.clone();
+                                                let bm_event_id = bm_event_id.clone();
+                                                move |_, cx| {
+                                                    viewer
+                                                        .update(cx, |this, cx| {
+                                                            this.toggle_bookmark(
+                                                                bm_event_id.clone(),
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                }
+                                            },
+                                        )
                                         .entry("Research in Steer", None, {
                                         let viewer = viewer.clone();
                                         let steer_prompt = steer_prompt.clone();
@@ -2425,23 +2668,48 @@ impl NostrViewer {
                                         }
                                     });
                                     if !is_self_author {
-                                        menu = menu.entry("Message author (NIP-17 DM)", None, {
-                                            let viewer = viewer.clone();
-                                            let dm_author_hex = dm_author_hex.clone();
-                                            let dm_author_name = dm_author_name.clone();
-                                            move |window, cx| {
-                                                viewer
-                                                    .update(cx, |this, cx| {
-                                                        this.open_dm_with_author(
-                                                            dm_author_hex.clone(),
-                                                            dm_author_name.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .log_err();
-                                            }
-                                        });
+                                        menu = menu
+                                            .entry("Message author (NIP-17 DM)", None, {
+                                                let viewer = viewer.clone();
+                                                let dm_author_hex = dm_author_hex.clone();
+                                                let dm_author_name = dm_author_name.clone();
+                                                move |window, cx| {
+                                                    viewer
+                                                        .update(cx, |this, cx| {
+                                                            this.open_dm_with_author(
+                                                                dm_author_hex.clone(),
+                                                                dm_author_name.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                }
+                                            })
+                                            .entry(
+                                                if is_muted {
+                                                    "Unmute author (NIP-51)"
+                                                } else {
+                                                    "Mute author (NIP-51)"
+                                                },
+                                                None,
+                                                {
+                                                    let viewer = viewer.clone();
+                                                    let mute_event_id = mute_event_id.clone();
+                                                    let mute_author_hex = mute_author_hex.clone();
+                                                    move |_, cx| {
+                                                        viewer
+                                                            .update(cx, |this, cx| {
+                                                                this.toggle_mute(
+                                                                    mute_event_id.clone(),
+                                                                    mute_author_hex.clone(),
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .log_err();
+                                                    }
+                                                },
+                                            );
                                     }
                                     menu = menu.separator();
                                     menu.entry("Copy text", None, {
@@ -3005,10 +3273,24 @@ impl NostrViewer {
                 ))
                 .into_any_element();
         };
+        let filtered_rows: Vec<Row>;
+        let visible_rows: &[Row] = if self.timeline_filter == TimelineFilter::Everything
+            || self.muted_pubkeys.is_empty()
+        {
+            &feed.rows
+        } else {
+            filtered_rows = feed
+                .rows
+                .iter()
+                .filter(|r| !self.muted_pubkeys.contains(&r.event.author))
+                .cloned()
+                .collect();
+            &filtered_rows
+        };
         let names = self.names_of(&feed.rows);
         let offset = local_offset();
         let lines = timeline_lines(
-            &feed.rows,
+            visible_rows,
             &names,
             self.timeline_filter,
             self.follows.as_ref(),

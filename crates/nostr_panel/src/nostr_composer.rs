@@ -33,6 +33,33 @@ pub(crate) const PUBLISH_REPOST_TOOL: &str = "nostr_publish_repost";
 /// (<https://nostr-nips.com/nip-02>). Always requires native editor approval.
 pub(crate) const PUBLISH_FOLLOWS_TOOL: &str = "nostr_publish_follows";
 
+/// The MCP tool that publishes a NIP-23 `kind: 30023` long-form Markdown article
+/// (<https://nostr-nips.com/nip-23>). Always requires native editor approval.
+pub(crate) const PUBLISH_ARTICLE_TOOL: &str = "nostr_publish_article";
+
+/// The MCP tool that publishes a NIP-51 `kind: 10000` (mute) or `kind: 10003`
+/// (bookmark) list (<https://nostr-nips.com/nip-51>). Always requires native editor approval.
+pub(crate) const PUBLISH_LIST_TOOL: &str = "nostr_publish_list";
+
+/// Convert an article title into a clean ASCII NIP-23 `d`-tag slug.
+pub(crate) fn slugify_article_title(title: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !slug.is_empty() && !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+        if slug.len() >= 64 {
+            break;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
 /// The MCP tool that prepares a verified NIP-57 Lightning zap invoice
 /// (<https://nostr-nips.com/nip-57>).
 pub(crate) const PREPARE_ZAP_TOOL: &str = "nostr_prepare_zap";

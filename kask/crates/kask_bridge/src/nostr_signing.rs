@@ -20,8 +20,9 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrDeletionWire, NostrFollowsWire, NostrMediaAttachment, NostrNutzapWire, NostrQuoteWire,
-    NostrReactionWire, NostrReplyWire, NostrRepostWire, NostrZapRequestWire,
+    NostrArticleWire, NostrDeletionWire, NostrFollowsWire, NostrListWire, NostrMediaAttachment,
+    NostrNutzapWire, NostrQuoteWire, NostrReactionWire, NostrReplyWire, NostrRepostWire,
+    NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -65,6 +66,10 @@ pub(crate) enum NostrSignOperation {
     Repost(NostrRepostWire),
     /// Sign a NIP-02 `kind: 3` follow list (NEVER bypassed by `autopublish`).
     Follows(NostrFollowsWire),
+    /// Sign a NIP-23 `kind: 30023` long-form Markdown article (NEVER bypassed by `autopublish`).
+    Article(NostrArticleWire),
+    /// Sign a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list (NEVER bypassed by `autopublish`).
+    List(NostrListWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -525,6 +530,75 @@ pub(crate) fn admit_follows(
     Ok(NostrSignOperation::Follows(payload.clone()))
 }
 
+/// Admit a NIP-23 `kind: 30023` long-form article sign request.
+pub(crate) fn admit_article(
+    grant: Option<&str>,
+    payload: Option<&NostrArticleWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr article requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_article payload is required for SignNostrArticle",
+        ));
+    };
+    if payload.title.trim().is_empty() || payload.slug.trim().is_empty() {
+        return Err(refusal(
+            "InvalidArgument",
+            "article title and slug must be non-empty",
+        ));
+    }
+    if payload.content.trim().is_empty()
+        || payload.content.chars().count() > hkask_nostr_signer::MAX_ARTICLE_CHARS
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            "article markdown body must be non-empty and at most 64000 characters",
+        ));
+    }
+    Ok(NostrSignOperation::Article(payload.clone()))
+}
+
+/// Admit a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list sign request.
+pub(crate) fn admit_list(
+    grant: Option<&str>,
+    payload: Option<&NostrListWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr list requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_list payload is required for SignNostrList",
+        ));
+    };
+    if payload.kind != hkask_nostr_signer::MUTE_LIST_KIND
+        && payload.kind != hkask_nostr_signer::BOOKMARK_LIST_KIND
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            "only NIP-51 mute lists (kind 10000) and bookmark lists (kind 10003) are admitted",
+        ));
+    }
+    if payload.event_ids_hex.len() + payload.pubkeys_hex.len() > hkask_nostr_signer::MAX_LIST_ITEMS
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            "list exceeds maximum of 500 entries",
+        ));
+    }
+    Ok(NostrSignOperation::List(payload.clone()))
+}
+
 /// What the operator is shown when autopublish is off. The whole text is in
 /// the detail so what is approved is what is signed.
 pub(crate) fn approval_text(npub: &str, relays: &[String]) -> String {
@@ -763,6 +837,25 @@ pub(crate) fn sign_operation_with_slots(
             &follows.followed_pubkeys_hex,
         )
         .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::Article(article) => {
+            let draft = hkask_nostr_signer::ArticleDraft {
+                slug: article.slug.clone(),
+                title: article.title.clone(),
+                summary: article.summary.clone(),
+                published_at: article.published_at,
+                hashtags: article.hashtags.clone(),
+            };
+            hkask_nostr_signer::sign_article(&key, article.created_at, &article.content, &draft)
+                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+        }
+        NostrSignOperation::List(list) => hkask_nostr_signer::sign_list(
+            &key,
+            list.created_at,
+            list.kind,
+            &list.event_ids_hex,
+            &list.pubkeys_hex,
+        )
+        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
     };
     drop(key);
     serde_json::from_str(&event.to_json()).map_err(|error| {
@@ -813,7 +906,10 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
     // nutzaps, deletions, or replaceable kind:3 follow list updates.
     let always_prompt_op = matches!(
         operation,
-        NostrSignOperation::Deletion(_) | NostrSignOperation::Follows(_)
+        NostrSignOperation::Deletion(_)
+            | NostrSignOperation::Follows(_)
+            | NostrSignOperation::Article(_)
+            | NostrSignOperation::List(_)
     );
     if is_zap_op || always_prompt_op || !autopublish {
         let Some(window) = cx.update(|cx| {
@@ -975,6 +1071,44 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 [APPROVE_LABEL, DECLINE_LABEL],
                 "the operator did not approve the follow list update; nothing was signed",
             ),
+            NostrSignOperation::Article(article) => {
+                let preview: String = article.content.chars().take(400).collect();
+                (
+                    format!(
+                        "Publish NIP-23 long-form article \"{}\" (kind:30023)?",
+                        article.title
+                    ),
+                    format!(
+                        "Slug (d tag): {}\nLength: {} chars\nRelays: {}\n\nPreview:\n{}",
+                        article.slug,
+                        article.content.chars().count(),
+                        article.relays.join(", "),
+                        preview,
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the article; nothing was signed",
+                )
+            }
+            NostrSignOperation::List(list) => {
+                let label = if list.kind == hkask_nostr_signer::BOOKMARK_LIST_KIND {
+                    "bookmark list (NIP-51 kind:10003)"
+                } else {
+                    "mute list (NIP-51 kind:10000)"
+                };
+                (
+                    format!(
+                        "Publish updated Nostr {label} ({} event(s), {} pubkey(s))?",
+                        list.event_ids_hex.len(),
+                        list.pubkeys_hex.len()
+                    ),
+                    format!(
+                        "This replaces your {label} across relays.\nRelays: {}",
+                        list.relays.join(", ")
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the list update; nothing was signed",
+                )
+            }
         };
         let answer = cx.update_window(window, |_, window, cx| {
             window.prompt(PromptLevel::Warning, &message, Some(&detail), &buttons, cx)
@@ -1349,7 +1483,9 @@ mod tests {
             | NostrSignOperation::Reply(_)
             | NostrSignOperation::Deletion(_)
             | NostrSignOperation::Repost(_)
-            | NostrSignOperation::Follows(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::Follows(_)
+            | NostrSignOperation::Article(_)
+            | NostrSignOperation::List(_) => panic!("expected BlossomUpload"),
         }
     }
 
