@@ -269,6 +269,10 @@ pub struct NostrListWire {
     pub mint_urls: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub p2pk_pubkey_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preserved_tags: Vec<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preserved_content: Option<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }
@@ -289,11 +293,15 @@ pub struct NostrProfileWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nip05: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lud16: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lud06: Option<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }

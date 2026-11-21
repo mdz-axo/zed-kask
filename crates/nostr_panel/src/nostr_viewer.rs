@@ -171,8 +171,12 @@ pub struct NostrViewer {
     follows_state: ReplaceableListState,
     /// Operator's NIP-51 bookmarked event IDs (`kind: 10003`, `e` tags).
     bookmarks_state: ReplaceableListState,
+    /// Non-`e`/`p` tags and encrypted private `content` preserved from the operator's `kind: 10003`.
+    bookmarks_preserved: (Vec<Vec<String>>, Option<String>),
     /// Operator's NIP-51 muted author pubkeys (`kind: 10000`, `p` tags).
     mutes_state: ReplaceableListState,
+    /// Non-`e`/`p` tags and encrypted private `content` preserved from the operator's `kind: 10000`.
+    mutes_preserved: (Vec<Vec<String>>, Option<String>),
     /// Active type filter on the Alerts (`nostr_notifications`) tab.
     alert_filter: AlertFilter,
     /// Newest notification `created_at` seen by the operator (unread watermark).
@@ -193,9 +197,10 @@ pub struct NostrViewer {
     profile_about_editor: Option<Entity<editor::Editor>>,
     profile_nip05_editor: Option<Entity<editor::Editor>>,
     profile_lud16_editor: Option<Entity<editor::Editor>>,
-    /// Non-edited `kind: 0` fields (`display_name`, `picture`, `website`) preserved
-    /// from the operator's loaded profile so publishing never silently wipes them.
-    loaded_profile_extras: (Option<String>, Option<String>, Option<String>),
+    /// Non-edited `kind: 0` fields (`display_name`, `picture`, `banner`, `website`, `lud06`)
+    /// preserved from the operator's loaded profile so publishing never silently wipes them.
+    loaded_profile_extras: [Option<String>; 5],
+    profile_loading: bool,
     profile_publish_status: Option<(bool, String)>,
     /// Status feedback for publishing NIP-65 `kind: 10002` relay list.
     nip65_publish_status: Option<(bool, String)>,
@@ -506,7 +511,9 @@ impl NostrViewer {
             follows_request: Request::new(),
             follows_state: ReplaceableListState::Unloaded,
             bookmarks_state: ReplaceableListState::Unloaded,
+            bookmarks_preserved: (Vec::new(), None),
             mutes_state: ReplaceableListState::Unloaded,
+            mutes_preserved: (Vec::new(), None),
             alert_filter: AlertFilter::default(),
             last_seen_alert_at: 0,
             blossom_status: None,
@@ -519,7 +526,8 @@ impl NostrViewer {
             profile_about_editor: None,
             profile_nip05_editor: None,
             profile_lud16_editor: None,
-            loaded_profile_extras: (None, None, None),
+            loaded_profile_extras: [None, None, None, None, None],
+            profile_loading: false,
             profile_publish_status: None,
             nip65_publish_status: None,
             search_open: false,
@@ -594,13 +602,15 @@ impl NostrViewer {
             this.update(cx, |this, cx| {
                 let need_mute = newest_mute.is_none();
                 let need_bookmarks = newest_bookmarks.is_none();
-                if let Some((_, muted)) = newest_mute {
+                if let Some((_, muted, m_tags, m_content)) = newest_mute {
                     this.mutes_state = ReplaceableListState::Confirmed(muted);
+                    this.mutes_preserved = (m_tags, m_content);
                 } else {
                     this.mutes_state = ReplaceableListState::LoadingRelays;
                 }
-                if let Some((_, bookmarked)) = newest_bookmarks {
+                if let Some((_, bookmarked, b_tags, b_content)) = newest_bookmarks {
                     this.bookmarks_state = ReplaceableListState::Confirmed(bookmarked);
+                    this.bookmarks_preserved = (b_tags, b_content);
                 } else {
                     this.bookmarks_state = ReplaceableListState::LoadingRelays;
                 }
@@ -614,28 +624,52 @@ impl NostrViewer {
         .detach();
     }
 
+    #[allow(clippy::type_complexity)]
     fn extract_nip51_from_rows(
         rows: &[Row],
     ) -> (
-        Option<(u64, BTreeSet<String>)>,
-        Option<(u64, BTreeSet<String>)>,
+        Option<(u64, BTreeSet<String>, Vec<Vec<String>>, Option<String>)>,
+        Option<(u64, BTreeSet<String>, Vec<Vec<String>>, Option<String>)>,
     ) {
-        let mut newest_mute: Option<(u64, BTreeSet<String>)> = None;
-        let mut newest_bookmarks: Option<(u64, BTreeSet<String>)> = None;
+        let mut newest_mute: Option<(u64, BTreeSet<String>, Vec<Vec<String>>, Option<String>)> =
+            None;
+        let mut newest_bookmarks: Option<(
+            u64,
+            BTreeSet<String>,
+            Vec<Vec<String>>,
+            Option<String>,
+        )> = None;
         for row in rows {
+            let preserved_tags = |tags: &[Vec<String>]| -> Vec<Vec<String>> {
+                tags.iter()
+                    .filter(|t| {
+                        t.first()
+                            .map(String::as_str)
+                            .is_some_and(|n| !n.is_empty() && n != "e" && n != "p")
+                    })
+                    .cloned()
+                    .collect()
+            };
+            let preserved_content =
+                (!row.event.content.is_empty()).then(|| row.event.content.clone());
             match row.event.kind {
                 10_000 => {
                     if newest_mute
                         .as_ref()
-                        .is_none_or(|(at, _)| row.event.created_at >= *at)
+                        .is_none_or(|(at, _, _, _)| row.event.created_at >= *at)
                     {
-                        newest_mute = Some((row.event.created_at, follows_of(&row.event)));
+                        newest_mute = Some((
+                            row.event.created_at,
+                            follows_of(&row.event),
+                            preserved_tags(&row.event.tags),
+                            preserved_content,
+                        ));
                     }
                 }
                 10_003 => {
                     if newest_bookmarks
                         .as_ref()
-                        .is_none_or(|(at, _)| row.event.created_at >= *at)
+                        .is_none_or(|(at, _, _, _)| row.event.created_at >= *at)
                     {
                         let ids = row
                             .event
@@ -647,7 +681,12 @@ impl NostrViewer {
                                     .flatten()
                             })
                             .collect();
-                        newest_bookmarks = Some((row.event.created_at, ids));
+                        newest_bookmarks = Some((
+                            row.event.created_at,
+                            ids,
+                            preserved_tags(&row.event.tags),
+                            preserved_content,
+                        ));
                     }
                 }
                 _ => {}
@@ -708,13 +747,19 @@ impl NostrViewer {
                             Self::extract_nip51_from_rows(&feed.rows);
                         if need_mute {
                             this.mutes_state = match newest_mute {
-                                Some((_, set)) => ReplaceableListState::Confirmed(set),
+                                Some((_, set, m_tags, m_content)) => {
+                                    this.mutes_preserved = (m_tags, m_content);
+                                    ReplaceableListState::Confirmed(set)
+                                }
                                 None => ReplaceableListState::ConfirmedEmpty,
                             };
                         }
                         if need_bookmarks {
                             this.bookmarks_state = match newest_bookmarks {
-                                Some((_, set)) => ReplaceableListState::Confirmed(set),
+                                Some((_, set, b_tags, b_content)) => {
+                                    this.bookmarks_preserved = (b_tags, b_content);
+                                    ReplaceableListState::Confirmed(set)
+                                }
                                 None => ReplaceableListState::ConfirmedEmpty,
                             };
                         }
@@ -761,11 +806,14 @@ impl NostrViewer {
         self.reaction_in_flight = Some(event_id.clone());
         self.reaction_feedback = None;
         cx.notify();
-        let task = match invoke(
-            NOSTR_CLIENT_SERVER,
-            PUBLISH_LIST_TOOL,
-            json!({ "kind": 10_003, "event_ids": ids }),
-        ) {
+        let mut args = json!({ "kind": 10_003, "event_ids": ids });
+        if !self.bookmarks_preserved.0.is_empty() {
+            args["preserved_tags"] = json!(self.bookmarks_preserved.0);
+        }
+        if let Some(content) = &self.bookmarks_preserved.1 {
+            args["preserved_content"] = json!(content);
+        }
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_LIST_TOOL, args) {
             Ok(task) => task,
             Err(err) => {
                 self.reaction_in_flight = None;
@@ -840,11 +888,14 @@ impl NostrViewer {
         self.reaction_in_flight = Some(event_id.clone());
         self.reaction_feedback = None;
         cx.notify();
-        let task = match invoke(
-            NOSTR_CLIENT_SERVER,
-            PUBLISH_LIST_TOOL,
-            json!({ "kind": 10_000, "pubkeys": pubkeys }),
-        ) {
+        let mut args = json!({ "kind": 10_000, "pubkeys": pubkeys });
+        if !self.mutes_preserved.0.is_empty() {
+            args["preserved_tags"] = json!(self.mutes_preserved.0);
+        }
+        if let Some(content) = &self.mutes_preserved.1 {
+            args["preserved_content"] = json!(content);
+        }
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_LIST_TOOL, args) {
             Ok(task) => task,
             Err(err) => {
                 self.reaction_in_flight = None;
@@ -1971,6 +2022,7 @@ impl NostrViewer {
             return;
         };
         let (name_ed, about_ed, nip05_ed, lud16_ed) = self.ensure_profile_editors(window, cx);
+        self.profile_loading = true;
         self.profile_publish_status = Some((true, "Loading current kind:0 profile…".to_string()));
         cx.notify();
         let task = match invoke(
@@ -1980,6 +2032,7 @@ impl NostrViewer {
         ) {
             Ok(t) => t,
             Err(err) => {
+                self.profile_loading = false;
                 self.profile_publish_status = Some((false, err));
                 cx.notify();
                 return;
@@ -1989,6 +2042,7 @@ impl NostrViewer {
         cx.spawn(async move |this, cx| {
             let result = content_of(PROFILE_TOOL, task.await);
             this.update(cx, |this, cx| {
+                this.profile_loading = false;
                 match result {
                     Ok(content) => {
                         let fields = content
@@ -2017,11 +2071,13 @@ impl NostrViewer {
                                     .filter(|s| !s.is_empty())
                                     .map(str::to_string)
                             };
-                            this.loaded_profile_extras = (
+                            this.loaded_profile_extras = [
                                 opt_str("display_name"),
                                 opt_str("picture"),
+                                opt_str("banner"),
                                 opt_str("website"),
-                            );
+                                opt_str("lud06"),
+                            ];
                             window_handle
                                 .update(cx, |_, window, cx| {
                                     // Preserve any text the operator already typed while loading.
@@ -2064,6 +2120,14 @@ impl NostrViewer {
     }
 
     fn publish_own_profile(&mut self, cx: &mut Context<Self>) {
+        if self.profile_loading {
+            self.profile_publish_status = Some((
+                false,
+                "Wait for current kind:0 profile to finish loading before publishing.".to_string(),
+            ));
+            cx.notify();
+            return;
+        }
         let read_opt = |ed: &Option<Entity<editor::Editor>>| {
             ed.as_ref()
                 .map(|e| e.read(cx).text(cx).trim().to_string())
@@ -2072,12 +2136,14 @@ impl NostrViewer {
         let mut args = serde_json::Map::new();
         for (k, v) in [
             ("name", read_opt(&self.profile_name_editor)),
-            ("display_name", self.loaded_profile_extras.0.clone()),
+            ("display_name", self.loaded_profile_extras[0].clone()),
             ("about", read_opt(&self.profile_about_editor)),
-            ("picture", self.loaded_profile_extras.1.clone()),
-            ("website", self.loaded_profile_extras.2.clone()),
+            ("picture", self.loaded_profile_extras[1].clone()),
+            ("banner", self.loaded_profile_extras[2].clone()),
+            ("website", self.loaded_profile_extras[3].clone()),
             ("nip05", read_opt(&self.profile_nip05_editor)),
             ("lud16", read_opt(&self.profile_lud16_editor)),
+            ("lud06", self.loaded_profile_extras[4].clone()),
         ] {
             if let Some(val) = v {
                 args.insert(k.to_string(), json!(val));

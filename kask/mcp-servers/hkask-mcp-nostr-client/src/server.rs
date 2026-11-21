@@ -182,6 +182,9 @@ pub struct PublishProfileRequest {
     /// Avatar image URL (`picture`, `https://`).
     #[serde(default)]
     pub picture: Option<String>,
+    /// Banner image URL (`banner`, `https://`).
+    #[serde(default)]
+    pub banner: Option<String>,
     /// Website URL (`website`, `https://`).
     #[serde(default)]
     pub website: Option<String>,
@@ -191,6 +194,9 @@ pub struct PublishProfileRequest {
     /// Lightning Address (`user@domain`, `lud16`).
     #[serde(default)]
     pub lud16: Option<String>,
+    /// Legacy LNURL-pay (`lud06`).
+    #[serde(default)]
+    pub lud06: Option<String>,
 }
 
 /// Extract and validate NIP-65 write relays (`["r", url]` or `["r", url, "write"]`)
@@ -518,6 +524,12 @@ pub struct PublishListRequest {
     /// P2PK receive pubkey (`npub`, `nprofile`, or 64-char hex) stored as `pubkey` tag (kind 10019).
     #[serde(default)]
     pub p2pk_pubkey: Option<String>,
+    /// Optional non-`e`/`p` NIP-51 tags (`a`, `t`, `word`, `r`) preserved from an existing list.
+    #[serde(default)]
+    pub preserved_tags: Option<Vec<Vec<String>>>,
+    /// Optional encrypted private NIP-51 list `content` preserved from an existing list.
+    #[serde(default)]
+    pub preserved_content: Option<String>,
 }
 
 fn npub_of(public_key: &PublicKey) -> String {
@@ -545,6 +557,75 @@ fn with_sources(mut body: Value, session: &Session, reading: &Reading) -> Value 
 }
 
 impl NostrClientServer {
+    /// Unified publish pipeline shared across all editor-signed Nostr publish
+    /// tools: opens a relay session, fails closed if 0 relays connected before
+    /// touching the editor IPC signer, signs, verifies, broadcasts, and reads
+    /// the signed event back by id.
+    async fn publish_signed_event<F, Fut, E>(
+        &self,
+        label: &str,
+        sign: F,
+    ) -> Result<Value, McpToolError>
+    where
+        F: FnOnce(InferenceIpcClient, u64, Vec<String>) -> Fut,
+        Fut: std::future::Future<Output = Result<Value, E>>,
+        E: std::fmt::Display,
+    {
+        let session = self.open_session().await?;
+        let targets = session.connected_target_addresses();
+        if targets.is_empty() {
+            return Err(McpToolError::unavailable(format!(
+                "no local relay or usable seed relay is connected to publish the {label}"
+            )));
+        }
+        let ipc = match InferenceIpcClient::from_env().await {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => {
+                return Err(McpToolError::unavailable(format!(
+                    "could not connect to the editor signing bridge: {e}"
+                )));
+            }
+            None => {
+                return Err(McpToolError::unavailable(
+                    "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                ));
+            }
+        };
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let signed = sign(ipc, now_secs, targets).await.map_err(|e| {
+            McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+        })?;
+        let event: Event = serde_json::from_value(signed).map_err(|e| {
+            McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+        })?;
+        event.verify().map_err(|e| {
+            McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+        })?;
+        let relays = session.send(&event).await;
+        let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+        let read_back = match read_back
+            .events
+            .iter()
+            .find(|(seen, _)| seen.id == event.id)
+        {
+            Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+            None => {
+                json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+            }
+        };
+        Ok(json!({
+            "published": wire_event(&event, &[]),
+            "relays": relays,
+            "read_back": read_back,
+            "content_trust": CONTENT_TRUST,
+            "local_relay": session.local_relay_state(),
+            "relay_scope": RELAY_SCOPE,
+        }))
+    }
+
     /// Connect to the relays this server reads from. With none to ask, the
     /// request cannot be answered at all, which is not an empty answer.
     async fn open_session(&self) -> Result<Session, McpToolError> {
@@ -1058,7 +1139,12 @@ impl NostrClientServer {
                             let mut truncated = false;
                             for name in PROFILE_FIELDS {
                                 if let Some(Value::String(text)) = metadata.get(name) {
-                                    let (text, cut) = truncate_chars(text, MAX_FIELD_CHARS);
+                                    let limit = if name == "about" {
+                                        2_000
+                                    } else {
+                                        MAX_FIELD_CHARS
+                                    };
+                                    let (text, cut) = truncate_chars(text, limit);
                                     truncated |= cut;
                                     fields.insert(name.to_string(), json!(text));
                                 }
@@ -2091,61 +2177,17 @@ impl NostrClientServer {
                     "reaction content must be at most 32 characters",
                 ));
             }
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrReactionWire {
-                created_at: now_secs,
-                target_event_id_hex,
-                target_pubkey_hex,
-                content,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_reaction(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            self.publish_signed_event("reaction", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_reaction(hkask_types::nostr_wire::NostrReactionWire {
+                    created_at: now_secs,
+                    target_event_id_hex,
+                    target_pubkey_hex,
+                    content,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2187,65 +2229,22 @@ impl NostrClientServer {
             let target_pubkey_hex = identifiers::parse_public_key(&request.target_pubkey)
                 .map_err(|error| refused("target_pubkey", error))?
                 .to_hex();
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = request.created_at.unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-            });
-            let wire = hkask_types::nostr_wire::NostrReplyWire {
-                created_at: now_secs,
-                root_event_id_hex,
-                reply_to_event_id_hex,
-                target_pubkey_hex,
-                root_kind: request.root_kind.unwrap_or(1),
-                content: request.content,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_reply(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            let root_kind = request.root_kind.unwrap_or(1);
+            let explicit_ts = request.created_at;
+            let content = request.content;
+            self.publish_signed_event("reply", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_reply(hkask_types::nostr_wire::NostrReplyWire {
+                    created_at: explicit_ts.unwrap_or(now_secs),
+                    root_event_id_hex,
+                    reply_to_event_id_hex,
+                    target_pubkey_hex,
+                    root_kind,
+                    content,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2283,61 +2282,18 @@ impl NostrClientServer {
                     "reason exceeds maximum of {MAX_CONTENT_CHARS} characters"
                 )));
             }
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrDeletionWire {
-                created_at: now_secs,
-                target_event_ids,
-                target_kind: request.target_kind,
-                reason,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_deletion(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            let target_kind = request.target_kind;
+            self.publish_signed_event("deletion request", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_deletion(hkask_types::nostr_wire::NostrDeletionWire {
+                    created_at: now_secs,
+                    target_event_ids,
+                    target_kind,
+                    reason,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2363,63 +2319,18 @@ impl NostrClientServer {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrRepostWire {
-                created_at: now_secs,
-                target_event_id_hex,
-                target_pubkey_hex,
-                target_kind,
-                relay_hint,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_repost(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            self.publish_signed_event("repost", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_repost(hkask_types::nostr_wire::NostrRepostWire {
+                    created_at: now_secs,
+                    target_event_id_hex,
+                    target_pubkey_hex,
+                    target_kind,
+                    relay_hint,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2446,59 +2357,15 @@ impl NostrClientServer {
                     followed_pubkeys_hex.push(hex);
                 }
             }
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrFollowsWire {
-                created_at: now_secs,
-                followed_pubkeys_hex,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_follows(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            self.publish_signed_event("follow list", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_follows(hkask_types::nostr_wire::NostrFollowsWire {
+                    created_at: now_secs,
+                    followed_pubkeys_hex,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2523,70 +2390,29 @@ impl NostrClientServer {
                     "content must be non-empty and at most 64000 characters",
                 ));
             }
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrArticleWire {
-                created_at: now_secs,
-                slug,
-                title,
-                summary: request.summary,
-                published_at: now_secs,
-                hashtags: request.hashtags.unwrap_or_default(),
-                content: request.content,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_article(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            let summary = request.summary;
+            let hashtags = request.hashtags.unwrap_or_default();
+            let content = request.content;
+            self.publish_signed_event("article", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_article(hkask_types::nostr_wire::NostrArticleWire {
+                    created_at: now_secs,
+                    slug,
+                    title,
+                    summary,
+                    published_at: now_secs,
+                    hashtags,
+                    content,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
 
     #[tool(
-        description = "Publish an updated NIP-01 kind 0 profile metadata event (name, display_name, about, picture, website, nip05, lud16; https://nostr-nips.com/nip-01). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because kind 0 replaces your public profile metadata across relays. Contacts the local relay and usable seed relays, and reads the signed event back by id."
+        description = "Publish an updated NIP-01 kind 0 profile metadata event (name, display_name, about, picture, banner, website, nip05, lud16, lud06; https://nostr-nips.com/nip-01). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because kind 0 replaces your public profile metadata across relays. Contacts the local relay and usable seed relays, and reads the signed event back by id."
     )]
     pub async fn nostr_publish_profile(
         &self,
@@ -2598,81 +2424,36 @@ impl NostrClientServer {
                 &request.display_name,
                 &request.about,
                 &request.picture,
+                &request.banner,
                 &request.website,
                 &request.nip05,
                 &request.lud16,
+                &request.lud06,
             ]
             .iter()
             .any(|f| f.as_deref().is_some_and(|s| !s.trim().is_empty()));
             if !has_any {
                 return Err(McpToolError::invalid_argument(
-                    "provide at least one non-empty profile field (name, display_name, about, picture, website, nip05, or lud16)",
+                    "provide at least one non-empty profile field (name, display_name, about, picture, banner, website, nip05, lud16, or lud06)",
                 ));
             }
-            let ipc = match hkask_inference::InferenceIpcClient::from_env().await {
-                Some(Ok(client)) => client,
-                Some(Err(err)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor's signing service: {err}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "the editor's signing service is not available on this connection; start from zed-kask",
-                    ));
-                }
-            };
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            if targets.is_empty() {
-                return Err(McpToolError::unavailable(
-                    "no local relay or usable seed relay is connected to publish the profile",
-                ));
-            }
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrProfileWire {
-                created_at: now_secs,
-                name: request.name,
-                display_name: request.display_name,
-                about: request.about,
-                picture: request.picture,
-                website: request.website,
-                nip05: request.nip05,
-                lud16: request.lud16,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_profile(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            self.publish_signed_event("profile", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_profile(hkask_types::nostr_wire::NostrProfileWire {
+                    created_at: now_secs,
+                    name: request.name,
+                    display_name: request.display_name,
+                    about: request.about,
+                    picture: request.picture,
+                    banner: request.banner,
+                    website: request.website,
+                    nip05: request.nip05,
+                    lud16: request.lud16,
+                    lud06: request.lud06,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2707,68 +2488,21 @@ impl NostrClientServer {
                 ),
                 _ => None,
             };
-            let ipc = match hkask_inference::InferenceIpcClient::from_env().await {
-                Some(Ok(client)) => client,
-                Some(Err(err)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor's signing service: {err}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "the editor's signing service is not available on this connection; start from zed-kask",
-                    ));
-                }
-            };
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            if targets.is_empty() {
-                return Err(McpToolError::unavailable(
-                    "no local relay or usable seed relay is connected to publish the highlight",
-                ));
-            }
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrHighlightWire {
-                created_at: now_secs,
-                quoted_text,
-                source_event_id_hex,
-                source_author_hex,
-                source_url: request.source_url,
-                comment: request.comment,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_highlight(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            let source_url = request.source_url;
+            let comment = request.comment;
+            self.publish_signed_event("highlight", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_highlight(hkask_types::nostr_wire::NostrHighlightWire {
+                    created_at: now_secs,
+                    quoted_text,
+                    source_event_id_hex,
+                    source_author_hex,
+                    source_url,
+                    comment,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }
@@ -2826,69 +2560,30 @@ impl NostrClientServer {
                 ),
                 None => None,
             };
-            if event_ids_hex.len() + pubkeys_hex.len() > 500 {
+            let preserved_tags = request.preserved_tags.unwrap_or_default();
+            let preserved_content = request.preserved_content;
+            if event_ids_hex.len() + pubkeys_hex.len() + preserved_tags.len() > 500 {
                 return Err(McpToolError::invalid_argument(
                     "list exceeds maximum of 500 entries",
                 ));
             }
-            let session = self.open_session().await?;
-            let targets = session.connected_target_addresses();
-            let ipc = match InferenceIpcClient::from_env().await {
-                Some(Ok(c)) => c,
-                Some(Err(e)) => {
-                    return Err(McpToolError::unavailable(format!(
-                        "could not connect to the editor signing bridge: {e}"
-                    )));
-                }
-                None => {
-                    return Err(McpToolError::unavailable(
-                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
-                    ));
-                }
-            };
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let wire = hkask_types::nostr_wire::NostrListWire {
-                created_at: now_secs,
-                kind: request.kind,
-                event_ids_hex,
-                pubkeys_hex,
-                relay_urls,
-                mint_urls,
-                p2pk_pubkey_hex,
-                relays: targets,
-            };
-            let signed = ipc.sign_nostr_list(wire).await.map_err(|e| {
-                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
-            })?;
-            let event: Event = serde_json::from_value(signed).map_err(|e| {
-                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
-            })?;
-            event.verify().map_err(|e| {
-                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
-            })?;
-            let relays = session.send(&event).await;
-            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
-            let read_back = match read_back
-                .events
-                .iter()
-                .find(|(seen, _)| seen.id == event.id)
-            {
-                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
-                None => {
-                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
-                }
-            };
-            Ok(json!({
-                "published": wire_event(&event, &[]),
-                "relays": relays,
-                "read_back": read_back,
-                "content_trust": CONTENT_TRUST,
-                "local_relay": session.local_relay_state(),
-                "relay_scope": RELAY_SCOPE,
-            }))
+            let kind = request.kind;
+            self.publish_signed_event("replaceable list", |ipc, now_secs, targets| async move {
+                ipc.sign_nostr_list(hkask_types::nostr_wire::NostrListWire {
+                    created_at: now_secs,
+                    kind,
+                    event_ids_hex,
+                    pubkeys_hex,
+                    relay_urls,
+                    mint_urls,
+                    p2pk_pubkey_hex,
+                    preserved_tags,
+                    preserved_content,
+                    relays: targets,
+                })
+                .await
+            })
+            .await
         })
         .await
     }

@@ -926,9 +926,11 @@ pub(crate) fn sign_operation_with_slots(
                 display_name: profile.display_name.clone(),
                 about: profile.about.clone(),
                 picture: profile.picture.clone(),
+                banner: profile.banner.clone(),
                 website: profile.website.clone(),
                 nip05: profile.nip05.clone(),
                 lud16: profile.lud16.clone(),
+                lud06: profile.lud06.clone(),
             };
             hkask_nostr_signer::sign_profile(&key, profile.created_at, &meta)
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
@@ -967,12 +969,14 @@ pub(crate) fn sign_operation_with_slots(
                 )
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
             }
-            _ => hkask_nostr_signer::sign_list(
+            _ => hkask_nostr_signer::sign_list_with_preserved(
                 &key,
                 list.created_at,
                 list.kind,
                 &list.event_ids_hex,
                 &list.pubkeys_hex,
+                &list.preserved_tags,
+                list.preserved_content.as_deref().unwrap_or(""),
             )
             .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
         },

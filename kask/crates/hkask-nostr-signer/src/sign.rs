@@ -259,9 +259,11 @@ pub struct ProfileMetadata {
     pub display_name: Option<String>,
     pub about: Option<String>,
     pub picture: Option<String>,
+    pub banner: Option<String>,
     pub website: Option<String>,
     pub nip05: Option<String>,
     pub lud16: Option<String>,
+    pub lud06: Option<String>,
 }
 
 fn json_escape_str(input: &str) -> String {
@@ -320,9 +322,11 @@ pub fn sign_profile(
     push_text("name", meta.name.as_deref(), 200)?;
     push_text("display_name", meta.display_name.as_deref(), 200)?;
     push_text("about", meta.about.as_deref(), 2_000)?;
+    push_text("lud06", meta.lud06.as_deref(), 500)?;
 
     for (field, raw) in [
         ("picture", meta.picture.as_deref()),
+        ("banner", meta.banner.as_deref()),
         ("website", meta.website.as_deref()),
     ] {
         if let Some(val) = raw.map(str::trim).filter(|s| !s.is_empty()) {
@@ -755,17 +759,38 @@ pub fn sign_list(
     event_ids_hex: &[String],
     pubkeys_hex: &[String],
 ) -> Result<Event, SignError> {
+    sign_list_with_preserved(key, created_at, kind, event_ids_hex, pubkeys_hex, &[], "")
+}
+
+/// Sign a NIP-51 replaceable list (`kind: 10000` or `kind: 10003`) while
+/// preserving non-`e`/`p` tags (such as `a`, `t`, `word`, `r`) and any
+/// encrypted private list `content` from the operator's prior list event.
+pub fn sign_list_with_preserved(
+    key: &SecretKey,
+    created_at: u64,
+    kind: u16,
+    event_ids_hex: &[String],
+    pubkeys_hex: &[String],
+    preserved_tags: &[Vec<String>],
+    preserved_content: &str,
+) -> Result<Event, SignError> {
     if kind != MUTE_LIST_KIND && kind != BOOKMARK_LIST_KIND {
         return Err(SignError::InvalidList {
             reason: "only NIP-51 mute lists (kind 10000) and bookmark lists (kind 10003) are signed here",
         });
     }
-    if event_ids_hex.len() + pubkeys_hex.len() > MAX_LIST_ITEMS {
+    if event_ids_hex.len() + pubkeys_hex.len() + preserved_tags.len() > MAX_LIST_ITEMS {
         return Err(SignError::InvalidList {
             reason: "list exceeds maximum of 500 entries",
         });
     }
-    let mut tags = Vec::with_capacity(event_ids_hex.len() + pubkeys_hex.len());
+    if preserved_content.len() > 32_768 {
+        return Err(SignError::InvalidList {
+            reason: "preserved private list content exceeds 32 KiB",
+        });
+    }
+    let mut tags =
+        Vec::with_capacity(event_ids_hex.len() + pubkeys_hex.len() + preserved_tags.len());
     let mut seen_e = std::collections::HashSet::new();
     for id in event_ids_hex {
         if !is_lower_sha256_hex(id) {
@@ -788,7 +813,16 @@ pub fn sign_list(
             tags.push(vec!["p".to_string(), pk.clone()]);
         }
     }
-    sign_verified_parts(key, kind, created_at, tags, "")
+    for tag in preserved_tags {
+        let Some(name) = tag.first().map(String::as_str) else {
+            continue;
+        };
+        if name == "e" || name == "p" || name.is_empty() || tag.len() > 8 {
+            continue;
+        }
+        tags.push(tag.clone());
+    }
+    sign_verified_parts(key, kind, created_at, tags, preserved_content)
 }
 
 /// Sign a NIP-17 `kind: 10050` DM inbox relay list (<https://nostr-nips.com/nip-17>).
