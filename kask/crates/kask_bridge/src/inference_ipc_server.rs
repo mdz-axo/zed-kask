@@ -1030,6 +1030,7 @@ async fn dispatch(
             | InferenceMethod::SignNostrArticle
             | InferenceMethod::SignNostrList
             | InferenceMethod::SignNostrProfile
+            | InferenceMethod::SignNostrHighlight
     ) {
         let admitted = match request.method {
             InferenceMethod::SignNostrNote => crate::nostr_signing::admit_note(
@@ -1083,6 +1084,10 @@ async fn dispatch(
             InferenceMethod::SignNostrProfile => crate::nostr_signing::admit_profile(
                 params.tool_grant.as_deref(),
                 params.nostr_profile.as_ref(),
+            ),
+            InferenceMethod::SignNostrHighlight => crate::nostr_signing::admit_highlight(
+                params.tool_grant.as_deref(),
+                params.nostr_highlight.as_ref(),
             ),
             InferenceMethod::SignNostrList => crate::nostr_signing::admit_list(
                 params.tool_grant.as_deref(),
@@ -1518,6 +1523,7 @@ async fn dispatch(
         | InferenceMethod::SignNostrArticle
         | InferenceMethod::SignNostrList
         | InferenceMethod::SignNostrProfile
+        | InferenceMethod::SignNostrHighlight
         | InferenceMethod::WalletDbUnlock
         | InferenceMethod::WalletSpendApprove
         | InferenceMethod::WalletNwcQuery => {

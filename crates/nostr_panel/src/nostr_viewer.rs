@@ -58,10 +58,10 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::nostr_composer::{
-    PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL, PUBLISH_PROFILE_TOOL,
-    PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext,
-    WALLET_RECEIVE_ECASH_TOOL, WALLET_STATUS_TOOL, parse_publish_receipt, parse_wallet_status,
-    sanitize_untrusted_text,
+    HighlightContext, PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL,
+    PUBLISH_PROFILE_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL, QUICK_REACTIONS,
+    QuoteContext, ReplyContext, WALLET_RECEIVE_ECASH_TOOL, WALLET_STATUS_TOOL,
+    parse_publish_receipt, parse_wallet_status, sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -199,6 +199,13 @@ pub struct NostrViewer {
     profile_publish_status: Option<(bool, String)>,
     /// Status feedback for publishing NIP-65 `kind: 10002` relay list.
     nip65_publish_status: Option<(bool, String)>,
+    /// Collapsible NIP-50 / local search bar state in Timeline.
+    search_open: bool,
+    search_editor: Option<Entity<editor::Editor>>,
+    search_feed: Option<Feed>,
+    search_request: Request,
+    /// Latest assistant reply text from the Steer pane for one-click draft handoff.
+    latest_steer_reply: Option<String>,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -515,6 +522,11 @@ impl NostrViewer {
             loaded_profile_extras: (None, None, None),
             profile_publish_status: None,
             nip65_publish_status: None,
+            search_open: false,
+            search_editor: None,
+            search_feed: None,
+            search_request: Request::new(),
+            latest_steer_reply: None,
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -2405,15 +2417,38 @@ impl NostrViewer {
         }
         self.thread = Some(thread.downgrade());
         let mut outputs = Vec::new();
+        let mut latest_assistant_text: Option<String> = None;
         for entry in thread.read(cx).entries() {
-            let AgentThreadEntry::ToolCall(call) = entry else {
-                continue;
-            };
-            let Some(output) = call.raw_output.as_ref() else {
-                continue; // still running
-            };
-            if self.processed_tool_results.insert(call.id.clone()) {
-                outputs.push(output.clone());
+            match entry {
+                AgentThreadEntry::ToolCall(call) => {
+                    let Some(output) = call.raw_output.as_ref() else {
+                        continue; // still running
+                    };
+                    if self.processed_tool_results.insert(call.id.clone()) {
+                        outputs.push(output.clone());
+                    }
+                }
+                AgentThreadEntry::AssistantMessage(msg) => {
+                    let md = msg.to_markdown(cx);
+                    let body = md
+                        .strip_prefix("## Assistant\n\n")
+                        .unwrap_or(md.as_str())
+                        .trim()
+                        .to_string();
+                    if !body.is_empty() {
+                        latest_assistant_text = Some(body);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if latest_assistant_text != self.latest_steer_reply {
+            self.latest_steer_reply = latest_assistant_text.clone();
+            if let Some(view) = &self.composer_view {
+                view.update(cx, |view, cx| {
+                    view.set_latest_steer_reply(latest_assistant_text);
+                    cx.notify();
+                });
             }
         }
         for output in outputs {
@@ -2461,12 +2496,100 @@ impl NostrViewer {
     // ── Drawing ─────────────────────────────────────────────────────
 
     fn active_timeline_feed(&self) -> Option<&Feed> {
+        if let Some(feed) = &self.search_feed {
+            return Some(feed);
+        }
         if self.timeline_filter == TimelineFilter::Following
             && let Some(feed) = &self.following_feed
         {
             return Some(feed);
         }
         self.feed.as_ref()
+    }
+
+    fn ensure_search_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(existing) = &self.search_editor {
+            return existing.clone();
+        }
+        let ed = cx.new(|cx| {
+            let mut e = editor::Editor::single_line(window, cx);
+            e.set_placeholder_text("Search local archive or NIP-50 relays…", window, cx);
+            e
+        });
+        self.search_editor = Some(ed.clone());
+        ed
+    }
+
+    fn run_search(&mut self, remote_nip50: bool, cx: &mut Context<Self>) {
+        let query = self
+            .search_editor
+            .as_ref()
+            .map(|e| e.read(cx).text(cx).trim().to_string())
+            .unwrap_or_default();
+        if query.is_empty() {
+            return;
+        }
+        let epoch = self.search_request.begin();
+        cx.notify();
+        let (server, tool, args, origin) = if remote_nip50 {
+            (
+                NOSTR_CLIENT_SERVER,
+                FETCH_TOOL,
+                json!({ "search": query, "kinds": [1, 9802, 30023], "limit": 50 }),
+                FeedOrigin::Conversation,
+            )
+        } else {
+            (
+                NOSTR_RELAY_SERVER,
+                ARCHIVE_TOOL,
+                json!({ "search": query, "limit": 50 }),
+                FeedOrigin::Archive,
+            )
+        };
+        let task = match invoke(server, tool, args) {
+            Ok(t) => t,
+            Err(err) => {
+                self.search_request.finish(epoch, Some(err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(tool, task.await).and_then(|content| {
+                match parse_surfaced(&content, origin) {
+                    Some(Ok(Surfaced::Feed(mut feed))) => {
+                        feed.name = if remote_nip50 {
+                            format!("NIP-50 search: \"{query}\"").into()
+                        } else {
+                            format!("Local search: \"{query}\"").into()
+                        };
+                        Ok(feed)
+                    }
+                    Some(Err(err)) => Err(err),
+                    _ => Err(format!("{tool} returned no list of events")),
+                }
+            });
+            this.update(cx, |this, cx| {
+                let (feed, err) = match result {
+                    Ok(feed) => (Some(feed), None),
+                    Err(err) => (None, Some(err)),
+                };
+                if !this.search_request.finish(epoch, err) {
+                    return;
+                }
+                if let Some(feed) = feed {
+                    this.search_feed = Some(feed);
+                    this.selected = None;
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     fn selected_row(&self) -> Option<&Row> {
@@ -3485,6 +3608,19 @@ impl NostrViewer {
                             event,
                             name.unwrap_or("unknown"),
                         );
+                        let steer_draft_prompt = format_steer_draft_prompt(
+                            event,
+                            name.unwrap_or("unknown"),
+                        );
+                        let highlight_target = HighlightContext {
+                            source_event_id: event.id.clone(),
+                            source_author: event.author.clone(),
+                            target_label: name
+                                .map(|n| format!("@{}", display_text(n)))
+                                .unwrap_or_else(|| short_hex(&event.author)),
+                        };
+                        let highlight_excerpt: String =
+                            event.content.chars().take(500).collect();
                         let quote_target = QuoteContext {
                             event_id: event.id.clone(),
                             target_pubkey: event.author.clone(),
@@ -3519,6 +3655,9 @@ impl NostrViewer {
                                 let dm_author_hex = dm_author_hex.clone();
                                 let dm_author_name = dm_author_name.clone();
                                 let steer_prompt = steer_prompt.clone();
+                                let steer_draft_prompt = steer_draft_prompt.clone();
+                                let highlight_target = highlight_target.clone();
+                                let highlight_excerpt = highlight_excerpt.clone();
                                 let quote_target = quote_target.clone();
                                 let bm_event_id = bm_event_id.clone();
                                 let mute_event_id = mute_event_id.clone();
@@ -3556,6 +3695,36 @@ impl NostrViewer {
                                                             window,
                                                             cx,
                                                         );
+                                                    })
+                                                    .log_err();
+                                            }
+                                        })
+                                        .entry("Highlight (NIP-84 kind:9802)", None, {
+                                            let viewer = viewer.clone();
+                                            let highlight_target = highlight_target.clone();
+                                            let highlight_excerpt = highlight_excerpt.clone();
+                                            move |window, cx| {
+                                                viewer
+                                                    .update(cx, |this, cx| {
+                                                        this.open_highlight_compose(
+                                                            highlight_target.clone(),
+                                                            highlight_excerpt.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .log_err();
+                                            }
+                                        })
+                                        .entry("Draft reply in Steer", None, {
+                                            let viewer = viewer.clone();
+                                            let steer_draft_prompt = steer_draft_prompt.clone();
+                                            move |_, cx| {
+                                                viewer
+                                                    .update(cx, |_, cx| {
+                                                        cx.emit(SendToSteer {
+                                                            prompt: steer_draft_prompt.clone(),
+                                                        });
                                                     })
                                                     .log_err();
                                             }
@@ -4194,8 +4363,15 @@ impl NostrViewer {
             )
     }
 
-    fn render_timeline(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(feed) = self.active_timeline_feed() else {
+    fn render_timeline(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let search_ed = if self.search_open {
+            Some(self.ensure_search_editor(window, cx))
+        } else {
+            None
+        };
+        let search_open = self.search_open;
+        let has_search_feed = self.search_feed.is_some();
+        let Some(feed) = self.active_timeline_feed().cloned() else {
             return v_flex()
                 .size_full()
                 .min_h_0()
@@ -4358,6 +4534,20 @@ impl NostrViewer {
                                         cx,
                                     ))
                                     .child(
+                                        ui::Button::new(
+                                            "nostr-timeline-search-toggle",
+                                            if search_open { "Search ▾" } else { "Search" },
+                                        )
+                                        .label_size(LabelSize::XSmall)
+                                        .toggle_state(search_open || has_search_feed)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.search_open = !this.search_open;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                    .child(
                                         ui::Button::new("nostr-timeline-refresh", "Refresh")
                                             .label_size(LabelSize::XSmall)
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -4378,6 +4568,58 @@ impl NostrViewer {
                                     ),
                             ),
                     )
+                    .when_some(search_ed, |col, ed| {
+                        col.child(
+                            h_flex()
+                                .w_full()
+                                .pt_1()
+                                .gap_1()
+                                .min_w_0()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(ed),
+                                )
+                                .child(
+                                    ui::Button::new("nostr-search-local", "Local")
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.run_search(false, cx);
+                                        })),
+                                )
+                                .child(
+                                    ui::Button::new("nostr-search-nip50", "NIP-50")
+                                        .style(ui::ButtonStyle::Filled)
+                                        .label_size(LabelSize::XSmall)
+                                        .tooltip(ui::Tooltip::text(
+                                            "Search configured seed relays via NIP-50",
+                                        ))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.run_search(true, cx);
+                                        })),
+                                )
+                                .when(has_search_feed, |row| {
+                                    row.child(
+                                        ui::Button::new("nostr-search-clear", "Clear")
+                                            .label_size(LabelSize::XSmall)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.search_feed = None;
+                                                this.selected = None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        )
+                    })
+                    .children(Self::request_line(&self.search_request, "Searching…"))
                     .child(Self::remarks(&feed.remarks))
                     .children(Self::request_line(
                         &self.archive_request,
@@ -5022,7 +5264,12 @@ impl NostrViewer {
         if let Some(existing) = &self.composer_view {
             return existing.clone();
         }
-        let view = cx.new(|_| NostrComposerView::new());
+        let initial_steer = self.latest_steer_reply.clone();
+        let view = cx.new(|_| {
+            let mut v = NostrComposerView::new();
+            v.set_latest_steer_reply(initial_steer);
+            v
+        });
         let sub = cx.subscribe(&view, |this, _view, _: &NotePublished, cx| {
             this.refresh_active_view(cx);
             cx.notify();
@@ -5064,6 +5311,20 @@ impl NostrViewer {
     ) {
         let view = self.ensure_composer_view(cx);
         view.update(cx, |view, cx| view.open_quote(target, window, cx));
+        cx.notify();
+    }
+
+    fn open_highlight_compose(
+        &mut self,
+        target: HighlightContext,
+        quoted_excerpt: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self.ensure_composer_view(cx);
+        view.update(cx, |view, cx| {
+            view.open_highlight(target, quoted_excerpt, window, cx)
+        });
         cx.notify();
     }
 

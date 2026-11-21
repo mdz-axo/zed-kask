@@ -58,6 +58,7 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_publish_article",
     "nostr_publish_deletion",
     "nostr_publish_follows",
+    "nostr_publish_highlight",
     "nostr_publish_list",
     "nostr_publish_note",
     "nostr_publish_nutzap",
@@ -293,6 +294,24 @@ pub struct NostrProfileWire {
     pub nip05: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lud16: Option<String>,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-84 `kind: 9802` highlight
+/// event (<https://nostr-nips.com/nip-84>).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct NostrHighlightWire {
+    pub created_at: u64,
+    pub quoted_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_author_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }

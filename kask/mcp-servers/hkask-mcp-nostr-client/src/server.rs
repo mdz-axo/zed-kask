@@ -116,6 +116,32 @@ pub struct FetchEventsRequest {
     /// includes them alongside the local and seed relays.
     #[serde(default)]
     pub use_outbox: Option<bool>,
+    /// Optional NIP-50 full-text search query (<=200 chars). When non-empty,
+    /// relaxes the requirement to name an author/id/reference and sends a
+    /// NIP-50 `search` filter to relays that support it.
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+/// Request for `nostr_publish_highlight`: publish a NIP-84 `kind: 9802`
+/// highlight event carrying a quoted excerpt and optional source/comment.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishHighlightRequest {
+    /// Quoted passage to highlight (1..=4000 chars).
+    pub quoted_text: String,
+    /// Optional source Nostr event id (`note`, `nevent`, or 64-char hex) for `e` tag.
+    #[serde(default)]
+    pub source_event_id: Option<String>,
+    /// Optional source author (`npub`, `nprofile`, or 64-char hex) for `p` tag.
+    #[serde(default)]
+    pub source_author: Option<String>,
+    /// Optional source `https://` URL for `r` tag.
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// Optional researcher commentary (`comment` tag, <=2000 chars).
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -717,9 +743,26 @@ impl NostrClientServer {
                     references.push(id);
                 }
             }
-            if authors.is_empty() && ids.is_empty() && references.is_empty() {
+            let search_query = request
+                .search
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            if let Some(q) = &search_query
+                && q.chars().count() > 200
+            {
                 return Err(McpToolError::invalid_argument(
-                    "name at least one author, one event id, or one referenced event; this tool does not read a relay's whole stream",
+                    "search: query must be at most 200 characters",
+                ));
+            }
+            if authors.is_empty()
+                && ids.is_empty()
+                && references.is_empty()
+                && search_query.is_none()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "name at least one author, one event id, one referenced event, or a NIP-50 search query; this tool does not read a relay's whole stream",
                 ));
             }
             let kinds = request.kinds.as_deref().unwrap_or_default();
@@ -758,6 +801,9 @@ impl NostrClientServer {
             }
             if let Some(until) = request.until {
                 filter = filter.until(Timestamp::from_secs(until));
+            }
+            if let Some(q) = search_query {
+                filter = filter.search(q);
             }
 
             let use_outbox = request.use_outbox.unwrap_or(false) && !outbox_authors.is_empty();
@@ -2586,6 +2632,102 @@ impl NostrClientServer {
                 relays: targets,
             };
             let signed = ipc.sign_nostr_profile(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Publish a NIP-84 kind 9802 highlight event carrying a quoted passage and optional source event/author/URL and commentary (https://nostr-nips.com/nip-84). Signed inside the editor process after operator approval (unless kask.nostr.autopublish is on). Contacts the local relay and usable seed relays, and reads the signed event back by id."
+    )]
+    pub async fn nostr_publish_highlight(
+        &self,
+        Parameters(request): Parameters<PublishHighlightRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_highlight", async {
+            let quoted_text = request.quoted_text.trim().to_string();
+            if quoted_text.is_empty() || quoted_text.chars().count() > 4_000 {
+                return Err(McpToolError::invalid_argument(
+                    "quoted_text must be non-empty and at most 4000 characters",
+                ));
+            }
+            let source_event_id_hex = match request.source_event_id.as_deref() {
+                Some(raw) if !raw.trim().is_empty() => Some(
+                    identifiers::parse_event_id(raw)
+                        .map_err(|error| refused("source_event_id", error))?
+                        .to_hex(),
+                ),
+                _ => None,
+            };
+            let source_author_hex = match request.source_author.as_deref() {
+                Some(raw) if !raw.trim().is_empty() => Some(
+                    identifiers::parse_public_key(raw)
+                        .map_err(|error| refused("source_author", error))?
+                        .to_hex(),
+                ),
+                _ => None,
+            };
+            let ipc = match hkask_inference::InferenceIpcClient::from_env().await {
+                Some(Ok(client)) => client,
+                Some(Err(err)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor's signing service: {err}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "the editor's signing service is not available on this connection; start from zed-kask",
+                    ));
+                }
+            };
+            let session = self.open_session().await?;
+            let targets = session.target_addresses();
+            if targets.is_empty() {
+                return Err(McpToolError::unavailable(
+                    "no local relay or usable seed relay is reachable to publish the highlight",
+                ));
+            }
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrHighlightWire {
+                created_at: now_secs,
+                quoted_text,
+                source_event_id_hex,
+                source_author_hex,
+                source_url: request.source_url,
+                comment: request.comment,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_highlight(wire).await.map_err(|e| {
                 McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
             })?;
             let event: Event = serde_json::from_value(signed).map_err(|e| {

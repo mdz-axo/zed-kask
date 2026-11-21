@@ -17,12 +17,12 @@ use ui::{Label, LabelSize, prelude::*};
 use util::ResultExt as _;
 
 use crate::nostr_composer::{
-    CHAR_WARNING_THRESHOLD, ComposerState, MAX_ARTICLE_CHARS, PUBLISH_ARTICLE_TOOL,
-    PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, QuoteContext, ReplyContext,
-    slugify_article_title,
+    CHAR_WARNING_THRESHOLD, ComposerState, HighlightContext, MAX_ARTICLE_CHARS,
+    PUBLISH_ARTICLE_TOOL, PUBLISH_HIGHLIGHT_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome,
+    QuoteContext, ReplyContext, slugify_article_title,
 };
 use crate::nostr_event_model::host_of;
-use crate::nostr_viewer::{invoke, short_hex};
+use crate::nostr_viewer::{display_text, invoke, short_hex};
 
 /// Emitted when a note or reply is accepted by at least one relay.
 pub(crate) struct NotePublished;
@@ -32,12 +32,15 @@ pub(crate) struct NostrComposerView {
     composer: ComposerState,
     article_mode: bool,
     article_meta_expanded: bool,
+    highlight_target: Option<HighlightContext>,
+    latest_steer_reply: Option<String>,
     composer_editor: Option<Entity<editor::Editor>>,
     composer_media_editor: Option<Entity<editor::Editor>>,
     article_title_editor: Option<Entity<editor::Editor>>,
     article_slug_editor: Option<Entity<editor::Editor>>,
     article_summary_editor: Option<Entity<editor::Editor>>,
     article_hashtags_editor: Option<Entity<editor::Editor>>,
+    highlight_comment_editor: Option<Entity<editor::Editor>>,
     _composer_subscription: Option<gpui::Subscription>,
     _publish_task: Option<Task<()>>,
 }
@@ -50,12 +53,15 @@ impl NostrComposerView {
             composer: ComposerState::new(),
             article_mode: false,
             article_meta_expanded: false,
+            highlight_target: None,
+            latest_steer_reply: None,
             composer_editor: None,
             composer_media_editor: None,
             article_title_editor: None,
             article_slug_editor: None,
             article_summary_editor: None,
             article_hashtags_editor: None,
+            highlight_comment_editor: None,
             _composer_subscription: None,
             _publish_task: None,
         }
@@ -67,6 +73,52 @@ impl NostrComposerView {
 
     pub(crate) fn has_draft(&self) -> bool {
         self.composer.has_draft()
+    }
+
+    /// Cache the latest assistant message from the Steer pane so the operator
+    /// can pull it into the composer with one click (human reviews & edits).
+    pub(crate) fn set_latest_steer_reply(&mut self, text: Option<String>) {
+        self.latest_steer_reply = text.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    }
+
+    fn ensure_highlight_comment_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(existing) = &self.highlight_comment_editor {
+            return existing.clone();
+        }
+        let ed = cx.new(|cx| {
+            let mut e = editor::Editor::single_line(window, cx);
+            e.set_placeholder_text("Optional commentary (NIP-84 comment tag)…", window, cx);
+            e
+        });
+        self.highlight_comment_editor = Some(ed.clone());
+        ed
+    }
+
+    /// Open the compose drawer in NIP-84 `kind: 9802` highlight mode pre-filled
+    /// with the selected note's excerpt.
+    pub(crate) fn open_highlight(
+        &mut self,
+        target: HighlightContext,
+        quoted_excerpt: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.article_mode = false;
+        self.composer.clear_reply_target();
+        self.highlight_target = Some(target);
+        self.composer.open_compose();
+        let clean = display_text(quoted_excerpt.trim()).to_string();
+        self.composer.set_draft(clean.clone());
+        let editor = self.ensure_composer_editor(window, cx);
+        editor.update(cx, |ed, cx| {
+            ed.set_text(clean, window, cx);
+            window.focus(&ed.focus_handle(cx), cx);
+        });
+        cx.notify();
     }
 
     fn ensure_article_editors(
@@ -266,12 +318,16 @@ impl NostrComposerView {
         if let Some(ed) = &self.article_hashtags_editor {
             ed.update(cx, |ed, cx| ed.set_text("", window, cx));
         }
+        if let Some(ed) = &self.highlight_comment_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
     }
 
     fn discard_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.composer.is_publishing() {
             return;
         }
+        self.highlight_target = None;
         self.composer.discard();
         if let Some(editor) = &self.composer_editor {
             editor.update(cx, |ed, cx| ed.set_text("", window, cx));
@@ -345,7 +401,11 @@ impl NostrComposerView {
         };
         let reply_target = self.composer.reply_target.clone();
         let quote_target = self.composer.quote_target.clone();
-        let is_article = self.article_mode && reply_target.is_none() && quote_target.is_none();
+        let highlight_target = self.highlight_target.clone();
+        let is_article = self.article_mode
+            && reply_target.is_none()
+            && quote_target.is_none()
+            && highlight_target.is_none();
         let (article_title, article_slug) = if is_article {
             let title = self
                 .article_title_editor
@@ -375,7 +435,22 @@ impl NostrComposerView {
         };
         cx.notify();
 
-        let (tool, args) = if is_article {
+        let (tool, args) = if let Some(hl) = highlight_target.clone() {
+            let comment = self
+                .highlight_comment_editor
+                .as_ref()
+                .map(|ed| ed.read(cx).text(cx).trim().to_string())
+                .filter(|s| !s.is_empty());
+            let mut hl_args = json!({
+                "quoted_text": payload.content,
+                "source_event_id": hl.source_event_id,
+                "source_author": hl.source_author,
+            });
+            if let Some(comment) = comment {
+                hl_args["comment"] = json!(comment);
+            }
+            (PUBLISH_HIGHLIGHT_TOOL, hl_args)
+        } else if is_article {
             let summary = self
                 .article_summary_editor
                 .as_ref()
@@ -453,6 +528,8 @@ impl NostrComposerView {
         let slug_handle = self.article_slug_editor.clone();
         let summary_handle = self.article_summary_editor.clone();
         let hashtags_handle = self.article_hashtags_editor.clone();
+        let hl_comment_handle = self.highlight_comment_editor.clone();
+        let was_highlight = highlight_target.is_some();
         let window_handle = window.window_handle();
         self._publish_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -461,9 +538,15 @@ impl NostrComposerView {
                     Ok(raw_json) => {
                         let any_accepted = this.composer.finish_publish_ok(&raw_json);
                         if any_accepted {
+                            if was_highlight {
+                                this.highlight_target = None;
+                            }
                             window_handle
                                 .update(cx, |_, window, cx| {
                                     if let Some(ed) = &editor_handle {
+                                        ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                    }
+                                    if was_highlight && let Some(ed) = &hl_comment_handle {
                                         ed.update(cx, |ed, cx| ed.set_text("", window, cx));
                                     }
                                     if is_article {
@@ -606,9 +689,17 @@ impl NostrComposerView {
             return None;
         }
         let editor = self.ensure_composer_editor(window, cx);
-        let top_level =
-            self.composer.reply_target.is_none() && self.composer.quote_target.is_none();
+        let top_level = self.composer.reply_target.is_none()
+            && self.composer.quote_target.is_none()
+            && self.highlight_target.is_none();
+        let is_highlight = self.highlight_target.is_some();
         let is_article = self.article_mode && top_level;
+        let highlight_comment_ed = if is_highlight {
+            Some(self.ensure_highlight_comment_editor(window, cx))
+        } else {
+            None
+        };
+        let steer_draft_available = self.latest_steer_reply.clone();
         let article_editors = if is_article {
             Some(self.ensure_article_editors(window, cx))
         } else {
@@ -620,7 +711,7 @@ impl NostrComposerView {
             None
         };
         let article_meta_expanded = self.article_meta_expanded;
-        let media_editor = if self.composer.reply_target.is_none() && !is_article {
+        let media_editor = if self.composer.reply_target.is_none() && !is_article && !is_highlight {
             Some(self.ensure_composer_media_editor(window, cx))
         } else {
             None
@@ -679,6 +770,11 @@ impl NostrComposerView {
                     .quote_target
                     .as_ref()
                     .map(|q| format!("Quoting {} (NIP-10)", q.target_label))
+            })
+            .or_else(|| {
+                self.highlight_target
+                    .as_ref()
+                    .map(|h| format!("Highlighting {} (NIP-84 kind:9802)", h.target_label))
             });
 
         Some(
@@ -733,7 +829,27 @@ impl NostrComposerView {
                                         this.article_mode = true;
                                         cx.notify();
                                     })),
-                            ),
+                            )
+                            .when_some(steer_draft_available.clone(), |row, steer_text| {
+                                row.child(
+                                    ui::Button::new("nostr-compose-load-steer", "← Use Steer draft")
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(publishing)
+                                        .tooltip(ui::Tooltip::text(
+                                            "Load the latest Steer assistant response into this draft for your review and editing",
+                                        ))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            let clean = display_text(&steer_text).to_string();
+                                            this.composer.set_draft(clean.clone());
+                                            let ed = this.ensure_composer_editor(window, cx);
+                                            ed.update(cx, |ed, cx| {
+                                                ed.set_text(clean, window, cx);
+                                                window.focus(&ed.focus_handle(cx), cx);
+                                            });
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
                     )
                 })
                 .when_some(article_editors, |this, (title_ed, slug_ed)| {
@@ -827,6 +943,7 @@ impl NostrComposerView {
                                     .tooltip(ui::Tooltip::text("Switch back to a top-level note"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.composer.clear_reply_target();
+                                        this.highlight_target = None;
                                         cx.notify();
                                     })),
                             ),
@@ -851,6 +968,19 @@ impl NostrComposerView {
                         .bg(cx.theme().colors().editor_background)
                         .child(editor),
                 )
+                .when_some(highlight_comment_ed, |drawer, comment_ed| {
+                    drawer.child(
+                        div()
+                            .w_full()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(comment_ed),
+                    )
+                })
                 .when_some(media_editor, |drawer, med_ed| {
                     let at_limit = media_paths.len() >= MAX_MEDIA_ATTACHMENTS;
                     drawer
@@ -974,7 +1104,9 @@ impl NostrComposerView {
                                 )
                                 .style(ui::ButtonStyle::Filled)
                                 .disabled(!can_publish)
-                                .tooltip(ui::Tooltip::text(if is_article {
+                                .tooltip(ui::Tooltip::text(if is_highlight {
+                                    "Publish NIP-84 kind:9802 highlight (Ctrl/Cmd+Enter). Editor asks approval before signing."
+                                } else if is_article {
                                     "Publish NIP-23 kind:30023 article (Ctrl/Cmd+Enter). Always asks editor approval before signing."
                                 } else if self.composer.reply_target.is_some() {
                                     "Publish reply/comment (Ctrl/Cmd+Enter). Editor asks approval before signing."

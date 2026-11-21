@@ -207,6 +207,9 @@ pub enum InferenceMethod {
     /// Gated by [`NOSTR_SIGN_GRANT`] and always requires native operator confirmation.
     SignNostrProfile,
 
+    /// Sign a NIP-84 `kind: 9802` highlight event (<https://nostr-nips.com/nip-84>).
+    SignNostrHighlight,
+
     /// Sign a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list
     /// (<https://nostr-nips.com/nip-51>). Gated by [`NOSTR_SIGN_GRANT`] and
     /// always requires native operator confirmation.
@@ -362,6 +365,9 @@ pub struct InferenceParams {
     /// NIP-01 `kind: 0` profile metadata payload for `InferenceMethod::SignNostrProfile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_profile: Option<crate::nostr_wire::NostrProfileWire>,
+    /// NIP-84 `kind: 9802` highlight payload for `InferenceMethod::SignNostrHighlight`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_highlight: Option<crate::nostr_wire::NostrHighlightWire>,
     /// NIP-51 bookmark/mute list payload for `InferenceMethod::SignNostrList`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_list: Option<crate::nostr_wire::NostrListWire>,

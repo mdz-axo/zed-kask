@@ -42,6 +42,9 @@ pub const COMMENT_KIND: u16 = 1111;
 /// Long-form Markdown article kind (NIP-23: <https://nostr-nips.com/nip-23>).
 pub const ARTICLE_KIND: u16 = 30_023;
 
+/// Highlight kind (NIP-84: <https://nostr-nips.com/nip-84>).
+pub const HIGHLIGHT_KIND: u16 = 9_802;
+
 /// Maximum Markdown characters in one NIP-23 `kind: 30023` article.
 pub const MAX_ARTICLE_CHARS: usize = 64_000;
 
@@ -101,6 +104,9 @@ pub enum SignError {
     /// A NIP-01 `kind: 0` profile metadata request violated its field invariants.
     #[error("invalid profile metadata: {reason}")]
     InvalidProfile { reason: &'static str },
+    /// A NIP-84 `kind: 9802` highlight violated its field invariants.
+    #[error("invalid highlight: {reason}")]
+    InvalidHighlight { reason: &'static str },
     /// An `imeta` attachment violated NIP-92's shape invariants.
     #[error("invalid media attachment: {reason}")]
     InvalidAttachment { reason: &'static str },
@@ -358,6 +364,87 @@ pub fn sign_profile(
     }
     content.push('}');
     sign_verified_parts(key, PROFILE_KIND, created_at, Vec::new(), &content)
+}
+
+/// Validated metadata for a NIP-84 `kind: 9802` highlight event.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HighlightDraft {
+    pub source_event_id_hex: Option<String>,
+    pub source_author_hex: Option<String>,
+    pub source_url: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// Sign a NIP-84 `kind: 9802` highlight event carrying a quoted passage and
+/// optional source event (`e`), source author (`p`), source URL (`r`), and
+/// commentary (`comment`).
+pub fn sign_highlight(
+    key: &SecretKey,
+    created_at: u64,
+    quoted_text: &str,
+    draft: &HighlightDraft,
+) -> Result<Event, SignError> {
+    let trimmed = quoted_text.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 4_000 {
+        return Err(SignError::InvalidHighlight {
+            reason: "highlight quoted text must be non-empty and at most 4000 characters",
+        });
+    }
+    let mut tags: Vec<Vec<String>> = Vec::new();
+    if let Some(ev_id) = draft
+        .source_event_id_hex
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !is_lower_sha256_hex(ev_id) {
+            return Err(SignError::InvalidHighlight {
+                reason: "source_event_id_hex must be 64 lowercase hex characters",
+            });
+        }
+        tags.push(vec!["e".to_string(), ev_id.to_string()]);
+    }
+    if let Some(author) = draft
+        .source_author_hex
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !is_lower_sha256_hex(author) {
+            return Err(SignError::InvalidHighlight {
+                reason: "source_author_hex must be 64 lowercase hex characters",
+            });
+        }
+        tags.push(vec!["p".to_string(), author.to_string()]);
+    }
+    if let Some(url) = draft
+        .source_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !url.starts_with("https://") || url.chars().any(char::is_whitespace) || url.len() > 1_000
+        {
+            return Err(SignError::InvalidHighlight {
+                reason: "source_url must be a clean https:// URL (<=1000 chars)",
+            });
+        }
+        tags.push(vec!["r".to_string(), url.to_string()]);
+    }
+    if let Some(comment) = draft
+        .comment
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if comment.chars().count() > 2_000 {
+            return Err(SignError::InvalidHighlight {
+                reason: "highlight comment must be at most 2000 characters",
+            });
+        }
+        tags.push(vec!["comment".to_string(), comment.to_string()]);
+    }
+    sign_verified_parts(key, HIGHLIGHT_KIND, created_at, tags, trimmed)
 }
 
 /// Sign one untagged event with `key` and return it verified.
@@ -1511,6 +1598,37 @@ mod tests {
         Event::from_json(&ev.to_json()).expect("kind 0 verifies");
         assert!(ev.content().contains("\"name\":\"alice\""));
         assert!(ev.content().contains("\"nip05\":\"alice@example.com\""));
+    }
+
+    #[test]
+    fn sign_highlight_emits_verified_nip84_kind_9802() {
+        let key = SecretKey::from_bytes(&[14u8; 32]).expect("valid test key");
+        let ev_id = "aa".repeat(32);
+        let author = "bb".repeat(32);
+        let ev = sign_highlight(
+            &key,
+            1_700_000_000,
+            "Every good regulator of a system must be a model of that system.",
+            &HighlightDraft {
+                source_event_id_hex: Some(ev_id.clone()),
+                source_author_hex: Some(author.clone()),
+                source_url: Some("https://example.com/conant-ashby".into()),
+                comment: Some("Core cybernetics axiom".into()),
+            },
+        )
+        .expect("9802 signs");
+        assert_eq!(ev.kind(), HIGHLIGHT_KIND);
+        Event::from_json(&ev.to_json()).expect("9802 verifies");
+        assert!(ev.tags().contains(&vec!["e".to_string(), ev_id]));
+        assert!(ev.tags().contains(&vec!["p".to_string(), author]));
+        assert!(ev.tags().contains(&vec![
+            "comment".to_string(),
+            "Core cybernetics axiom".to_string()
+        ]));
+        assert!(matches!(
+            sign_highlight(&key, 1_700_000_000, "   ", &HighlightDraft::default()),
+            Err(SignError::InvalidHighlight { .. })
+        ));
     }
 
     #[test]

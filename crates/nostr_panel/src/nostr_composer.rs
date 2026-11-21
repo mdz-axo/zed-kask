@@ -45,6 +45,10 @@ pub(crate) const PUBLISH_LIST_TOOL: &str = "nostr_publish_list";
 /// (<https://nostr-nips.com/nip-01>). Always requires native editor approval.
 pub(crate) const PUBLISH_PROFILE_TOOL: &str = "nostr_publish_profile";
 
+/// The MCP tool that publishes a NIP-84 `kind: 9802` highlight event
+/// (<https://nostr-nips.com/nip-84>).
+pub(crate) const PUBLISH_HIGHLIGHT_TOOL: &str = "nostr_publish_highlight";
+
 /// Convert an article title into a clean ASCII NIP-23 `d`-tag slug.
 pub(crate) fn slugify_article_title(title: &str) -> String {
     let mut slug = String::new();
@@ -475,6 +479,15 @@ impl ZapDraftState {
     }
 }
 
+/// Target context when the compose drawer is creating a NIP-84 `kind: 9802`
+/// highlight over an existing event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HighlightContext {
+    pub(crate) source_event_id: String,
+    pub(crate) source_author: String,
+    pub(crate) target_label: String,
+}
+
 /// Target context when the compose drawer is quoting an existing event
 /// (`NIP-10` `q` + `p` tags on a `kind: 1` note).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -863,6 +876,7 @@ mod tests {
             PUBLISH_DELETION_TOOL,
             PUBLISH_FOLLOWS_TOOL,
             PUBLISH_ARTICLE_TOOL,
+            PUBLISH_HIGHLIGHT_TOOL,
             PUBLISH_LIST_TOOL,
             PUBLISH_PROFILE_TOOL,
             PUBLISH_REPOST_TOOL,

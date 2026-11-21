@@ -20,9 +20,9 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrArticleWire, NostrDeletionWire, NostrFollowsWire, NostrListWire, NostrMediaAttachment,
-    NostrNutzapWire, NostrProfileWire, NostrQuoteWire, NostrReactionWire, NostrReplyWire,
-    NostrRepostWire, NostrZapRequestWire,
+    NostrArticleWire, NostrDeletionWire, NostrFollowsWire, NostrHighlightWire, NostrListWire,
+    NostrMediaAttachment, NostrNutzapWire, NostrProfileWire, NostrQuoteWire, NostrReactionWire,
+    NostrReplyWire, NostrRepostWire, NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -72,6 +72,8 @@ pub(crate) enum NostrSignOperation {
     List(NostrListWire),
     /// Sign a NIP-01 `kind: 0` profile metadata event (NEVER bypassed by `autopublish`).
     Profile(NostrProfileWire),
+    /// Sign a NIP-84 `kind: 9802` highlight event (<https://nostr-nips.com/nip-84>).
+    Highlight(NostrHighlightWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -532,6 +534,32 @@ pub(crate) fn admit_follows(
     Ok(NostrSignOperation::Follows(payload.clone()))
 }
 
+/// Admit a NIP-84 `kind: 9802` highlight sign request.
+pub(crate) fn admit_highlight(
+    grant: Option<&str>,
+    payload: Option<&NostrHighlightWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr highlight requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_highlight payload is required for SignNostrHighlight",
+        ));
+    };
+    if payload.quoted_text.trim().is_empty() || payload.quoted_text.chars().count() > 4_000 {
+        return Err(refusal(
+            "InvalidArgument",
+            "highlight quoted_text must be non-empty and at most 4000 characters",
+        ));
+    }
+    Ok(NostrSignOperation::Highlight(payload.clone()))
+}
+
 /// Admit a NIP-01 `kind: 0` profile metadata sign request.
 pub(crate) fn admit_profile(
     grant: Option<&str>,
@@ -905,6 +933,16 @@ pub(crate) fn sign_operation_with_slots(
             hkask_nostr_signer::sign_profile(&key, profile.created_at, &meta)
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
+        NostrSignOperation::Highlight(hl) => {
+            let draft = hkask_nostr_signer::HighlightDraft {
+                source_event_id_hex: hl.source_event_id_hex.clone(),
+                source_author_hex: hl.source_author_hex.clone(),
+                source_url: hl.source_url.clone(),
+                comment: hl.comment.clone(),
+            };
+            hkask_nostr_signer::sign_highlight(&key, hl.created_at, &hl.quoted_text, &draft)
+                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+        }
         NostrSignOperation::List(list) => match list.kind {
             hkask_nostr_signer::RELAY_LIST_KIND => {
                 hkask_nostr_signer::sign_relay_list(&key, list.created_at, &list.relay_urls)
@@ -1204,6 +1242,20 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                     ),
                     [APPROVE_LABEL, DECLINE_LABEL],
                     "the operator did not approve the profile update; nothing was signed",
+                )
+            }
+            NostrSignOperation::Highlight(hl) => {
+                let preview: String = hl.quoted_text.chars().take(400).collect();
+                (
+                    "Publish NIP-84 highlight (kind:9802)?".to_string(),
+                    format!(
+                        "Quoted text:\n{preview}\n\nComment: {}\nSource URL: {}\nRelays: {}",
+                        hl.comment.as_deref().unwrap_or("<none>"),
+                        hl.source_url.as_deref().unwrap_or("<none>"),
+                        hl.relays.join(", ")
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the highlight; nothing was signed",
                 )
             }
             NostrSignOperation::List(list) => match list.kind {
@@ -1647,7 +1699,8 @@ mod tests {
             | NostrSignOperation::Follows(_)
             | NostrSignOperation::Article(_)
             | NostrSignOperation::List(_)
-            | NostrSignOperation::Profile(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::Profile(_)
+            | NostrSignOperation::Highlight(_) => panic!("expected BlossomUpload"),
         }
     }
 
