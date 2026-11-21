@@ -89,7 +89,7 @@ use serde_json::{Value, json};
 use settings::Settings as _;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::TimestampFormat;
-use ui::{Label, LabelSize, WithScrollbar as _, prelude::*};
+use ui::{ContextMenu, Label, LabelSize, PopoverMenu, WithScrollbar as _, prelude::*};
 use util::ResultExt as _;
 
 /// The tools the viewer dispatches itself. Pinned against the servers'
@@ -2812,7 +2812,7 @@ impl NostrViewer {
         let active = self.tab == tab;
         div()
             .id(SharedString::from(format!("nostr-viewer-tab-{tab:?}")))
-            .px_2()
+            .px_1()
             .h_6()
             .min_w_0()
             .overflow_hidden()
@@ -3699,64 +3699,90 @@ impl NostrViewer {
                             .truncate(),
                         ),
                     )
+                    .child({
+                        let viewer = cx.weak_entity();
+                        let copy_content = event.content.clone();
+                        let copy_id = event.id.clone();
+                        let meta_expanded = self.detail_meta_expanded;
+                        PopoverMenu::new("nostr-detail-more-menu")
+                            .trigger_with_tooltip(
+                                ui::IconButton::new("nostr-detail-more", ui::IconName::Ellipsis)
+                                    .icon_size(ui::IconSize::Small),
+                                ui::Tooltip::text("More event actions (copy text, copy ID, details)"),
+                            )
+                            .anchor(gpui::Anchor::TopRight)
+                            .menu(move |window, cx| {
+                                let viewer = viewer.clone();
+                                let copy_content = copy_content.clone();
+                                let copy_id = copy_id.clone();
+                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                    menu.entry("Copy text", None, {
+                                        let viewer = viewer.clone();
+                                        let copy_content = copy_content.clone();
+                                        let copy_id = copy_id.clone();
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                copy_content.clone(),
+                                            ));
+                                            viewer
+                                                .update(cx, |this, cx| {
+                                                    this.reaction_feedback = Some((
+                                                        copy_id.clone(),
+                                                        true,
+                                                        "Copied text to clipboard".into(),
+                                                    ));
+                                                    cx.notify();
+                                                })
+                                                .log_err();
+                                        }
+                                    })
+                                    .entry("Copy ID", None, {
+                                        let viewer = viewer.clone();
+                                        let copy_id = copy_id.clone();
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                copy_id.clone(),
+                                            ));
+                                            viewer
+                                                .update(cx, |this, cx| {
+                                                    this.reaction_feedback = Some((
+                                                        copy_id.clone(),
+                                                        true,
+                                                        "Copied event ID to clipboard".into(),
+                                                    ));
+                                                    cx.notify();
+                                                })
+                                                .log_err();
+                                        }
+                                    })
+                                    .separator()
+                                    .entry(
+                                        if meta_expanded {
+                                            "Hide event details"
+                                        } else {
+                                            "Show event details"
+                                        },
+                                        None,
+                                        {
+                                            let viewer = viewer.clone();
+                                            move |_, cx| {
+                                                viewer
+                                                    .update(cx, |this, cx| {
+                                                        this.detail_meta_expanded =
+                                                            !this.detail_meta_expanded;
+                                                        cx.notify();
+                                                    })
+                                                    .log_err();
+                                            }
+                                        },
+                                    )
+                                }))
+                            })
+                    })
                     .child(
-                        ui::Button::new("nostr-detail-copy-text", "Copy text")
-                            .label_size(LabelSize::XSmall)
-                            .tooltip(ui::Tooltip::text("Copy event content to clipboard"))
-                            .on_click(cx.listener({
-                                let content = event.content.clone();
-                                let id = event.id.clone();
-                                move |this, _, _, cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                        content.clone(),
-                                    ));
-                                    this.reaction_feedback =
-                                        Some((id.clone(), true, "Copied text to clipboard".into()));
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        ui::Button::new("nostr-detail-copy-id", "Copy ID")
-                            .label_size(LabelSize::XSmall)
-                            .tooltip(ui::Tooltip::text("Copy event hex ID to clipboard"))
-                            .on_click(cx.listener({
-                                let id = event.id.clone();
-                                move |this, _, _, cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                        id.clone(),
-                                    ));
-                                    this.reaction_feedback = Some((
-                                        id.clone(),
-                                        true,
-                                        "Copied event ID to clipboard".into(),
-                                    ));
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        ui::Button::new(
-                            "nostr-detail-meta-toggle",
-                            if self.detail_meta_expanded {
-                                "Hide details"
-                            } else {
-                                "Details"
-                            },
-                        )
-                        .label_size(LabelSize::XSmall)
-                        .toggle_state(self.detail_meta_expanded)
-                        .tooltip(ui::Tooltip::text(
-                            "Show or hide raw event id, author hex, kind, and relay provenance",
-                        ))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.detail_meta_expanded = !this.detail_meta_expanded;
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        ui::Button::new("nostr-detail-close", "Close")
-                            .label_size(LabelSize::XSmall)
+                        ui::IconButton::new("nostr-detail-close", ui::IconName::Close)
+                            .icon_size(ui::IconSize::Small)
+                            .tooltip(ui::Tooltip::text("Close detail (Esc)"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.selected = None;
                                 this.detail_meta_expanded = false;
@@ -4249,18 +4275,6 @@ impl NostrViewer {
                                                 this.toggle_compose(window, cx);
                                             }),
                                         ),
-                                    )
-                                    .child(
-                                        ui::Button::new("nostr-timeline-top", "Top")
-                                            .label_size(LabelSize::XSmall)
-                                            .tooltip(ui::Tooltip::text(
-                                                "Scroll timeline back to top",
-                                            ))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.timeline_scroll_handle
-                                                    .set_offset(gpui::point(px(0.), px(0.)));
-                                                cx.notify();
-                                            })),
                                     )
                                     .child(self.filter_button(
                                         "nostr-filter-reading",
@@ -6557,15 +6571,6 @@ impl Render for NostrViewer {
             .last_outcome
             .as_ref()
             .map(|outcome| self.render_publish_receipt(outcome, cx));
-        let compose_open = self.composer.is_open();
-        let has_draft = self.composer.has_draft();
-        let compose_tooltip = if has_draft && !compose_open {
-            "Resume unsent Nostr note draft (Ctrl/Cmd+Shift+N)"
-        } else if compose_open {
-            "Collapse composer (preserves draft · Esc)"
-        } else {
-            "New Note (Ctrl/Cmd+Shift+N)"
-        };
 
         let body = match self.tab {
             ViewerTab::Timeline => self.render_timeline(window, cx),
@@ -6622,36 +6627,18 @@ impl Render for NostrViewer {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Timeline, "Timeline".into(), cx))
                     .child(self.tab_button(ViewerTab::Notifications, "Alerts".into(), cx))
-                    .child(self.tab_button(ViewerTab::Conversation, "Conversation".into(), cx))
+                    .child(self.tab_button(ViewerTab::Conversation, "Thread".into(), cx))
                     .child(self.tab_button(ViewerTab::Relay, "Relay".into(), cx))
-                    .child(self.tab_button(ViewerTab::Messages, "Messages".into(), cx))
+                    .child(self.tab_button(ViewerTab::Messages, "DMs".into(), cx))
                     .child(
-                        h_flex()
-                            .ml_auto()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .child(
-                                ui::IconButton::new("nostr-viewer-compose", ui::IconName::Pencil)
-                                    .icon_size(ui::IconSize::Small)
-                                    .toggle_state(compose_open || has_draft)
-                                    .icon_color(if has_draft && !compose_open {
-                                        Color::Accent
-                                    } else {
-                                        Color::Default
-                                    })
-                                    .tooltip(ui::Tooltip::text(compose_tooltip))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_compose(window, cx);
-                                    })),
-                            )
-                            .child(
-                                ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
-                                    .icon_size(ui::IconSize::Small)
-                                    .tooltip(ui::Tooltip::text(
-                                        "Reload from the local relay. Contacts no other relay.",
-                                    ))
-                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                            ),
+                        h_flex().ml_auto().gap_1().flex_shrink_0().child(
+                            ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
+                                .icon_size(ui::IconSize::Small)
+                                .tooltip(ui::Tooltip::text(
+                                    "Reload from the local relay. Contacts no other relay.",
+                                ))
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        ),
                     ),
             )
             .when_some(compose_drawer, |this, drawer| this.child(drawer))
