@@ -17,7 +17,116 @@ use crate::nostr_composer::{
     WALLET_STATUS_TOOL, WalletBadge, ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus,
     parse_custom_sats, parse_wallet_status, sanitize_untrusted_text,
 };
-use crate::nostr_viewer::{PROFILE_TOOL, extract_lud16_from_profile_response, invoke};
+use crate::nostr_viewer::{FETCH_TOOL, PROFILE_TOOL, extract_lud16_from_profile_response, invoke};
+
+/// Validated NIP-61 recipient nutzap target extracted from their `kind: 10019`
+/// event (`https://nostr-nips.com/nip-61`). Outbound nutzaps fail closed unless
+/// a matching mint and valid P2PK pubkey are confirmed here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValidatedNutzapTarget {
+    pub(crate) mint_url: String,
+    pub(crate) p2pk_pubkey: String,
+}
+
+fn normalize_mint_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+/// Parse a `nostr_fetch_events` JSON response for a recipient's `kind: 10019`
+/// NIP-61 nutzap info event and verify at least one mint overlaps with
+/// `allowed_mints` plus a valid `pubkey` tag.
+pub(crate) fn parse_nutzap_info_from_events(
+    raw_json: &str,
+    allowed_mints: &[String],
+) -> Result<ValidatedNutzapTarget, String> {
+    let value: Value = serde_json::from_str(raw_json)
+        .map_err(|err| format!("kind:10019 lookup returned invalid JSON: {err}"))?;
+    let root = value.get("content").unwrap_or(&value);
+    let events = root
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "Recipient has no NIP-61 kind:10019 nutzap info on configured relays.".to_string()
+        })?;
+
+    let mut newest: Option<(u64, &Value)> = None;
+    for row in events {
+        let ev = row.get("event").unwrap_or(row);
+        if ev.get("kind").and_then(Value::as_u64) != Some(10_019) {
+            continue;
+        }
+        let created_at = ev.get("created_at").and_then(Value::as_u64).unwrap_or(0);
+        if newest.as_ref().is_none_or(|(at, _)| created_at >= *at) {
+            newest = Some((created_at, ev));
+        }
+    }
+    let Some((_, ev)) = newest else {
+        return Err(
+            "Recipient has not published NIP-61 kind:10019 nutzap info; refusing to send unredeemable Cashu proofs."
+                .to_string(),
+        );
+    };
+    let tags = ev
+        .get("tags")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Recipient kind:10019 event has no tags.".to_string())?;
+
+    let mut raw_pubkey: Option<String> = None;
+    let mut recipient_mints: Vec<String> = Vec::new();
+    for tag in tags {
+        let Some(arr) = tag.as_array() else {
+            continue;
+        };
+        let Some(name) = arr.first().and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(val) = arr.get(1).and_then(Value::as_str).map(str::trim) else {
+            continue;
+        };
+        if name == "pubkey" && !val.is_empty() && raw_pubkey.is_none() {
+            raw_pubkey = Some(val.to_ascii_lowercase());
+        } else if name == "mint" && val.starts_with("https://") {
+            recipient_mints.push(val.to_string());
+        }
+    }
+
+    let raw_pk = raw_pubkey.ok_or_else(|| {
+        "Recipient kind:10019 nutzap info is missing a P2PK pubkey tag; refusing to send."
+            .to_string()
+    })?;
+    let p2pk_pubkey = if raw_pk.len() == 64 && raw_pk.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("02{raw_pk}")
+    } else if raw_pk.len() == 66
+        && raw_pk.starts_with("02")
+        && raw_pk.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        raw_pk
+    } else {
+        return Err(
+            "Recipient kind:10019 P2PK pubkey is malformed (expected 64-char hex or 02-prefixed 66-char compressed pubkey)."
+                .to_string(),
+        );
+    };
+
+    let matched_mint = recipient_mints.iter().find_map(|rm| {
+        let norm_r = normalize_mint_url(rm);
+        allowed_mints
+            .iter()
+            .find(|am| normalize_mint_url(am) == norm_r)
+            .cloned()
+    });
+    let Some(mint_url) = matched_mint else {
+        return Err(
+            "No overlapping Cashu mint between your allowed mints and recipient's kind:10019 nutzap info."
+                .to_string(),
+        );
+    };
+
+    Ok(ValidatedNutzapTarget {
+        mint_url,
+        p2pk_pubkey,
+    })
+}
 
 /// Event emitted when a NIP-57 Lightning zap or NIP-61 Cashu nutzap settles.
 pub(crate) struct ZapSettled {
@@ -199,36 +308,22 @@ impl NostrZapView {
                     return;
                 }
             };
-            let Some(mint_url) = summary.default_mint.clone() else {
+            if summary.allowed_mints.is_empty() {
                 zap.status = ZapStatus::Failed(
                     "No allowlisted Cashu mint configured for NIP-61 nutzaps.".to_string(),
                 );
                 cx.notify();
                 return;
-            };
+            }
             let allowed_mints = summary.allowed_mints;
-            let p2pk_pubkey = format!("02{}", target_pubkey.to_ascii_lowercase());
-            zap.status = ZapStatus::PayingInvoice;
+            zap.status = ZapStatus::ResolvingProfile;
             cx.notify();
 
-            let idempotency_key = format!(
-                "nostr-nutzap-{}-{}",
-                target_event_id,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let mut ecash_args = json!({
-                "amount_sats": amount_sats,
-                "mint_url": mint_url,
-                "p2pk_pubkey": p2pk_pubkey,
-                "idempotency_key": idempotency_key,
-            });
-            if !comment_text.is_empty() {
-                ecash_args["memo"] = json!(comment_text);
-            }
-            let send_task = match invoke(WALLET_SERVER_ID, WALLET_SEND_ECASH_TOOL, ecash_args) {
+            let info_task = match invoke(
+                NOSTR_CLIENT_SERVER,
+                FETCH_TOOL,
+                json!({ "authors": [target_pubkey], "kinds": [10_019], "limit": 5 }),
+            ) {
                 Ok(t) => t,
                 Err(err) => {
                     if let Some(z) = self.zap.as_mut() {
@@ -239,6 +334,76 @@ impl NostrZapView {
                 }
             };
             self._zap_task = Some(cx.spawn(async move |this, cx| {
+                let info_raw = match info_task.await {
+                    Ok(raw) => raw,
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(z) = this.zap.as_mut() {
+                                z.status = ZapStatus::Failed(format!(
+                                    "Could not verify recipient NIP-61 kind:10019 nutzap info: {}",
+                                    sanitize_untrusted_text(&err.to_string())
+                                ));
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                };
+                let validated = match parse_nutzap_info_from_events(&info_raw, &allowed_mints) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(z) = this.zap.as_mut() {
+                                z.status = ZapStatus::Failed(err);
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                };
+                let mint_url = validated.mint_url;
+                let p2pk_pubkey = validated.p2pk_pubkey;
+
+                this.update(cx, |this, cx| {
+                    if let Some(z) = this.zap.as_mut() {
+                        z.status = ZapStatus::PayingInvoice;
+                    }
+                    cx.notify();
+                })
+                .log_err();
+
+                let idempotency_key = format!(
+                    "nostr-nutzap-{}-{}",
+                    target_event_id,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let mut ecash_args = json!({
+                    "amount_sats": amount_sats,
+                    "mint_url": mint_url,
+                    "p2pk_pubkey": p2pk_pubkey,
+                    "idempotency_key": idempotency_key,
+                });
+                if !comment_text.is_empty() {
+                    ecash_args["memo"] = json!(comment_text);
+                }
+                let send_task = match invoke(WALLET_SERVER_ID, WALLET_SEND_ECASH_TOOL, ecash_args) {
+                    Ok(t) => t,
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(z) = this.zap.as_mut() {
+                                z.status = ZapStatus::Failed(err);
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                };
                 let ecash_raw = match send_task.await {
                     Ok(raw) => raw,
                     Err(err) => {
@@ -622,25 +787,35 @@ impl NostrZapView {
                     .items_center()
                     .children(ZAP_PRESETS_SATS.iter().map(|&sats| {
                         let selected = zap.amount_sats == sats;
-                        ui::Button::new(("nostr-zap-preset", sats as usize), format!("{sats}"))
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(selected)
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(z) = this.zap.as_mut() {
-                                    z.amount_sats = sats;
-                                    z.status = ZapStatus::Ready;
-                                }
-                                if let Some(ed) = &this.zap_amount_editor {
-                                    ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-                                }
-                                cx.notify();
-                            }))
-                    }))
+                        div().min_w(px(32.)).child(
+                            ui::Button::new(("nostr-zap-preset", sats as usize), format!("{sats}"))
+                                .label_size(LabelSize::XSmall)
+                                .toggle_state(selected)
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if let Some(z) = this.zap.as_mut() {
+                                        z.amount_sats = sats;
+                                        z.status = ZapStatus::Ready;
+                                    }
+                                    if let Some(ed) = &this.zap_amount_editor {
+                                        ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    })),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .min_w_0()
+                    .items_center()
                     .when_some(self.zap_amount_editor.clone(), |row, ed| {
                         row.child(
                             div()
-                                .w(px(88.))
+                                .flex_1()
+                                .min_w_0()
                                 .px_1()
                                 .rounded_sm()
                                 .border_1()
@@ -650,20 +825,22 @@ impl NostrZapView {
                         )
                     })
                     .child(
-                        ui::Button::new(
-                            "nostr-zap-send",
-                            if busy {
-                                "Zapping…".to_string()
-                            } else if zap.rail == ZapRail::Nutzap {
-                                format!("Nutzap {} sats", zap.amount_sats)
-                            } else {
-                                format!("Zap {} sats", zap.amount_sats)
-                            },
-                        )
-                        .style(ui::ButtonStyle::Filled)
-                        .label_size(LabelSize::XSmall)
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.execute_zap(cx))),
+                        div().flex_shrink_0().child(
+                            ui::Button::new(
+                                "nostr-zap-send",
+                                if busy {
+                                    "Zapping…".to_string()
+                                } else if zap.rail == ZapRail::Nutzap {
+                                    format!("Nutzap {} sats", zap.amount_sats)
+                                } else {
+                                    format!("Zap {} sats", zap.amount_sats)
+                                },
+                            )
+                            .style(ui::ButtonStyle::Filled)
+                            .label_size(LabelSize::XSmall)
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.execute_zap(cx))),
+                        ),
                     ),
             )
             .when_some(self.zap_comment_editor.clone(), |col, ed| {
@@ -710,5 +887,34 @@ mod tests {
         ));
         assert!(view.is_open_for("ev1"));
         assert!(!view.is_open_for("ev2"));
+    }
+
+    #[test]
+    fn parse_nutzap_info_fails_closed_without_valid_10019_and_matching_mint() {
+        let allowed = vec!["https://mint.example.com".to_string()];
+        let pk64 = "b".repeat(64);
+
+        // Missing kind:10019 -> refused
+        assert!(parse_nutzap_info_from_events(r#"{"events":[]}"#, &allowed).is_err());
+
+        // Missing pubkey tag -> refused
+        let no_pk = format!(
+            r#"{{"events":[{{"kind":10019,"created_at":10,"tags":[["mint","https://mint.example.com/"]]}}]}}"#
+        );
+        assert!(parse_nutzap_info_from_events(&no_pk, &allowed).is_err());
+
+        // Non-overlapping mint -> refused
+        let wrong_mint = format!(
+            r#"{{"events":[{{"kind":10019,"created_at":10,"tags":[["pubkey","{pk64}"],["mint","https://other.mint"]]}}]}}"#
+        );
+        assert!(parse_nutzap_info_from_events(&wrong_mint, &allowed).is_err());
+
+        // Valid kind:10019 with trailing-slash mint normalization -> accepted
+        let valid = format!(
+            r#"{{"events":[{{"kind":10019,"created_at":20,"tags":[["pubkey","{pk64}"],["mint","https://mint.example.com/"]]}}]}}"#
+        );
+        let parsed = parse_nutzap_info_from_events(&valid, &allowed).expect("valid 10019");
+        assert_eq!(parsed.mint_url, "https://mint.example.com");
+        assert_eq!(parsed.p2pk_pubkey, format!("02{pk64}"));
     }
 }

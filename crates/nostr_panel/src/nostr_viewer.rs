@@ -74,7 +74,7 @@ use gpui::{ImageSource, ObjectFit, RenderImage, img};
 use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media_path};
 use hkask_tool_invoker::InvokeError;
 use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
-use hkask_types::nostr_wire::{NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
+use hkask_types::nostr_wire::{NOSTR_BLOSSOM_SERVER, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
 use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
@@ -92,8 +92,10 @@ const STATUS_TOOL: &str = "nostr_relay_status";
 const LOG_TOOL: &str = "nostr_relay_log";
 const SYNC_TOOL: &str = "nostr_relay_sync";
 const THREAD_TOOL: &str = "nostr_thread";
-const FETCH_TOOL: &str = "nostr_fetch_events";
+pub(crate) const FETCH_TOOL: &str = "nostr_fetch_events";
 const NOTIFICATIONS_TOOL: &str = "nostr_notifications";
+const ACCOUNT_TOOL: &str = "nostr_account";
+const BLOSSOM_STATUS_TOOL: &str = "nostr_blossom_status";
 /// A labelled click in the detail pane: the network is contacted only
 /// there.
 pub(crate) const PROFILE_TOOL: &str = "nostr_profile";
@@ -162,10 +164,22 @@ pub struct NostrViewer {
     /// The follows read's own epoch and failure, so a stale answer is
     /// not applied and a failed read is visible.
     follows_request: Request,
+    /// Authoritative sync state for NIP-02 `kind: 3` follow list mutations.
+    follows_state: ReplaceableListState,
     /// Operator's NIP-51 bookmarked event IDs (`kind: 10003`, `e` tags).
-    bookmarked_ids: BTreeSet<String>,
+    bookmarks_state: ReplaceableListState,
     /// Operator's NIP-51 muted author pubkeys (`kind: 10000`, `p` tags).
-    muted_pubkeys: BTreeSet<String>,
+    mutes_state: ReplaceableListState,
+    /// Active type filter on the Alerts (`nostr_notifications`) tab.
+    alert_filter: AlertFilter,
+    /// Newest notification `created_at` seen by the operator (unread watermark).
+    last_seen_alert_at: u64,
+    /// Local Blossom sidecar status loaded beside the local relay reading.
+    blossom_status: Option<BlossomStatusSummary>,
+    /// Explicit opt-in seed-relay probe results from `nostr_account`.
+    seed_relay_probes: Vec<SeedRelayProbe>,
+    /// Request state for opt-in `nostr_account` seed-relay probes.
+    probe_request: Request,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -464,8 +478,14 @@ impl NostrViewer {
             reactions_request: Request::new(),
             follows: None,
             follows_request: Request::new(),
-            bookmarked_ids: BTreeSet::new(),
-            muted_pubkeys: BTreeSet::new(),
+            follows_state: ReplaceableListState::Unloaded,
+            bookmarks_state: ReplaceableListState::Unloaded,
+            mutes_state: ReplaceableListState::Unloaded,
+            alert_filter: AlertFilter::default(),
+            last_seen_alert_at: 0,
+            blossom_status: None,
+            seed_relay_probes: Vec::new(),
+            probe_request: Request::new(),
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -503,7 +523,9 @@ impl NostrViewer {
     }
 
     /// Load the operator's newest NIP-51 bookmark (`kind: 10003`) and mute
-    /// (`kind: 10000`) lists from the local archive.
+    /// (`kind: 10000`) lists from the local archive, falling back to seed
+    /// relays whenever either list is absent locally so toggling cannot
+    /// clobber a remote replaceable list.
     fn load_nip51_lists(&mut self, cx: &mut Context<Self>) {
         let Some(mine) = self.my_pubkey_hex(cx) else {
             return;
@@ -513,55 +535,157 @@ impl NostrViewer {
             ARCHIVE_TOOL,
             json!({ "authors": [mine], "kinds": [10_000, 10_003], "limit": 10 }),
         ) else {
+            self.load_nip51_lists_from_relays(mine, true, true, cx);
             return;
         };
         cx.spawn(async move |this, cx| {
-            let Ok(content) = content_of(ARCHIVE_TOOL, task.await) else {
-                return;
-            };
-            let Some(Ok(Surfaced::Feed(feed))) = parse_surfaced(&content, FeedOrigin::Archive)
-            else {
-                return;
-            };
-            let mut newest_mute: Option<(u64, BTreeSet<String>)> = None;
-            let mut newest_bookmarks: Option<(u64, BTreeSet<String>)> = None;
-            for row in &feed.rows {
-                match row.event.kind {
-                    10_000 => {
-                        if newest_mute
-                            .as_ref()
-                            .is_none_or(|(at, _)| row.event.created_at >= *at)
-                        {
-                            newest_mute = Some((row.event.created_at, follows_of(&row.event)));
-                        }
-                    }
-                    10_003 => {
-                        if newest_bookmarks
-                            .as_ref()
-                            .is_none_or(|(at, _)| row.event.created_at >= *at)
-                        {
-                            let ids = row
-                                .event
-                                .tags
-                                .iter()
-                                .filter_map(|tag| {
-                                    (tag.first().map(String::as_str) == Some("e"))
-                                        .then(|| tag.get(1).filter(|v| !v.is_empty()).cloned())
-                                        .flatten()
-                                })
-                                .collect();
-                            newest_bookmarks = Some((row.event.created_at, ids));
-                        }
-                    }
-                    _ => {}
+            let local_result = content_of(ARCHIVE_TOOL, task.await).and_then(|content| {
+                match parse_surfaced(&content, FeedOrigin::Archive) {
+                    Some(Ok(Surfaced::Feed(feed))) => Ok(feed),
+                    Some(Err(err)) => Err(err),
+                    _ => Err(format!("{ARCHIVE_TOOL} returned no list of events")),
                 }
-            }
+            });
+            let (newest_mute, newest_bookmarks) = match local_result {
+                Ok(feed) => Self::extract_nip51_from_rows(&feed.rows),
+                Err(_) => (None, None),
+            };
             this.update(cx, |this, cx| {
+                let need_mute = newest_mute.is_none();
+                let need_bookmarks = newest_bookmarks.is_none();
                 if let Some((_, muted)) = newest_mute {
-                    this.muted_pubkeys = muted;
+                    this.mutes_state = ReplaceableListState::Confirmed(muted);
+                } else {
+                    this.mutes_state = ReplaceableListState::LoadingRelays;
                 }
                 if let Some((_, bookmarked)) = newest_bookmarks {
-                    this.bookmarked_ids = bookmarked;
+                    this.bookmarks_state = ReplaceableListState::Confirmed(bookmarked);
+                } else {
+                    this.bookmarks_state = ReplaceableListState::LoadingRelays;
+                }
+                if need_mute || need_bookmarks {
+                    this.load_nip51_lists_from_relays(mine, need_mute, need_bookmarks, cx);
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn extract_nip51_from_rows(
+        rows: &[Row],
+    ) -> (
+        Option<(u64, BTreeSet<String>)>,
+        Option<(u64, BTreeSet<String>)>,
+    ) {
+        let mut newest_mute: Option<(u64, BTreeSet<String>)> = None;
+        let mut newest_bookmarks: Option<(u64, BTreeSet<String>)> = None;
+        for row in rows {
+            match row.event.kind {
+                10_000 => {
+                    if newest_mute
+                        .as_ref()
+                        .is_none_or(|(at, _)| row.event.created_at >= *at)
+                    {
+                        newest_mute = Some((row.event.created_at, follows_of(&row.event)));
+                    }
+                }
+                10_003 => {
+                    if newest_bookmarks
+                        .as_ref()
+                        .is_none_or(|(at, _)| row.event.created_at >= *at)
+                    {
+                        let ids = row
+                            .event
+                            .tags
+                            .iter()
+                            .filter_map(|tag| {
+                                (tag.first().map(String::as_str) == Some("e"))
+                                    .then(|| tag.get(1).filter(|v| !v.is_empty()).cloned())
+                                    .flatten()
+                            })
+                            .collect();
+                        newest_bookmarks = Some((row.event.created_at, ids));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (newest_mute, newest_bookmarks)
+    }
+
+    fn load_nip51_lists_from_relays(
+        &mut self,
+        mine: String,
+        need_mute: bool,
+        need_bookmarks: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut kinds = Vec::new();
+        if need_mute {
+            kinds.push(10_000_u16);
+            self.mutes_state = ReplaceableListState::LoadingRelays;
+        }
+        if need_bookmarks {
+            kinds.push(10_003_u16);
+            self.bookmarks_state = ReplaceableListState::LoadingRelays;
+        }
+        if kinds.is_empty() {
+            return;
+        }
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            FETCH_TOOL,
+            json!({ "authors": [mine], "kinds": kinds, "limit": 10 }),
+        ) {
+            Ok(task) => task,
+            Err(err) => {
+                if need_mute {
+                    self.mutes_state = ReplaceableListState::RelayError(err.clone());
+                }
+                if need_bookmarks {
+                    self.bookmarks_state = ReplaceableListState::RelayError(err);
+                }
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result =
+                content_of(FETCH_TOOL, task.await).and_then(|content| {
+                    match parse_surfaced(&content, FeedOrigin::Conversation) {
+                        Some(Ok(Surfaced::Feed(feed))) => Ok(feed),
+                        Some(Err(err)) => Err(err),
+                        _ => Err(format!("{FETCH_TOOL} returned no list of events")),
+                    }
+                });
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(feed) => {
+                        let (newest_mute, newest_bookmarks) =
+                            Self::extract_nip51_from_rows(&feed.rows);
+                        if need_mute {
+                            this.mutes_state = match newest_mute {
+                                Some((_, set)) => ReplaceableListState::Confirmed(set),
+                                None => ReplaceableListState::ConfirmedEmpty,
+                            };
+                        }
+                        if need_bookmarks {
+                            this.bookmarks_state = match newest_bookmarks {
+                                Some((_, set)) => ReplaceableListState::Confirmed(set),
+                                None => ReplaceableListState::ConfirmedEmpty,
+                            };
+                        }
+                    }
+                    Err(err) => {
+                        if need_mute {
+                            this.mutes_state = ReplaceableListState::RelayError(err.clone());
+                        }
+                        if need_bookmarks {
+                            this.bookmarks_state = ReplaceableListState::RelayError(err);
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -574,7 +698,17 @@ impl NostrViewer {
         if self.reaction_in_flight.is_some() {
             return;
         }
-        let mut next = self.bookmarked_ids.clone();
+        let mut next = match self
+            .bookmarks_state
+            .clone_for_mutation("bookmarks (kind:10003)")
+        {
+            Ok(set) => set,
+            Err(err) => {
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
         let adding = if next.contains(&event_id) {
             next.remove(&event_id);
             false
@@ -606,7 +740,7 @@ impl NostrViewer {
                 match result {
                     Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
                         Ok(outcome) if outcome.any_accepted() => {
-                            this.bookmarked_ids = next;
+                            this.bookmarks_state = ReplaceableListState::Confirmed(next);
                             this.reaction_feedback = Some((
                                 event_id,
                                 true,
@@ -643,7 +777,17 @@ impl NostrViewer {
         if self.reaction_in_flight.is_some() {
             return;
         }
-        let mut next = self.muted_pubkeys.clone();
+        let mut next = match self
+            .mutes_state
+            .clone_for_mutation("mute list (kind:10000)")
+        {
+            Ok(set) => set,
+            Err(err) => {
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
         let muting = if next.contains(&author_hex) {
             next.remove(&author_hex);
             false
@@ -675,7 +819,7 @@ impl NostrViewer {
                 match result {
                     Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
                         Ok(outcome) if outcome.any_accepted() => {
-                            this.muted_pubkeys = next;
+                            this.mutes_state = ReplaceableListState::Confirmed(next);
                             this.reaction_feedback = Some((
                                 event_id,
                                 true,
@@ -716,8 +860,12 @@ impl NostrViewer {
         if tab == ViewerTab::Relay && self.relay.is_none() {
             self.load_relay(cx);
         }
-        if tab == ViewerTab::Notifications && self.notifications_feed.is_none() {
-            self.load_notifications(cx);
+        if tab == ViewerTab::Notifications {
+            if self.notifications_feed.is_none() {
+                self.load_notifications(cx);
+            } else {
+                self.mark_alerts_read();
+            }
         }
         cx.notify();
     }
@@ -1071,12 +1219,23 @@ impl NostrViewer {
             Ok(follows) => (Some(follows), None),
             Err(error) => (None, Some(error)),
         };
-        if !self.follows_request.finish(epoch, error) {
+        if !self.follows_request.finish(epoch, error.clone()) {
             return;
         }
         if let Some(follows) = follows {
-            if matches!(follows, Follows::NoList) {
-                self.load_follows_from_relays(cx);
+            match &follows {
+                Follows::Authors(set) => {
+                    self.follows_state = ReplaceableListState::Confirmed(set.clone());
+                }
+                Follows::NoList => {
+                    // Do not treat local archive absence as confirmed empty;
+                    // wait for seed-relay fallback before permitting mutation.
+                    self.follows_state = ReplaceableListState::LoadingRelays;
+                    self.load_follows_from_relays(cx);
+                }
+                Follows::NoIdentity | Follows::InvalidIdentity => {
+                    self.follows_state = ReplaceableListState::Unloaded;
+                }
             }
             self.follows = Some(follows);
             if self.timeline_filter == TimelineFilter::Following
@@ -1085,6 +1244,8 @@ impl NostrViewer {
                 self.load_following_feed(cx);
             }
             self.auto_fetch_followed_media(cx);
+        } else if let Some(err) = error {
+            self.follows_state = ReplaceableListState::RelayError(err);
         }
         cx.notify();
     }
@@ -1106,6 +1267,7 @@ impl NostrViewer {
         ) {
             Ok(task) => task,
             Err(error) => {
+                self.follows_state = ReplaceableListState::RelayError(error.clone());
                 self.follows_request.finish(epoch, Some(error));
                 cx.notify();
                 return;
@@ -1128,10 +1290,17 @@ impl NostrViewer {
                     Ok(follows) => (Some(follows), None),
                     Err(error) => (None, Some(error)),
                 };
-                if !this.follows_request.finish(epoch, error) {
+                if !this.follows_request.finish(epoch, error.clone()) {
                     return;
                 }
                 if let Some(follows) = follows {
+                    this.follows_state = match &follows {
+                        Follows::Authors(set) => ReplaceableListState::Confirmed(set.clone()),
+                        Follows::NoList => ReplaceableListState::ConfirmedEmpty,
+                        Follows::NoIdentity | Follows::InvalidIdentity => {
+                            ReplaceableListState::Unloaded
+                        }
+                    };
                     this.follows = Some(follows);
                     if this.timeline_filter == TimelineFilter::Following
                         && matches!(this.follows, Some(Follows::Authors(_)))
@@ -1139,6 +1308,8 @@ impl NostrViewer {
                         this.load_following_feed(cx);
                     }
                     this.auto_fetch_followed_media(cx);
+                } else if let Some(err) = error {
+                    this.follows_state = ReplaceableListState::RelayError(err);
                 }
                 cx.notify();
             })
@@ -1543,19 +1714,49 @@ impl NostrViewer {
 
     // ── The local relay ─────────────────────────────────────────────
 
-    /// Read the local relay's state and its admission decisions. Local.
+    fn unread_alert_count(&self) -> usize {
+        let Some(feed) = &self.notifications_feed else {
+            return 0;
+        };
+        feed.rows
+            .iter()
+            .filter(|r| r.event.created_at > self.last_seen_alert_at)
+            .count()
+    }
+
+    fn mark_alerts_read(&mut self) {
+        if let Some(newest) = self
+            .notifications_feed
+            .as_ref()
+            .and_then(|feed| feed.rows.iter().map(|r| r.event.created_at).max())
+        {
+            if newest > self.last_seen_alert_at {
+                self.last_seen_alert_at = newest;
+            }
+        }
+    }
+
+    /// Read the local relay's state and its admission decisions, plus local
+    /// Blossom sidecar status. Strictly local (contacts no public relay).
     fn load_relay(&mut self, cx: &mut Context<Self>) {
         let epoch = self.relay_request.begin();
         cx.notify();
+        let blossom_task = invoke(NOSTR_BLOSSOM_SERVER, BLOSSOM_STATUS_TOOL, json!({})).ok();
         let tasks = invoke(NOSTR_RELAY_SERVER, STATUS_TOOL, json!({})).and_then(|status| {
             invoke(NOSTR_RELAY_SERVER, LOG_TOOL, json!({ "limit": LOG_PAGE }))
                 .map(|log| (status, log))
         });
         let (status, log) = match tasks {
             Ok(tasks) => tasks,
-            Err(error) => return self.apply_relay(epoch, Err(error), cx),
+            Err(error) => return self.apply_relay(epoch, Err(error), None, cx),
         };
         cx.spawn(async move |this, cx| {
+            let blossom = match blossom_task {
+                Some(task) => content_of(BLOSSOM_STATUS_TOOL, task.await)
+                    .ok()
+                    .and_then(|content| parse_blossom_status(&content)),
+                None => None,
+            };
             let result = async {
                 let status = content_of(STATUS_TOOL, status.await)?;
                 let log = content_of(LOG_TOOL, log.await)?;
@@ -1569,7 +1770,7 @@ impl NostrViewer {
                 Ok(RelayReading { status, decisions })
             }
             .await;
-            this.update(cx, |this, cx| this.apply_relay(epoch, result, cx))
+            this.update(cx, |this, cx| this.apply_relay(epoch, result, blossom, cx))
                 .log_err();
         })
         .detach();
@@ -1579,6 +1780,7 @@ impl NostrViewer {
         &mut self,
         epoch: u64,
         result: Result<RelayReading, String>,
+        blossom: Option<BlossomStatusSummary>,
         cx: &mut Context<Self>,
     ) {
         let (reading, error) = match result {
@@ -1591,7 +1793,43 @@ impl NostrViewer {
         if let Some(reading) = reading {
             self.relay = Some(reading);
         }
+        if blossom.is_some() {
+            self.blossom_status = blossom;
+        }
         cx.notify();
+    }
+
+    /// Explicit opt-in seed-relay connectivity probe via `nostr_account`.
+    fn probe_seed_relays(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.probe_request.begin();
+        cx.notify();
+        let task = match invoke(NOSTR_CLIENT_SERVER, ACCOUNT_TOOL, json!({})) {
+            Ok(task) => task,
+            Err(error) => {
+                self.probe_request.finish(epoch, Some(error));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(ACCOUNT_TOOL, task.await)
+                .map(|content| parse_account_seed_relays(&content));
+            this.update(cx, |this, cx| {
+                let (probes, error) = match result {
+                    Ok(probes) => (Some(probes), None),
+                    Err(err) => (None, Some(err)),
+                };
+                if !this.probe_request.finish(epoch, error) {
+                    return;
+                }
+                if let Some(probes) = probes {
+                    this.seed_relay_probes = probes;
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     // ── Tool results from the conversation below ────────────────────
@@ -1877,9 +2115,23 @@ impl NostrViewer {
         let kind_text = what_it_is(&row.event);
         let supporting = supporting_line(&row.event);
         let reply = reply_reference(&row.event, names);
+        let quote = quote_reference(&row.event, names);
         let notification = row.label.clone();
-        let has_context =
-            reply.is_some() || row.parent_missing || row.is_focus || notification.is_some();
+        let thread_jump_id = if notification.is_some() {
+            Some(
+                answered_note(&row.event)
+                    .0
+                    .map(str::to_string)
+                    .unwrap_or_else(|| row.event.id.clone()),
+            )
+        } else {
+            None
+        };
+        let has_context = reply.is_some()
+            || quote.is_some()
+            || row.parent_missing
+            || row.is_focus
+            || notification.is_some();
         let trailer = if row.event.served_by.is_empty() {
             format!("{} · the local archive", short_hex(&row.event.id))
         } else {
@@ -1963,12 +2215,16 @@ impl NostrViewer {
                     .when_some(nip05, |el, nip05| {
                         el.child(
                             div()
+                                .id(("nostr-row-nip05", ix))
                                 .min_w_0()
                                 .flex_shrink(1.)
                                 .rounded_full()
                                 .px_1()
                                 .border_1()
                                 .border_color(cx.theme().colors().border_variant)
+                                .tooltip(ui::Tooltip::text(
+                                    "NIP-05 address claimed by author (unverified)",
+                                ))
                                 .child(
                                     Label::new(display_text(&nip05))
                                         .size(LabelSize::XSmall)
@@ -2010,7 +2266,35 @@ impl NostrViewer {
                         .w_full()
                         .min_w_0()
                         .gap_1()
+                        .flex_wrap()
                         .when_some(reply, |el, reply| el.child(self.reply_chip(ix, &reply, cx)))
+                        .when_some(quote, |el, quote| {
+                            let target_id = quote.event_id.clone();
+                            el.child(
+                                div()
+                                    .id(("nostr-quote-chip", ix))
+                                    .min_w_0()
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .px_1()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                    .tooltip(ui::Tooltip::text(
+                                        "Open quoted note thread (NIP-10 q tag)",
+                                    ))
+                                    .child(
+                                        Label::new(display_text(&quote.label))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Accent)
+                                            .truncate(),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.read_conversation(target_id.clone(), cx);
+                                    })),
+                            )
+                        })
                         .when(row.parent_missing, |el| {
                             el.child(
                                 Label::new("parent not found")
@@ -2033,6 +2317,16 @@ impl NostrViewer {
                                     .size(LabelSize::XSmall)
                                     .color(Color::Default)
                                     .truncate(),
+                            )
+                        })
+                        .when_some(thread_jump_id, |el, target_id| {
+                            el.child(
+                                ui::Button::new(("nostr-alert-open-thread", ix), "Open thread")
+                                    .label_size(LabelSize::XSmall)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.read_conversation(target_id.clone(), cx);
+                                    })),
                             )
                         }),
                 )
@@ -2600,8 +2894,8 @@ impl NostrViewer {
                             .my_pubkey_hex(cx)
                             .as_deref()
                             .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
-                        let is_bookmarked = self.bookmarked_ids.contains(&event.id);
-                        let is_muted = self.muted_pubkeys.contains(&event.author);
+                        let is_bookmarked = self.bookmarks_state.contains(&event.id);
+                        let is_muted = self.mutes_state.contains(&event.author);
                         let bm_event_id = event.id.clone();
                         let mute_event_id = event.id.clone();
                         let mute_author_hex = event.author.clone();
@@ -2821,11 +3115,7 @@ impl NostrViewer {
                     let is_own_event = my_pubkey_hex
                         .as_deref()
                         .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
-                    let can_follow = !is_own_event
-                        && matches!(
-                            self.follows,
-                            Some(Follows::Authors(_) | Follows::NoList)
-                        );
+                    let can_follow = !is_own_event && self.follows_state.is_mutable();
                     let delete_event_id = event.id.clone();
                     let delete_kind = event.kind;
                     let reaction_note = self
@@ -3302,18 +3592,30 @@ impl NostrViewer {
                 .into_any_element();
         };
         let filtered_rows: Vec<Row>;
-        let visible_rows: &[Row] = if self.timeline_filter == TimelineFilter::Everything
-            || self.muted_pubkeys.is_empty()
+        let visible_rows: &[Row] = if self.timeline_filter == TimelineFilter::Bookmarks {
+            filtered_rows = feed
+                .rows
+                .iter()
+                .filter(|r| self.bookmarks_state.contains(&r.event.id))
+                .cloned()
+                .collect();
+            &filtered_rows
+        } else if self.timeline_filter == TimelineFilter::Everything || self.mutes_state.is_empty()
         {
             &feed.rows
         } else {
             filtered_rows = feed
                 .rows
                 .iter()
-                .filter(|r| !self.muted_pubkeys.contains(&r.event.author))
+                .filter(|r| !self.mutes_state.contains(&r.event.author))
                 .cloned()
                 .collect();
             &filtered_rows
+        };
+        let muted_count = if self.timeline_filter == TimelineFilter::Bookmarks {
+            0
+        } else {
+            feed.rows.len().saturating_sub(visible_rows.len())
         };
         let names = self.names_of(&feed.rows);
         let offset = local_offset();
@@ -3325,7 +3627,20 @@ impl NostrViewer {
             &self.expanded_records,
             offset,
         );
-        let heading = format!("{} · {} events, newest first", feed.name, feed.rows.len());
+        let heading = if muted_count > 0 {
+            format!(
+                "{} · {} events ({} muted), newest first",
+                feed.name,
+                visible_rows.len(),
+                muted_count
+            )
+        } else {
+            format!(
+                "{} · {} events, newest first",
+                feed.name,
+                visible_rows.len()
+            )
+        };
         v_flex()
             .size_full()
             .min_h_0()
@@ -3403,6 +3718,12 @@ impl NostrViewer {
                                         "nostr-filter-replies",
                                         "Replies",
                                         TimelineFilter::Replies,
+                                        cx,
+                                    ))
+                                    .child(self.filter_button(
+                                        "nostr-filter-bookmarks",
+                                        "Bookmarks",
+                                        TimelineFilter::Bookmarks,
                                         cx,
                                     ))
                                     .child(self.filter_button(
@@ -3544,16 +3865,73 @@ impl NostrViewer {
                 ))
                 .into_any_element();
         };
+        let filtered: Vec<Row> = feed
+            .rows
+            .iter()
+            .filter(|r| self.alert_filter.matches(r))
+            .cloned()
+            .collect();
+        let unread = self.unread_alert_count();
         let names = self.names_of(&feed.rows);
         let selected_row = self
             .selected
             .as_ref()
-            .and_then(|id| feed.rows.iter().find(|row| &row.event.id == id));
+            .and_then(|id| filtered.iter().find(|row| &row.event.id == id));
+        let active_filter = self.alert_filter;
         v_flex()
             .size_full()
             .min_h_0()
             .min_w_0()
             .overflow_hidden()
+            .child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .flex_shrink_0()
+                    .px_2()
+                    .py_1()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_1()
+                            .flex_wrap()
+                            .items_center()
+                            .children(
+                                [
+                                    (AlertFilter::All, "All"),
+                                    (AlertFilter::Replies, "Replies"),
+                                    (AlertFilter::Mentions, "Mentions"),
+                                    (AlertFilter::Reactions, "Reactions"),
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                .map(|(ix, (filter, label))| {
+                                    ui::Button::new(("nostr-alert-filter", ix), label)
+                                        .label_size(LabelSize::XSmall)
+                                        .toggle_state(active_filter == filter)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.alert_filter = filter;
+                                            cx.notify();
+                                        }))
+                                }),
+                            )
+                            .when(unread > 0, |row| {
+                                row.child(
+                                    ui::Button::new("nostr-alerts-mark-read", "Mark read")
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.mark_alerts_read();
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
+                    .child(Self::remarks(&feed.remarks)),
+            )
             .children(request)
             .child(
                 v_flex()
@@ -3562,15 +3940,15 @@ impl NostrViewer {
                     .min_h_0()
                     .min_w_0()
                     .overflow_hidden()
-                    .child(if feed.rows.is_empty() {
+                    .child(if filtered.is_empty() {
                         Self::empty(
                             "No notifications",
-                            "No replies, mentions, reactions, or comments were returned.",
+                            "No matching replies, mentions, reactions, or comments were returned.",
                         )
                         .into_any_element()
                     } else {
                         self.rows(
-                            &feed.rows,
+                            &filtered,
                             false,
                             &self.notifications_scroll_handle,
                             window,
@@ -3729,6 +4107,7 @@ impl NostrViewer {
                 h_flex()
                     .w_full()
                     .gap_2()
+                    .flex_wrap()
                     .items_center()
                     .child(
                         ui::Button::new("nostr-relay-sync", "Sync local relay")
@@ -3738,9 +4117,56 @@ impl NostrViewer {
                                 "Contacts configured sync relays to pull allowlisted authors' public events into the local archive",
                             ))
                             .on_click(cx.listener(|this, _, _, cx| this.sync_local_relay(cx))),
+                    )
+                    .child(
+                        ui::Button::new("nostr-relay-probe", "Probe seed relays")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text(
+                                "Contacts configured seed relays via nostr_account to test connectivity",
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| this.probe_seed_relays(cx))),
                     ),
             )
             .children(request)
+            .children(Self::request_line(
+                &self.probe_request,
+                "Probing seed relays via nostr_account…",
+            ))
+            .when(!self.seed_relay_probes.is_empty(), |el| {
+                el.child(Self::line("Seed-relay probe results", Color::Hint))
+                    .children(self.seed_relay_probes.iter().map(|probe| {
+                        let color = if probe.state == "connected" {
+                            Color::Success
+                        } else {
+                            Color::Warning
+                        };
+                        Self::line(
+                            display_text(&format!("{} · {}", host_of(&probe.address), probe.state)),
+                            color,
+                        )
+                    }))
+            })
+            .when_some(self.blossom_status.as_ref(), |el, blossom| {
+                let mut block = el
+                    .child(Self::line("Local Blossom sidecar", Color::Hint))
+                    .child(Self::line(
+                        display_text(&format!(
+                            "Listener: {} · {} blobs · {} / {} bytes",
+                            blossom.listener,
+                            blossom.blob_count,
+                            blossom.total_bytes,
+                            blossom.quota_bytes
+                        )),
+                        Color::Default,
+                    ));
+                if let Some(url) = &blossom.public_base_url {
+                    block = block.child(Self::line(
+                        display_text(&format!("Public base URL: {url}")),
+                        Color::Muted,
+                    ));
+                }
+                block
+            })
             .child(Self::line(
                 display_text(&listener),
                 if listening {
@@ -4106,10 +4532,17 @@ impl NostrViewer {
         if self.reaction_in_flight.is_some() {
             return;
         }
-        let mut updated: Vec<String> = match &self.follows {
-            Some(Follows::Authors(set)) => set.iter().cloned().collect(),
-            Some(Follows::NoList) => Vec::new(),
-            _ => return,
+        let feedback_target = self.selected.clone().unwrap_or_else(|| author_hex.clone());
+        let mut updated: Vec<String> = match self
+            .follows_state
+            .clone_for_mutation("follow list (kind:3)")
+        {
+            Ok(set) => set.into_iter().collect(),
+            Err(err) => {
+                self.reaction_feedback = Some((feedback_target, false, err));
+                cx.notify();
+                return;
+            }
         };
         let was_followed = updated
             .iter()
@@ -4119,7 +4552,6 @@ impl NostrViewer {
         } else {
             updated.push(author_hex.clone());
         }
-        let feedback_target = self.selected.clone().unwrap_or_else(|| author_hex.clone());
         self.reaction_in_flight = Some(feedback_target.clone());
         self.reaction_feedback = None;
         cx.notify();
@@ -4303,6 +4735,22 @@ impl NostrViewer {
     fn render_messages(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_dm_view(cx).into_any_element()
     }
+    fn selected_event(&self) -> Option<hkask_types::nostr_wire::WireEvent> {
+        let id = self.selected.as_deref()?;
+        let rows: &[Row] = match self.tab {
+            ViewerTab::Timeline => self.active_timeline_feed().map(|f| f.rows.as_slice())?,
+            ViewerTab::Notifications => self
+                .notifications_feed
+                .as_ref()
+                .map(|f| f.rows.as_slice())?,
+            ViewerTab::Conversation => self.conversation.as_ref().map(|c| c.rows.as_slice())?,
+            ViewerTab::Relay | ViewerTab::Messages => return None,
+        };
+        rows.iter()
+            .find(|r| r.event.id == id)
+            .map(|r| r.event.clone())
+    }
+
     fn step_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let rows: Vec<String> = match self.tab {
             ViewerTab::Timeline => self
@@ -4383,6 +4831,33 @@ impl Render for NostrViewer {
                         this.step_selection(-1, cx);
                         cx.stop_propagation();
                     }
+                    "enter" if !event.keystroke.modifiers.modified() => {
+                        if let Some(ev) = this.selected_event() {
+                            this.read_conversation(ev.id, cx);
+                            cx.stop_propagation();
+                        }
+                    }
+                    "r" if !event.keystroke.modifiers.modified() => {
+                        if let Some(ev) = this.selected_event() {
+                            let label = short_hex(&ev.author);
+                            let target = ReplyContext::from_event(&ev, label);
+                            this.open_reply_compose(target, window, cx);
+                            cx.stop_propagation();
+                        }
+                    }
+                    "l" if !event.keystroke.modifiers.modified() => {
+                        if let Some(ev) = this.selected_event() {
+                            this.send_reaction(ev.id, ev.author, "+".to_string(), cx);
+                            cx.stop_propagation();
+                        }
+                    }
+                    "z" if !event.keystroke.modifiers.modified() => {
+                        if let Some(ev) = this.selected_event() {
+                            let label = short_hex(&ev.author);
+                            this.toggle_zap_strip(ev.id, ev.author, label, window, cx);
+                            cx.stop_propagation();
+                        }
+                    }
                     _ => {}
                 }
             }))
@@ -4397,17 +4872,49 @@ impl Render for NostrViewer {
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Timeline, "Timeline".into(), cx))
-                    .child(self.tab_button(ViewerTab::Notifications, "Alerts".into(), cx))
+                    .child(self.tab_button(
+                        ViewerTab::Notifications,
+                        {
+                            let unread = self.unread_alert_count();
+                            if unread > 0 {
+                                format!("Alerts·{unread}").into()
+                            } else {
+                                "Alerts".into()
+                            }
+                        },
+                        cx,
+                    ))
                     .child(self.tab_button(ViewerTab::Conversation, "Thread".into(), cx))
                     .child(self.tab_button(ViewerTab::Relay, "Relay".into(), cx))
                     .child(self.tab_button(ViewerTab::Messages, "DMs".into(), cx))
                     .child(
-                        h_flex().ml_auto().gap_1().flex_shrink_0().child(
-                            ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
-                                .icon_size(ui::IconSize::Small)
-                                .tooltip(ui::Tooltip::text(
-                                    "Reload from the local relay. Contacts no other relay.",
-                                ))
+                        h_flex()
+                            .ml_auto()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .min_w(px(32.))
+                            .justify_center()
+                            .child(
+                                ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
+                                    .icon_size(ui::IconSize::Small)
+                                .tooltip(ui::Tooltip::text(match self.tab {
+                                    ViewerTab::Notifications => {
+                                        "Reload notifications from the local relay and seed relays."
+                                    }
+                                    ViewerTab::Messages => {
+                                        "Sync encrypted NIP-17 DMs from seed relays."
+                                    }
+                                    ViewerTab::Timeline
+                                        if self.timeline_filter == TimelineFilter::Following =>
+                                    {
+                                        "Reload followed authors' posts from the local relay and seed relays."
+                                    }
+                                    ViewerTab::Timeline
+                                    | ViewerTab::Conversation
+                                    | ViewerTab::Relay => {
+                                        "Reload from the local relay. Contacts no other relay."
+                                    }
+                                }))
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                         ),
                     ),
@@ -4523,7 +5030,9 @@ mod tests {
         assert!(CLIENT_TOOL_NAMES.contains(&PROFILE_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&FETCH_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&NOTIFICATIONS_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&ACCOUNT_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PUBLISH_TOOL));
+        assert!(hkask_types::nostr_wire::BLOSSOM_TOOL_NAMES.contains(&BLOSSOM_STATUS_TOOL));
         assert!(
             !CLIENT_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL)
                 && !RELAY_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL),

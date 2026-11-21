@@ -31,10 +31,13 @@ pub(crate) struct NotePublished;
 pub(crate) struct NostrComposerView {
     composer: ComposerState,
     article_mode: bool,
+    article_meta_expanded: bool,
     composer_editor: Option<Entity<editor::Editor>>,
     composer_media_editor: Option<Entity<editor::Editor>>,
     article_title_editor: Option<Entity<editor::Editor>>,
     article_slug_editor: Option<Entity<editor::Editor>>,
+    article_summary_editor: Option<Entity<editor::Editor>>,
+    article_hashtags_editor: Option<Entity<editor::Editor>>,
     _composer_subscription: Option<gpui::Subscription>,
     _publish_task: Option<Task<()>>,
 }
@@ -46,10 +49,13 @@ impl NostrComposerView {
         Self {
             composer: ComposerState::new(),
             article_mode: false,
+            article_meta_expanded: false,
             composer_editor: None,
             composer_media_editor: None,
             article_title_editor: None,
             article_slug_editor: None,
+            article_summary_editor: None,
+            article_hashtags_editor: None,
             _composer_subscription: None,
             _publish_task: None,
         }
@@ -91,6 +97,36 @@ impl NostrComposerView {
             ed
         };
         (title_ed, slug_ed)
+    }
+
+    fn ensure_article_meta_editors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
+        let summary_ed = if let Some(existing) = &self.article_summary_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::single_line(window, cx);
+                e.set_placeholder_text("Optional summary (<=500 chars)…", window, cx);
+                e
+            });
+            self.article_summary_editor = Some(ed.clone());
+            ed
+        };
+        let hashtags_ed = if let Some(existing) = &self.article_hashtags_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::single_line(window, cx);
+                e.set_placeholder_text("Optional hashtags (comma-separated, max 16)…", window, cx);
+                e
+            });
+            self.article_hashtags_editor = Some(ed.clone());
+            ed
+        };
+        (summary_ed, hashtags_ed)
     }
 
     fn browse_media_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -224,6 +260,12 @@ impl NostrComposerView {
         if let Some(ed) = &self.article_slug_editor {
             ed.update(cx, |ed, cx| ed.set_text("", window, cx));
         }
+        if let Some(ed) = &self.article_summary_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
+        if let Some(ed) = &self.article_hashtags_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
     }
 
     fn discard_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -334,14 +376,40 @@ impl NostrComposerView {
         cx.notify();
 
         let (tool, args) = if is_article {
-            (
-                PUBLISH_ARTICLE_TOOL,
-                json!({
-                    "slug": article_slug,
-                    "title": article_title,
-                    "content": payload.content,
-                }),
-            )
+            let summary = self
+                .article_summary_editor
+                .as_ref()
+                .map(|ed| ed.read(cx).text(cx).trim().to_string())
+                .filter(|s| !s.is_empty());
+            let hashtags: Vec<String> = self
+                .article_hashtags_editor
+                .as_ref()
+                .map(|ed| {
+                    let mut out = Vec::new();
+                    for raw in ed.read(cx).text(cx).split([',', ' ']) {
+                        let clean = raw.trim().trim_start_matches('#').to_string();
+                        if !clean.is_empty() && !out.contains(&clean) {
+                            out.push(clean);
+                            if out.len() >= 16 {
+                                break;
+                            }
+                        }
+                    }
+                    out
+                })
+                .unwrap_or_default();
+            let mut article_args = json!({
+                "slug": article_slug,
+                "title": article_title,
+                "content": payload.content,
+            });
+            if let Some(summary) = summary {
+                article_args["summary"] = json!(summary);
+            }
+            if !hashtags.is_empty() {
+                article_args["hashtags"] = json!(hashtags);
+            }
+            (PUBLISH_ARTICLE_TOOL, article_args)
         } else {
             match reply_target {
                 Some(target) => (
@@ -383,6 +451,8 @@ impl NostrComposerView {
         let editor_handle = self.composer_editor.clone();
         let title_handle = self.article_title_editor.clone();
         let slug_handle = self.article_slug_editor.clone();
+        let summary_handle = self.article_summary_editor.clone();
+        let hashtags_handle = self.article_hashtags_editor.clone();
         let window_handle = window.window_handle();
         self._publish_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -401,6 +471,12 @@ impl NostrComposerView {
                                             ed.update(cx, |ed, cx| ed.set_text("", window, cx));
                                         }
                                         if let Some(ed) = &slug_handle {
+                                            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                        }
+                                        if let Some(ed) = &summary_handle {
+                                            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                        }
+                                        if let Some(ed) = &hashtags_handle {
                                             ed.update(cx, |ed, cx| ed.set_text("", window, cx));
                                         }
                                     }
@@ -538,6 +614,12 @@ impl NostrComposerView {
         } else {
             None
         };
+        let article_meta_editors = if is_article && self.article_meta_expanded {
+            Some(self.ensure_article_meta_editors(window, cx))
+        } else {
+            None
+        };
+        let article_meta_expanded = self.article_meta_expanded;
         let media_editor = if self.composer.reply_target.is_none() && !is_article {
             Some(self.ensure_composer_media_editor(window, cx))
         } else {
@@ -680,7 +762,47 @@ impl NostrComposerView {
                                     .border_color(cx.theme().colors().border)
                                     .bg(cx.theme().colors().editor_background)
                                     .child(slug_ed),
-                            ),
+                            )
+                            .child(
+                                ui::Button::new(
+                                    "nostr-article-meta-toggle",
+                                    if article_meta_expanded {
+                                        "▾ Hide summary & hashtags"
+                                    } else {
+                                        "▸ Summary & hashtags (optional)"
+                                    },
+                                )
+                                .label_size(LabelSize::XSmall)
+                                .disabled(publishing)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.article_meta_expanded = !this.article_meta_expanded;
+                                    cx.notify();
+                                })),
+                            )
+                            .when_some(article_meta_editors, |meta, (summary_ed, hashtags_ed)| {
+                                meta.child(
+                                    div()
+                                        .w_full()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(summary_ed),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(hashtags_ed),
+                                )
+                            }),
                     )
                 })
                 .when_some(reply_banner, |this, banner| {
@@ -829,15 +951,20 @@ impl NostrComposerView {
                             ),
                         )
                         .child(
-                            div().flex_shrink_0().child(
-                                ui::IconButton::new("nostr-compose-discard", ui::IconName::Trash)
-                                    .icon_size(ui::IconSize::Small)
-                                    .disabled(publishing)
-                                    .tooltip(ui::Tooltip::text("Discard draft"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.discard_compose(window, cx);
-                                    })),
-                            ),
+                            div()
+                                .flex_shrink_0()
+                                .min_w(px(32.))
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    ui::IconButton::new("nostr-compose-discard", ui::IconName::Trash)
+                                        .icon_size(ui::IconSize::Small)
+                                        .disabled(publishing)
+                                        .tooltip(ui::Tooltip::text("Discard draft"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.discard_compose(window, cx);
+                                        })),
+                                ),
                         )
                         .child(
                             div().flex_shrink_0().child(
@@ -847,9 +974,13 @@ impl NostrComposerView {
                                 )
                                 .style(ui::ButtonStyle::Filled)
                                 .disabled(!can_publish)
-                                .tooltip(ui::Tooltip::text(
-                                    "Publish kind:1 note (Ctrl/Cmd+Enter). Editor asks approval before signing.",
-                                ))
+                                .tooltip(ui::Tooltip::text(if is_article {
+                                    "Publish NIP-23 kind:30023 article (Ctrl/Cmd+Enter). Always asks editor approval before signing."
+                                } else if self.composer.reply_target.is_some() {
+                                    "Publish reply/comment (Ctrl/Cmd+Enter). Editor asks approval before signing."
+                                } else {
+                                    "Publish kind:1 note (Ctrl/Cmd+Enter). Editor asks approval before signing."
+                                }))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.submit_compose(window, cx);
                                 })),

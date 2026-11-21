@@ -13,11 +13,16 @@ use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm::{self, DmMessage, DmThreadSummary};
 use serde_json::json;
 use settings::Settings as _;
-use ui::{Label, LabelSize, WithScrollbar as _, prelude::*};
+use ui::{ContextMenu, Label, LabelSize, PopoverMenu, WithScrollbar as _, prelude::*};
 use util::ResultExt as _;
 
 use crate::nostr_composer::{PUBLISH_LIST_TOOL, parse_publish_receipt, sanitize_untrusted_text};
+use crate::nostr_event_model::extract_links;
 use crate::nostr_viewer::{display_text, invoke, short_hex, utc_text};
+
+/// Maximum peer chips shown inline before overflowing into a `Peers` menu
+/// (KSA-4 `high_action_count` budget at narrow 300-340px dock widths).
+const MAX_VISIBLE_DM_PEERS: usize = 4;
 
 /// Format a peer chip label using a resolved display name when known, falling
 /// back to a truncated hex pubkey.
@@ -46,6 +51,7 @@ pub(crate) struct NostrDmView {
     busy: bool,
     loaded_local: bool,
     peer_names: BTreeMap<String, String>,
+    seen_counts: BTreeMap<String, usize>,
     recipient_editor: Option<Entity<editor::Editor>>,
     input_editor: Option<Entity<editor::Editor>>,
     scroll_handle: ScrollHandle,
@@ -62,6 +68,7 @@ impl NostrDmView {
             busy: false,
             loaded_local: false,
             peer_names: BTreeMap::new(),
+            seen_counts: BTreeMap::new(),
             recipient_editor: None,
             input_editor: None,
             scroll_handle: ScrollHandle::new(),
@@ -168,11 +175,22 @@ impl NostrDmView {
 
     fn select_peer(&mut self, peer_hex: String, cx: &mut Context<Self>) {
         self.selected_peer = Some(peer_hex.clone());
+        if let Some(t) = self
+            .threads
+            .iter()
+            .find(|t| t.peer_pubkey_hex.eq_ignore_ascii_case(&peer_hex))
+        {
+            self.seen_counts
+                .insert(t.peer_pubkey_hex.clone(), t.message_count);
+        }
         self._task = Some(cx.spawn(async move |this, cx| {
-            let result = nostr_dm::load_local_messages(peer_hex).await;
+            let result = nostr_dm::load_local_messages(peer_hex.clone()).await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(messages) => this.messages = messages,
+                    Ok(messages) => {
+                        this.seen_counts.insert(peer_hex, messages.len());
+                        this.messages = messages;
+                    }
                     Err(err) => this.status = Some((false, err)),
                 }
                 cx.notify();
@@ -383,25 +401,40 @@ impl Render for NostrDmView {
                             .gap_1()
                             .flex_shrink_0()
                             .child(
-                                ui::Button::new("nostr-dm-publish-relays", "DM relays")
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(busy)
-                                    .tooltip(ui::Tooltip::text(
-                                        "Publish configured seed relays as your NIP-17 kind:10050 DM inbox relay list (always prompts)",
-                                    ))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.publish_dm_relays(cx);
-                                    })),
-                            )
-                            .child(
-                                ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync DMs" })
+                                ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync" })
                                     .label_size(LabelSize::XSmall)
                                     .disabled(busy)
                                     .tooltip(ui::Tooltip::text(
                                         "Fetch & unwrap NIP-17 kind:1059 gift wraps from seed relays (https://nostr-nips.com/nip-17)",
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| this.sync_dms(cx))),
-                            ),
+                            )
+                            .child({
+                                let dm_view = cx.weak_entity();
+                                PopoverMenu::new("nostr-dm-more-menu")
+                                    .trigger_with_tooltip(
+                                        ui::IconButton::new("nostr-dm-more", ui::IconName::Ellipsis)
+                                            .icon_size(ui::IconSize::Small)
+                                            .disabled(busy),
+                                        ui::Tooltip::text("DM actions (NIP-17 kind:10050 relays)"),
+                                    )
+                                    .menu(move |window, cx| {
+                                        let dm_view = dm_view.clone();
+                                        Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                                            menu.entry(
+                                                "Publish DM relays (NIP-17 kind:10050)",
+                                                None,
+                                                move |_, cx| {
+                                                    dm_view
+                                                        .update(cx, |this, cx| {
+                                                            this.publish_dm_relays(cx);
+                                                        })
+                                                        .log_err();
+                                                },
+                                            )
+                                        }))
+                                    })
+                            }),
                     ),
             )
             .child(
@@ -410,7 +443,7 @@ impl Render for NostrDmView {
                     .gap_1()
                     .flex_wrap()
                     .child(
-                        ui::Button::new("nostr-dm-new", "+ New DM")
+                        ui::Button::new("nostr-dm-new", "+ New")
                             .label_size(LabelSize::XSmall)
                             .toggle_state(selected_peer.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -433,21 +466,84 @@ impl Render for NostrDmView {
                             )
                         },
                     )
-                    .children(self.threads.iter().enumerate().map(|(ix, thread)| {
-                        let peer_hex = thread.peer_pubkey_hex.clone();
-                        let active = selected_peer.as_deref() == Some(peer_hex.as_str());
-                        let label = format_peer_label(
-                            &thread.peer_pubkey_hex,
-                            &self.peer_names,
-                            Some(thread.message_count),
-                        );
-                        ui::Button::new(("nostr-dm-peer", ix), label)
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(active)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_peer(peer_hex.clone(), cx);
-                            }))
-                    })),
+                    .children(
+                        self.threads
+                            .iter()
+                            .take(MAX_VISIBLE_DM_PEERS)
+                            .enumerate()
+                            .map(|(ix, thread)| {
+                                let peer_hex = thread.peer_pubkey_hex.clone();
+                                let active = selected_peer.as_deref() == Some(peer_hex.as_str());
+                                let seen = self
+                                    .seen_counts
+                                    .get(&thread.peer_pubkey_hex)
+                                    .copied()
+                                    .unwrap_or(thread.message_count);
+                                let unread = thread.message_count.saturating_sub(seen);
+                                let base = format_peer_label(
+                                    &thread.peer_pubkey_hex,
+                                    &self.peer_names,
+                                    Some(thread.message_count),
+                                );
+                                let label = if unread > 0 && !active {
+                                    format!("• {base}")
+                                } else {
+                                    base
+                                };
+                                ui::Button::new(("nostr-dm-peer", ix), label)
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(active)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.select_peer(peer_hex.clone(), cx);
+                                    }))
+                            }),
+                    )
+                    .when(self.threads.len() > MAX_VISIBLE_DM_PEERS, |row| {
+                        let overflow_count = self.threads.len() - MAX_VISIBLE_DM_PEERS;
+                        let overflow_peers: Vec<(String, String)> = self
+                            .threads
+                            .iter()
+                            .skip(MAX_VISIBLE_DM_PEERS)
+                            .map(|t| {
+                                (
+                                    t.peer_pubkey_hex.clone(),
+                                    format_peer_label(
+                                        &t.peer_pubkey_hex,
+                                        &self.peer_names,
+                                        Some(t.message_count),
+                                    ),
+                                )
+                            })
+                            .collect();
+                        let dm_view = cx.weak_entity();
+                        row.child(
+                            PopoverMenu::new("nostr-dm-overflow-peers")
+                                .trigger(
+                                    ui::Button::new(
+                                        "nostr-dm-more-peers-btn",
+                                        format!("+{overflow_count} peers"),
+                                    )
+                                    .label_size(LabelSize::XSmall),
+                                )
+                                .menu(move |window, cx| {
+                                    let dm_view = dm_view.clone();
+                                    let peers = overflow_peers.clone();
+                                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                                        for (peer_hex, label) in peers {
+                                            let dm_view = dm_view.clone();
+                                            menu = menu.entry(label, None, move |_, cx| {
+                                                dm_view
+                                                    .update(cx, |this, cx| {
+                                                        this.select_peer(peer_hex.clone(), cx);
+                                                    })
+                                                    .log_err();
+                                            });
+                                        }
+                                        menu
+                                    }))
+                                }),
+                        )
+                    }),
             )
             .when(selected_peer.is_none(), |el| {
                 el.child(
@@ -494,15 +590,17 @@ impl Render for NostrDmView {
                                     Color::Muted,
                                 ))
                             })
-                            .children(self.messages.iter().map(|msg| {
+                            .children(self.messages.iter().enumerate().map(|(m_ix, msg)| {
                                 let who = if msg.outgoing {
                                     "You".to_string()
                                 } else {
                                     format_peer_label(&msg.peer_pubkey_hex, &self.peer_names, None)
                                 };
+                                let links = extract_links(&msg.content);
                                 v_flex()
                                     .w_full()
                                     .p_1()
+                                    .gap_0p5()
                                     .rounded_sm()
                                     .bg(cx.theme().colors().surface_background)
                                     .child(Self::line(
@@ -510,6 +608,24 @@ impl Render for NostrDmView {
                                         Color::Hint,
                                     ))
                                     .child(Self::line(display_text(&msg.content), Color::Default))
+                                    .when(!links.is_empty(), |col| {
+                                        col.child(
+                                            h_flex().w_full().gap_1().flex_wrap().children(
+                                                links.into_iter().enumerate().map(|(l_ix, link)| {
+                                                    let url = link.url.clone();
+                                                    ui::Button::new(
+                                                        ("nostr-dm-link", m_ix * 32 + l_ix),
+                                                        format!("↗ {}", link.host),
+                                                    )
+                                                    .label_size(LabelSize::XSmall)
+                                                    .tooltip(ui::Tooltip::text(url.clone()))
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.open_url(&url);
+                                                    })
+                                                }),
+                                            ),
+                                        )
+                                    })
                             })),
                     )
                     .custom_scrollbars(

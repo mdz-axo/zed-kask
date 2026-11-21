@@ -36,6 +36,58 @@ pub(crate) const MAX_INDENT_LEVELS: usize = 6;
 /// How many threads Back remembers behind the one on screen.
 pub(crate) const CONVERSATION_BACK_LIMIT: usize = 8;
 
+/// Explicit sync state for replaceable Nostr lists (`kind: 3` follows,
+/// `kind: 10000` mutes, `kind: 10003` bookmarks). Prevents a cold local archive
+/// or failed/in-flight relay fallback from overwriting a remote replaceable
+/// list with a single-item event.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum ReplaceableListState {
+    #[default]
+    Unloaded,
+    LoadingRelays,
+    Confirmed(BTreeSet<String>),
+    ConfirmedEmpty,
+    RelayError(String),
+}
+
+impl ReplaceableListState {
+    pub(crate) fn is_mutable(&self) -> bool {
+        matches!(self, Self::Confirmed(_) | Self::ConfirmedEmpty)
+    }
+
+    pub(crate) fn contains(&self, value: &str) -> bool {
+        match self {
+            Self::Confirmed(set) => set.contains(value),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Self::Confirmed(set) => set.is_empty(),
+            _ => true,
+        }
+    }
+
+    /// Return a mutable copy of the confirmed items, or an actionable refusal
+    /// message explaining why mutation is blocked.
+    pub(crate) fn clone_for_mutation(&self, list_name: &str) -> Result<BTreeSet<String>, String> {
+        match self {
+            Self::Confirmed(set) => Ok(set.clone()),
+            Self::ConfirmedEmpty => Ok(BTreeSet::new()),
+            Self::Unloaded => Err(format!(
+                "Cannot update {list_name}: list has not been loaded from relays yet."
+            )),
+            Self::LoadingRelays => Err(format!(
+                "Cannot update {list_name}: still checking relays to avoid overwriting an existing list."
+            )),
+            Self::RelayError(err) => Err(format!(
+                "Cannot update {list_name}: relay sync failed ({err}); refusing to overwrite."
+            )),
+        }
+    }
+}
+
 /// Which events the Timeline shows. Every named feed reads the same page;
 /// For reading is the default (operator ruling 2026-11-14). The switch
 /// changes what is shown and how records collapse, never the order.
@@ -55,6 +107,8 @@ pub(crate) enum TimelineFilter {
     /// The notes that answer a note: kind 1 replies and kind 1111
     /// comments.
     Replies,
+    /// Events saved in the operator's NIP-51 `kind: 10003` bookmark list.
+    Bookmarks,
     /// Every event as a row.
     Everything,
 }
@@ -67,7 +121,9 @@ impl TimelineFilter {
     /// ruling 2026-11-14).
     pub(crate) fn shows(self, row: &Row, follows: Option<&Follows>) -> bool {
         match self {
-            TimelineFilter::ForReading | TimelineFilter::Everything => true,
+            TimelineFilter::ForReading | TimelineFilter::Bookmarks | TimelineFilter::Everything => {
+                true
+            }
             TimelineFilter::Following => {
                 let Some(Follows::Authors(authors)) = follows else {
                     return false;
@@ -79,6 +135,114 @@ impl TimelineFilter {
             TimelineFilter::Replies => answered_note(&row.event).0.is_some(),
         }
     }
+}
+
+/// Filter for the Alerts (`nostr_notifications`) tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum AlertFilter {
+    #[default]
+    All,
+    Replies,
+    Mentions,
+    Reactions,
+}
+
+impl AlertFilter {
+    pub(crate) fn matches(self, row: &Row) -> bool {
+        let label = row
+            .label
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match self {
+            Self::All => true,
+            Self::Replies => {
+                label.contains("reply") || label.contains("comment") || row.event.kind == 1111
+            }
+            Self::Mentions => label.contains("mention") || label.contains("repost"),
+            Self::Reactions => {
+                label.contains("reaction") || row.event.kind == 7 || row.event.kind == 9735
+            }
+        }
+    }
+}
+
+/// Parsed summary of `nostr_blossom_status` (strictly local sidecar state).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BlossomStatusSummary {
+    pub(crate) listener: String,
+    pub(crate) blob_count: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) quota_bytes: u64,
+    pub(crate) public_base_url: Option<String>,
+}
+
+pub(crate) fn parse_blossom_status(content: &Value) -> Option<BlossomStatusSummary> {
+    let listener = content
+        .pointer("/listener/address")
+        .and_then(Value::as_str)
+        .or_else(|| content.pointer("/listener/state").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+    let blob_count = content
+        .pointer("/store/blob_count")
+        .or_else(|| content.get("blob_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_bytes = content
+        .pointer("/store/total_bytes")
+        .or_else(|| content.get("total_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let quota_bytes = content
+        .pointer("/store/quota_bytes")
+        .or_else(|| content.get("quota_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let public_base_url = content
+        .get("public_base_url")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+    Some(BlossomStatusSummary {
+        listener,
+        blob_count,
+        total_bytes,
+        quota_bytes,
+        public_base_url,
+    })
+}
+
+/// Parsed seed-relay probe result from an explicit opt-in `nostr_account` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SeedRelayProbe {
+    pub(crate) address: String,
+    pub(crate) state: String,
+}
+
+pub(crate) fn parse_account_seed_relays(content: &Value) -> Vec<SeedRelayProbe> {
+    content
+        .get("seed_relays")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let address = item
+                        .get("address")
+                        .or_else(|| item.get("url"))
+                        .and_then(Value::as_str)?;
+                    let state = item
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    Some(SeedRelayProbe {
+                        address: address.to_string(),
+                        state: state.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// What the reader's own follows are, once the local reads answer: the
@@ -717,6 +881,42 @@ pub(crate) struct ReplyReference {
     /// The chip's label: "@name" when the page knows the author, else the
     /// shortened key.
     pub(crate) label: String,
+}
+
+/// A NIP-10 quote reference (`["q", "<event_id>", <optional_relay>, <optional_pubkey>]`)
+/// parsed from an incoming `kind: 1` note's tags.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QuoteReference {
+    pub(crate) event_id: String,
+    pub(crate) label: String,
+}
+
+/// Extract the first NIP-10 `q`-tag quote reference from a `kind: 1` note.
+pub(crate) fn quote_reference(
+    event: &WireEvent,
+    names: &BTreeMap<String, AuthorProfile>,
+) -> Option<QuoteReference> {
+    if event.kind != 1 {
+        return None;
+    }
+    let tag = event.tags.iter().find(|tag| {
+        tag.first().map(String::as_str) == Some("q")
+            && tag.get(1).is_some_and(|v| !v.trim().is_empty())
+    })?;
+    let event_id = tag.get(1)?.trim().to_string();
+    let author = tag.get(3).map(String::as_str).filter(|v| !v.is_empty());
+    let label = match author {
+        Some(pk) => {
+            let shown = names
+                .get(pk)
+                .and_then(|profile| profile.name.as_deref())
+                .map(str::to_string)
+                .unwrap_or_else(|| short_hex(pk));
+            format!("❝ quotes @{shown} ({})", short_hex(&event_id))
+        }
+        None => format!("❝ quotes {}", short_hex(&event_id)),
+    };
+    Some(QuoteReference { event_id, label })
 }
 
 /// A note's or comment's reply context, from its tags alone. A note with
@@ -1456,6 +1656,76 @@ pub(crate) fn format_steer_research_prompt(event: &WireEvent, author_label: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaceable_list_state_refuses_mutation_when_unloaded_loading_or_errored() {
+        assert!(!ReplaceableListState::Unloaded.is_mutable());
+        assert!(
+            ReplaceableListState::Unloaded
+                .clone_for_mutation("follows")
+                .is_err()
+        );
+
+        assert!(!ReplaceableListState::LoadingRelays.is_mutable());
+        assert!(
+            ReplaceableListState::LoadingRelays
+                .clone_for_mutation("bookmarks")
+                .is_err()
+        );
+
+        let err_state = ReplaceableListState::RelayError("timeout".to_string());
+        assert!(!err_state.is_mutable());
+        assert!(err_state.clone_for_mutation("mutes").is_err());
+
+        assert!(ReplaceableListState::ConfirmedEmpty.is_mutable());
+        assert!(
+            ReplaceableListState::ConfirmedEmpty
+                .clone_for_mutation("bookmarks")
+                .expect("confirmed empty is mutable")
+                .is_empty()
+        );
+
+        let mut items = BTreeSet::new();
+        items.insert("abc".to_string());
+        let confirmed = ReplaceableListState::Confirmed(items);
+        assert!(confirmed.is_mutable());
+        assert!(confirmed.contains("abc"));
+        assert_eq!(
+            confirmed
+                .clone_for_mutation("bookmarks")
+                .expect("confirmed is mutable")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn quote_reference_parses_nip10_q_tag_with_optional_author() {
+        let q_id = "c".repeat(64);
+        let q_pk = "d".repeat(64);
+        let ev = WireEvent {
+            id: "a".repeat(64),
+            author: "b".repeat(64),
+            created_at: 100,
+            kind: 1,
+            content: "Look at this".to_string(),
+            content_truncated: false,
+            tags: vec![vec!["q".into(), q_id.clone(), "".into(), q_pk.clone()]],
+            tags_truncated: false,
+            served_by: vec![],
+        };
+        let mut names = BTreeMap::new();
+        names.insert(
+            q_pk,
+            AuthorProfile {
+                name: Some("alice".into()),
+                nip05: None,
+            },
+        );
+        let qr = quote_reference(&ev, &names).expect("parses q tag");
+        assert_eq!(qr.event_id, q_id);
+        assert!(qr.label.contains("@alice"));
+    }
 
     #[test]
     fn extract_nostr_refs_finds_and_deduplicates_nip21_uris() {
