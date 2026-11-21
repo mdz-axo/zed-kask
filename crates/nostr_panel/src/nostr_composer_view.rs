@@ -56,6 +56,39 @@ impl NostrComposerView {
         self.composer.has_draft()
     }
 
+    fn browse_media_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer.is_publishing() || self.composer.media_paths.len() >= MAX_MEDIA_ATTACHMENTS
+        {
+            return;
+        }
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach media to Nostr note".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths_receiver.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                for path in paths {
+                    if this.composer.media_paths.len() >= MAX_MEDIA_ATTACHMENTS {
+                        break;
+                    }
+                    if let Some(path_str) = path.to_str()
+                        && let Err(err) = this.composer.add_media_path(path_str.to_string())
+                    {
+                        this.composer.error = Some(err);
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     /// Ensure the multi-line composer `Editor` exists and syncs edits into `ComposerState`.
     fn ensure_composer_editor(
         &mut self,
@@ -500,6 +533,17 @@ impl NostrComposerView {
                                         .border_color(cx.theme().colors().border)
                                         .bg(cx.theme().colors().editor_background)
                                         .child(med_ed.clone()),
+                                )
+                                .child(
+                                    ui::Button::new("nostr-compose-browse", "Browse…")
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(publishing || at_limit)
+                                        .tooltip(ui::Tooltip::text(format!(
+                                            "Pick local media file(s) for Blossom upload (max {MAX_MEDIA_ATTACHMENTS})"
+                                        )))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.browse_media_files(window, cx);
+                                        })),
                                 )
                                 .child(
                                     ui::Button::new("nostr-compose-attach", "Attach")

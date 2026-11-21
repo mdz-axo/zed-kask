@@ -346,11 +346,17 @@ pub(crate) fn classify_media_url(url: &str, mime: Option<&str>) -> Option<MediaA
     }
 }
 
-/// Resolve the first media attachment from an event's `imeta` tags (NIP-92,
-/// with or without `blurhash`) or from a direct `https://` media URL in its
-/// text.
-pub(crate) fn media_of(event: &WireEvent) -> Option<MediaAttachment> {
+/// Resolve up to 4 unique media attachments from an event's `imeta` tags
+/// (NIP-92, with or without `blurhash`) and direct `https://` media URLs in
+/// its text.
+pub(crate) fn media_all_of(event: &WireEvent) -> Vec<MediaAttachment> {
+    let mut results = Vec::new();
+    let mut seen_urls = HashSet::new();
+
     for tag in &event.tags {
+        if results.len() >= hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS {
+            break;
+        }
         if tag.first().map(String::as_str) != Some("imeta") {
             continue;
         }
@@ -388,10 +394,11 @@ pub(crate) fn media_of(event: &WireEvent) -> Option<MediaAttachment> {
         }
         if let Some(url) = url
             && url.starts_with("https://")
+            && seen_urls.insert(url.clone())
         {
             let kind =
                 classify_media_url(&url, mime.as_deref()).unwrap_or(MediaAttachmentKind::Image);
-            return Some(MediaAttachment {
+            results.push(MediaAttachment {
                 url,
                 kind,
                 blurhash,
@@ -401,8 +408,13 @@ pub(crate) fn media_of(event: &WireEvent) -> Option<MediaAttachment> {
     }
 
     for link in extract_links(&event.content) {
-        if let Some(kind) = classify_media_url(&link.url, None) {
-            return Some(MediaAttachment {
+        if results.len() >= hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS {
+            break;
+        }
+        if let Some(kind) = classify_media_url(&link.url, None)
+            && seen_urls.insert(link.url.clone())
+        {
+            results.push(MediaAttachment {
                 url: link.url,
                 kind,
                 blurhash: None,
@@ -410,7 +422,14 @@ pub(crate) fn media_of(event: &WireEvent) -> Option<MediaAttachment> {
             });
         }
     }
-    None
+    results
+}
+
+/// Resolve the first media attachment from an event's `imeta` tags (NIP-92,
+/// with or without `blurhash`) or from a direct `https://` media URL in its
+/// text.
+pub(crate) fn media_of(event: &WireEvent) -> Option<MediaAttachment> {
+    media_all_of(event).into_iter().next()
 }
 
 /// Resolve each note's media attachment and decode any `blurhash` preview in
@@ -1459,5 +1478,39 @@ mod tests {
         );
         assert_eq!(refs[2].kind, NostrRefKind::Address);
         assert!(refs[2].decoded_hex.is_none());
+    }
+
+    #[test]
+    fn media_all_of_collects_multiple_imeta_and_inline_attachments() {
+        let ev = WireEvent {
+            id: "a".repeat(64),
+            author: "b".repeat(64),
+            kind: 1,
+            created_at: 100,
+            content: "Gallery https://cdn.example/one.jpg and https://cdn.example/three.png"
+                .to_string(),
+            content_truncated: false,
+            tags: vec![
+                vec![
+                    "imeta".into(),
+                    "url https://cdn.example/one.jpg".into(),
+                    "m image/jpeg".into(),
+                ],
+                vec![
+                    "imeta".into(),
+                    "url https://cdn.example/two.mp4".into(),
+                    "m video/mp4".into(),
+                ],
+            ],
+            tags_truncated: false,
+            served_by: Vec::new(),
+        };
+        let all = media_all_of(&ev);
+        assert_eq!(all.len(), 3, "deduplicates one.jpg and keeps all 3 unique");
+        assert_eq!(all[0].url, "https://cdn.example/one.jpg");
+        assert_eq!(all[0].kind, MediaAttachmentKind::Image);
+        assert_eq!(all[1].url, "https://cdn.example/two.mp4");
+        assert_eq!(all[1].kind, MediaAttachmentKind::Video);
+        assert_eq!(all[2].url, "https://cdn.example/three.png");
     }
 }

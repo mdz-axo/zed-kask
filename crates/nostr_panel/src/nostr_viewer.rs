@@ -2307,11 +2307,7 @@ impl NostrViewer {
         let event_id = event.id.clone();
         let links = extract_links(&event.content);
         let nostr_refs = extract_nostr_refs(&event.content);
-        let detail_media = self
-            .media_attachments
-            .get(&event.id)
-            .cloned()
-            .or_else(|| media_of(event));
+        let detail_media_items = media_all_of(event);
         let name = names
             .get(event.author.as_str())
             .and_then(|profile| profile.name.as_deref());
@@ -2796,9 +2792,20 @@ impl NostrViewer {
                         },
                     ),
             )
-            .when_some(detail_media, |el, meta| {
-                let preview = self.media_previews.get(&event.id).cloned();
-                el.child(self.media_block(usize::MAX, &event.id, preview, meta, cx))
+            .when(!detail_media_items.is_empty(), |el| {
+                el.children(detail_media_items.into_iter().enumerate().map(|(m_ix, meta)| {
+                    let media_key = if m_ix == 0 {
+                        event.id.clone()
+                    } else {
+                        format!("{}#media-{m_ix}", event.id)
+                    };
+                    let preview = if m_ix == 0 {
+                        self.media_previews.get(&event.id).cloned()
+                    } else {
+                        None
+                    };
+                    self.media_block(usize::MAX - m_ix, &media_key, preview, meta, cx)
+                }))
             })
             .when(!nostr_refs.is_empty(), |el| {
                 el.child(Self::line(
