@@ -58,9 +58,10 @@ use std::sync::Arc;
 use crate::blurhash;
 use crate::nostr_composer::{
     CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_DELETION_TOOL,
-    PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, ReplyContext,
-    WALLET_PAY_INVOICE_TOOL, WALLET_STATUS_TOOL, ZAP_PRESETS_SATS, ZapDraftState, ZapStatus,
-    sanitize_untrusted_text,
+    PUBLISH_NUTZAP_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome,
+    QUICK_REACTIONS, ReplyContext, WALLET_PAY_INVOICE_TOOL, WALLET_SEND_ECASH_TOOL,
+    WALLET_STATUS_TOOL, WalletBadge, ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus,
+    parse_custom_sats, parse_wallet_status, sanitize_untrusted_text,
 };
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
@@ -73,7 +74,7 @@ use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media
 use hkask_tool_invoker::InvokeError;
 use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
 use hkask_types::nostr_wire::{
-    MAX_CONTENT_CHARS, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER, WireEvent,
+    MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER, WireEvent,
 };
 use hkask_types::wallet_wire::WALLET_SERVER_ID;
 use image::Frame;
@@ -1101,13 +1102,40 @@ fn reaction_counts(rows: &[Row]) -> (BTreeMap<String, BTreeMap<String, u64>>, bo
     (counts, rows.len() >= ARCHIVE_PAGE)
 }
 
-/// How a reaction's content reads: NIP-25's like is `+`, and an empty
-/// content is read the same way; anything else is the reaction's own
-/// text, shown as text.
+/// Track the operator's own `kind: 7` reactions keyed by
+/// `(target_event_id, normalized_emoji) -> own_reaction_event_id` so the UI can
+/// highlight active reactions, guard duplicates, and unreact via NIP-09.
+fn own_reactions_from(
+    rows: &[Row],
+    my_pubkey_hex: Option<&str>,
+) -> BTreeMap<(String, String), String> {
+    let Some(mine) = my_pubkey_hex else {
+        return BTreeMap::new();
+    };
+    let mut own = BTreeMap::new();
+    for row in rows {
+        if row.event.kind == 7
+            && row.event.author.eq_ignore_ascii_case(mine)
+            && let Some(target) = tag_value(&row.event, ["e", "E"])
+        {
+            own.insert(
+                (target.to_string(), reaction_emoji(&row.event.content)),
+                row.event.id.clone(),
+            );
+        }
+    }
+    own
+}
+
+/// How a reaction's content reads: NIP-25's like is `+` (and empty content is
+/// read the same way), `-` is dislike (`👎`), and anything else is the
+/// reaction's own text.
 fn reaction_emoji(content: &str) -> String {
     let trimmed = content.trim();
     if trimmed.is_empty() || trimmed == "+" {
         "👍".to_string()
+    } else if trimmed == "-" {
+        "👎".to_string()
     } else {
         trimmed.to_string()
     }
@@ -1167,7 +1195,8 @@ fn bolt11_amount_sats(invoice: &str) -> Option<u64> {
 }
 
 /// Aggregate verified NIP-57 `kind: 9735` zap receipts per referenced note id
-/// as `(zap_count, total_sats)`.
+/// as `(zap_count, total_sats)`. Verifies the embedded `kind: 9734` zap
+/// request's id and BIP-340 signature through `hkask_nostr_core::Event::from_json`.
 fn zap_receipt_totals(rows: &[Row]) -> BTreeMap<String, (u64, u64)> {
     let mut totals: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     for row in rows {
@@ -1183,11 +1212,10 @@ fn zap_receipt_totals(rows: &[Row]) -> BTreeMap<String, (u64, u64)> {
         let Some(description) = tag_value(&row.event, ["description", "description"]) else {
             continue;
         };
-        let valid_zap_req = serde_json::from_str::<Value>(description)
-            .ok()
-            .and_then(|v| v.get("kind")?.as_u64())
-            == Some(9734);
-        if !valid_zap_req {
+        let Ok(zap_req) = hkask_nostr_core::Event::from_json(description) else {
+            continue;
+        };
+        if zap_req.kind() != 9734 {
             continue;
         }
         if let Some(sats) = bolt11_amount_sats(bolt11) {
@@ -1403,9 +1431,10 @@ pub struct NostrViewer {
     /// local minute.
     expanded_records: HashSet<(String, i64)>,
     /// Reaction counts by the note they answer and the emoji each
-    /// carries, from one local read of the page's notes. Nothing is
-    /// fetched beyond that read.
+    /// carries.
     reactions: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Operator's own `kind: 7` reactions keyed by `(target_event_id, emoji) -> reaction_event_id`.
+    own_reactions: BTreeMap<(String, String), String>,
     /// NIP-57 `kind: 9735` zap totals `(count, total_sats)` keyed by note id.
     zap_totals: BTreeMap<String, (u64, u64)>,
     /// The reactions read hit its limit, so every count is a floor.
@@ -1450,10 +1479,16 @@ pub struct NostrViewer {
     detail_scroll_handle: ScrollHandle,
     composer: ComposerState,
     composer_editor: Option<Entity<editor::Editor>>,
+    composer_media_editor: Option<Entity<editor::Editor>>,
     _composer_subscription: Option<gpui::Subscription>,
     _publish_task: Option<Task<()>>,
-    /// Compact Amethyst-style quick-zap strip state for the selected note (NIP-57).
+    /// Whether raw protocol metadata (hex id/author/kind/source) is expanded in `detail()`.
+    detail_meta_expanded: bool,
+    /// Compact Amethyst-style quick-zap strip state for the selected note (NIP-57 / NIP-61).
     zap: Option<ZapDraftState>,
+    zap_amount_editor: Option<Entity<editor::Editor>>,
+    zap_comment_editor: Option<Entity<editor::Editor>>,
+    _zap_wallet_task: Option<Task<()>>,
     _zap_task: Option<Task<()>>,
     /// Event id currently sending a NIP-25 `kind: 7` reaction, plus last inline feedback.
     reaction_in_flight: Option<String>,
@@ -1714,6 +1749,7 @@ impl NostrViewer {
             timeline_filter: TimelineFilter::default(),
             expanded_records: HashSet::new(),
             reactions: BTreeMap::new(),
+            own_reactions: BTreeMap::new(),
             zap_totals: BTreeMap::new(),
             reactions_clipped: false,
             reactions_request: Request::new(),
@@ -1733,9 +1769,14 @@ impl NostrViewer {
             detail_scroll_handle: ScrollHandle::new(),
             composer: ComposerState::new(),
             composer_editor: None,
+            composer_media_editor: None,
             _composer_subscription: None,
             _publish_task: None,
+            detail_meta_expanded: false,
             zap: None,
+            zap_amount_editor: None,
+            zap_comment_editor: None,
+            _zap_wallet_task: None,
             _zap_task: None,
             reaction_in_flight: None,
             reaction_feedback: None,
@@ -1855,15 +1896,75 @@ impl NostrViewer {
         self.auto_fetch_followed_media(cx);
     }
 
-    /// Read the reactions the page's notes carry: one local read of the
-    /// kind 7 events whose `e` tags reference them. Local: the tool
-    /// contacts no relay. The old counts leave with the page they read.
+    /// Refresh whichever view is currently active (Conversation, Following, or
+    /// Archive) after a publish, reaction, or zap.
+    fn refresh_active_view(&mut self, cx: &mut Context<Self>) {
+        self.load_archive(cx);
+        match self.tab {
+            ViewerTab::Conversation => {
+                if let Some(root) = self.conversation.as_ref().map(|c| c.root.clone()) {
+                    if !root.is_empty() {
+                        self.read_conversation(root, cx);
+                    }
+                }
+            }
+            ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
+                if matches!(self.follows, Some(Follows::Authors(_))) {
+                    self.load_following_feed(cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Re-load reactions and zap totals for whichever feed/conversation is visible.
+    fn refresh_reactions_for_active_view(&mut self, cx: &mut Context<Self>) {
+        match self.tab {
+            ViewerTab::Conversation => {
+                if let Some(rows) = self.conversation.as_ref().map(|c| c.rows.clone()) {
+                    self.load_reactions_for_rows(&rows, true, cx);
+                }
+            }
+            ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
+                if let Some(rows) = self.following_feed.as_ref().map(|f| f.rows.clone()) {
+                    self.load_reactions_for_rows(&rows, true, cx);
+                }
+            }
+            _ => {
+                if let Some(rows) = self.feed.as_ref().map(|f| f.rows.clone()) {
+                    self.load_reactions_for_rows(&rows, false, cx);
+                }
+            }
+        }
+    }
+
+    fn my_pubkey_hex(&self, cx: &Context<Self>) -> Option<String> {
+        nostr_dm::parse_recipient_pubkey(&KaskSettings::get_global(cx).nostr.npub)
+            .ok()
+            .map(|pk| pk.to_hex())
+    }
+
+    /// Read the reactions (`kind: 7`) and zap receipts (`kind: 9735`) for a
+    /// slice of displayed rows. Always queries the local archive; when
+    /// `include_seed_relays` is true (Following / Conversation), also queries
+    /// seed relays for the operator and followed authors (up to 50) and merges
+    /// the deduplicated results.
     fn load_reactions(&mut self, feed: &Feed, cx: &mut Context<Self>) {
+        let include_seed = feed.origin != FeedOrigin::Archive;
+        self.load_reactions_for_rows(&feed.rows, include_seed, cx);
+    }
+
+    fn load_reactions_for_rows(
+        &mut self,
+        rows: &[Row],
+        include_seed_relays: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.reactions.clear();
+        self.own_reactions.clear();
         self.zap_totals.clear();
         self.reactions_clipped = false;
-        let notes: Vec<String> = feed
-            .rows
+        let notes: Vec<String> = rows
             .iter()
             .filter(|row| kind_class(row.event.kind) == KindClass::Note)
             .map(|row| row.event.id.clone())
@@ -1874,7 +1975,7 @@ impl NostrViewer {
         }
         let epoch = self.reactions_request.begin();
         cx.notify();
-        let task = match invoke(
+        let local_task = match invoke(
             NOSTR_RELAY_SERVER,
             ARCHIVE_TOOL,
             json!({ "kinds": [7, 9735], "references": notes, "limit": ARCHIVE_PAGE }),
@@ -1882,15 +1983,67 @@ impl NostrViewer {
             Ok(task) => task,
             Err(error) => return self.apply_reactions(epoch, Err(error), cx),
         };
-        cx.spawn(async move |this, cx| {
-            let result = content_of(ARCHIVE_TOOL, task.await).and_then(|content| {
-                match parse_surfaced(&content, FeedOrigin::Archive) {
-                    Some(Ok(Surfaced::Feed(feed))) => Ok(feed),
-                    Some(Err(error)) => Err(error),
-                    _ => Err(format!("{ARCHIVE_TOOL} returned no list of events")),
+
+        let seed_task = if include_seed_relays {
+            let mut authors: Vec<String> = Vec::new();
+            if let Some(mine) = self.my_pubkey_hex(cx) {
+                authors.push(mine);
+            }
+            if let Some(Follows::Authors(followed)) = &self.follows {
+                for author in followed {
+                    if authors.len() >= 50 {
+                        break;
+                    }
+                    if !authors.contains(author) {
+                        authors.push(author.clone());
+                    }
                 }
-            });
-            this.update(cx, |this, cx| this.apply_reactions(epoch, result, cx))
+            }
+            if authors.is_empty() {
+                None
+            } else {
+                invoke(
+                    NOSTR_CLIENT_SERVER,
+                    FETCH_TOOL,
+                    json!({ "authors": authors, "kinds": [7, 9735], "limit": ARCHIVE_PAGE }),
+                )
+                .ok()
+            }
+        } else {
+            None
+        };
+
+        cx.spawn(async move |this, cx| {
+            let local_result =
+                content_of(ARCHIVE_TOOL, local_task.await).and_then(
+                    |content| match parse_surfaced(&content, FeedOrigin::Archive) {
+                        Some(Ok(Surfaced::Feed(feed))) => Ok(feed),
+                        Some(Err(error)) => Err(error),
+                        _ => Err(format!("{ARCHIVE_TOOL} returned no list of events")),
+                    },
+                );
+            let merged = match local_result {
+                Ok(mut feed) => {
+                    if let Some(seed_task) = seed_task {
+                        if let Ok(content) = content_of(FETCH_TOOL, seed_task.await) {
+                            if let Some(Ok(Surfaced::Feed(seed_feed))) =
+                                parse_surfaced(&content, FeedOrigin::Conversation)
+                            {
+                                let mut seen: HashSet<String> =
+                                    feed.rows.iter().map(|r| r.event.id.clone()).collect();
+                                for row in seed_feed.rows {
+                                    if seen.insert(row.event.id.clone()) {
+                                        feed.rows.push(row);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(feed)
+                }
+                Err(err) => Err(err),
+            };
+            this.update(cx, |this, cx| this.apply_reactions(epoch, merged, cx))
                 .log_err();
         })
         .detach();
@@ -1911,7 +2064,9 @@ impl NostrViewer {
         }
         if let Some(feed) = feed {
             let (counts, clipped) = reaction_counts(&feed.rows);
+            let mine = self.my_pubkey_hex(cx);
             self.reactions = counts;
+            self.own_reactions = own_reactions_from(&feed.rows, mine.as_deref());
             self.zap_totals = zap_receipt_totals(&feed.rows);
             self.reactions_clipped = clipped;
         }
@@ -2104,6 +2259,7 @@ impl NostrViewer {
             let (mut attachments, mut previews) = media_index_of(&feed.rows);
             self.media_attachments.append(&mut attachments);
             self.media_previews.append(&mut previews);
+            self.load_reactions(&feed, cx);
             self.following_feed = Some(feed);
             self.auto_fetch_followed_media(cx);
         }
@@ -2293,6 +2449,7 @@ impl NostrViewer {
             return;
         }
         if let Some(conversation) = conversation {
+            self.load_reactions_for_rows(&conversation.rows, true, cx);
             self.show_conversation(conversation);
         }
         cx.notify();
@@ -2787,6 +2944,43 @@ impl NostrViewer {
                 row.event.served_by.join(", ")
             )
         };
+        let show_inline_actions =
+            row.event.kind == 1 || row.event.kind == 1111 || row.event.kind == 30023;
+        let inline_event_id = row.event.id.clone();
+        let inline_author = row.event.author.clone();
+        let inline_reply_target = if show_inline_actions {
+            Some(ReplyContext::from_event(
+                &row.event,
+                profile
+                    .and_then(|p| p.name.as_deref())
+                    .map(|n| format!("@{}", display_text(n)))
+                    .unwrap_or_else(|| short_hex(&row.event.author)),
+            ))
+        } else {
+            None
+        };
+        let inline_liked = self
+            .own_reactions
+            .contains_key(&(row.event.id.clone(), "👍".to_string()));
+        let inline_disliked = self
+            .own_reactions
+            .contains_key(&(row.event.id.clone(), "👎".to_string()));
+        let inline_zapping = self
+            .zap
+            .as_ref()
+            .is_some_and(|z| z.target_event_id == row.event.id);
+        let inline_busy = self.reaction_in_flight.as_deref() == Some(row.event.id.as_str());
+        let inline_like_count = self
+            .reactions
+            .get(&row.event.id)
+            .and_then(|m| m.get("👍"))
+            .copied()
+            .unwrap_or(0);
+        let inline_zap_sats = self
+            .zap_totals
+            .get(&row.event.id)
+            .map(|(_, sats)| *sats)
+            .unwrap_or(0);
         let depth = if indent {
             row.depth.min(MAX_INDENT_LEVELS)
         } else {
@@ -2921,6 +3115,114 @@ impl NostrViewer {
                         .size(LabelSize::XSmall)
                         .color(Color::Accent)
                         .truncate(),
+                )
+            })
+            .when(show_inline_actions, |el| {
+                let like_id = inline_event_id.clone();
+                let like_author = inline_author.clone();
+                let dislike_id = inline_event_id.clone();
+                let dislike_author = inline_author.clone();
+                let zap_id = inline_event_id.clone();
+                let zap_author = inline_author.clone();
+                let zap_label = inline_reply_target
+                    .as_ref()
+                    .map(|t| t.target_label.clone())
+                    .unwrap_or_else(|| short_hex(&inline_author));
+                let reply_target = inline_reply_target.clone();
+                let like_text = if inline_like_count > 0 {
+                    format!("👍 {inline_like_count}")
+                } else {
+                    "👍".to_string()
+                };
+                let zap_text = if inline_zap_sats > 0 {
+                    format!("⚡ {inline_zap_sats}")
+                } else {
+                    "⚡ Zap".to_string()
+                };
+                el.child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .pt_0p5()
+                        .flex_wrap()
+                        .child(
+                            ui::Button::new(("nostr-row-like", ix), like_text)
+                                .label_size(LabelSize::XSmall)
+                                .toggle_state(inline_liked)
+                                .disabled(inline_busy)
+                                .tooltip(ui::Tooltip::text(if inline_liked {
+                                    "Remove your NIP-25 like (kind:5 deletion)"
+                                } else {
+                                    "Like (NIP-25 kind:7 '+')"
+                                }))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.send_reaction(
+                                        like_id.clone(),
+                                        like_author.clone(),
+                                        "+".to_string(),
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            ui::Button::new(("nostr-row-dislike", ix), "👎")
+                                .label_size(LabelSize::XSmall)
+                                .toggle_state(inline_disliked)
+                                .disabled(inline_busy)
+                                .tooltip(ui::Tooltip::text(if inline_disliked {
+                                    "Remove your NIP-25 dislike (kind:5 deletion)"
+                                } else {
+                                    "Dislike (NIP-25 kind:7 '-')"
+                                }))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.send_reaction(
+                                        dislike_id.clone(),
+                                        dislike_author.clone(),
+                                        "-".to_string(),
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .when_some(reply_target, |row_bar, target| {
+                            row_bar.child(
+                                ui::Button::new(("nostr-row-reply", ix), "Reply")
+                                    .label_size(LabelSize::XSmall)
+                                    .tooltip(ui::Tooltip::text(format!(
+                                        "Reply via {} ({})",
+                                        target.nip_label(),
+                                        if target.root_kind == 1 {
+                                            "kind:1"
+                                        } else {
+                                            "kind:1111"
+                                        }
+                                    )))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.open_reply_compose(target.clone(), window, cx);
+                                    })),
+                            )
+                        })
+                        .child(
+                            ui::Button::new(("nostr-row-zap", ix), zap_text)
+                                .label_size(LabelSize::XSmall)
+                                .toggle_state(inline_zapping)
+                                .tooltip(ui::Tooltip::text(
+                                    "Zap via NIP-57 Lightning or NIP-61 Cashu Nutzap",
+                                ))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.selected = Some(zap_id.clone());
+                                    this.toggle_zap_strip(
+                                        zap_id.clone(),
+                                        zap_author.clone(),
+                                        zap_label.clone(),
+                                        cx,
+                                    );
+                                })),
+                        ),
                 )
             })
             .when(selected, |el| {
@@ -3266,113 +3568,67 @@ impl NostrViewer {
                     .w_full()
                     .min_w_0()
                     .gap_1()
+                    .items_center()
                     .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .child(Self::line(format!("id  {}", event.id), Color::Muted)),
+                        div().min_w_0().flex_1().child(
+                            Label::new(match name {
+                                Some(name) => format!(
+                                    "{} · {}",
+                                    display_text(name),
+                                    utc_text(event.created_at)
+                                ),
+                                None => format!(
+                                    "{} · {}",
+                                    short_hex(&event.author),
+                                    utc_text(event.created_at)
+                                ),
+                            })
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .truncate(),
+                        ),
+                    )
+                    .child(
+                        ui::Button::new(
+                            "nostr-detail-meta-toggle",
+                            if self.detail_meta_expanded {
+                                "Hide details"
+                            } else {
+                                "Details"
+                            },
+                        )
+                        .label_size(LabelSize::XSmall)
+                        .toggle_state(self.detail_meta_expanded)
+                        .tooltip(ui::Tooltip::text(
+                            "Show or hide raw event id, author hex, kind, and relay provenance",
+                        ))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.detail_meta_expanded = !this.detail_meta_expanded;
+                            cx.notify();
+                        })),
                     )
                     .child(
                         ui::Button::new("nostr-detail-close", "Close")
                             .label_size(LabelSize::XSmall)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.selected = None;
+                                this.detail_meta_expanded = false;
                                 cx.notify();
                             })),
                     ),
             )
-            .child(Self::line(
-                match name {
-                    Some(name) => format!("author {} · {}", event.author, display_text(name)),
-                    None => format!("author {}", event.author),
-                },
-                Color::Muted,
-            ))
-            .child(Self::line(
-                match kind_label(event.kind) {
-                    Some((label, spec)) => format!(
-                        "kind {} · {} ({}) · {} as the author claims ({})",
-                        event.kind,
-                        label,
-                        spec,
-                        utc_text(event.created_at),
-                        event.created_at
-                    ),
-                    None => format!(
-                        "kind {} ({}) · {} as the author claims ({})",
-                        event.kind,
-                        kind_range_name(event.kind),
-                        utc_text(event.created_at),
-                        event.created_at
-                    ),
-                },
-                Color::Muted,
-            ))
-            .child(Self::line(display_text(&source), Color::Hint))
-            // Names come from the page's kind 0; an author with none there
-            // can be asked for, on a labelled click that says what it
-            // contacts. Once asked, the click is not offered again.
-            .when(
-                name.is_none() && !self.profile_lookups.contains_key(&event.author),
-                |el| {
-                    let author = event.author.clone();
-                    el.child(div().child(
-                        ui::Button::new("nostr-look-up-profile", "Look up profile")
-                            .label_size(LabelSize::XSmall)
-                            .tooltip(ui::Tooltip::text(
-                                "Asks the local relay and the seed relays for this author's profile",
-                            ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.look_up_profile(author.clone(), cx);
-                            })),
-                    ))
-                },
-            )
-            .when(
-                matches!(self.profile_lookups.get(&event.author), Some(None)),
-                |el| {
-                    el.child(Self::line(
-                        "Profile asked: this author published no readable name",
-                        Color::Hint,
-                    ))
-                },
-            )
-            // Selected-note feedback & support strip: Like (NIP-25), Comment
-            // (NIP-10 / NIP-22), and Zap (NIP-57 via wallet connection).
+            // Selected-note feedback & support strip: Quick Reactions (NIP-25),
+            // Comment (NIP-10 / NIP-22), Zap (NIP-57 / NIP-61), and Delete (NIP-09).
             .when(
                 event.kind == 1 || event.kind == 1111 || event.kind == 30023,
                 |el| {
-                    let like_event_id = event.id.clone();
-                    let like_author = event.author.clone();
-                    let liking = self.reaction_in_flight.as_deref() == Some(event.id.as_str());
-                    let like_count: u64 = self
-                        .reactions
-                        .get(event.id.as_str())
-                        .map(|m| m.values().sum())
-                        .unwrap_or(0);
-                    let like_label = if liking {
-                        "Liking…".to_string()
-                    } else if like_count > 0 {
-                        format!("Like ({like_count})")
-                    } else {
-                        "Like".to_string()
-                    };
-
-                    let reply_target = ReplyContext {
-                        root_event_id: marked_e_tag(event, "root")
-                            .unwrap_or(event.id.as_str())
-                            .to_string(),
-                        reply_to_event_id: if marked_e_tag(event, "root").is_some() {
-                            Some(event.id.clone())
-                        } else {
-                            None
-                        },
-                        target_pubkey: event.author.clone(),
-                        target_label: name
-                            .map(|n| format!("@{}", display_text(n)))
+                    let reacting = self.reaction_in_flight.as_deref() == Some(event.id.as_str());
+                    let event_counts = self.reactions.get(event.id.as_str());
+                    let reply_target = ReplyContext::from_event(
+                        event,
+                        name.map(|n| format!("@{}", display_text(n)))
                             .unwrap_or_else(|| short_hex(&event.author)),
-                        root_kind: event.kind,
-                    };
+                    );
 
                     let zap_event_id = event.id.clone();
                     let zap_author = event.author.clone();
@@ -3381,11 +3637,7 @@ impl NostrViewer {
                         .zap
                         .as_ref()
                         .is_some_and(|z| z.target_event_id == event.id);
-                    let my_pubkey_hex = nostr_dm::parse_recipient_pubkey(
-                        &KaskSettings::get_global(cx).nostr.npub,
-                    )
-                    .ok()
-                    .map(|pk| pk.to_hex());
+                    let my_pubkey_hex = self.my_pubkey_hex(cx);
                     let is_own_event = my_pubkey_hex
                         .as_deref()
                         .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
@@ -3400,25 +3652,50 @@ impl NostrViewer {
                     el.child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .gap_1()
                             .py_1()
                             .min_w_0()
                             .flex_wrap()
-                            .child(
-                                ui::Button::new("nostr-detail-like", like_label)
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(liking)
-                                    .tooltip(ui::Tooltip::text(
-                                        "Send a NIP-25 kind:7 '+' reaction (https://nostr-nips.com/nip-25)",
-                                    ))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.send_like(
-                                            like_event_id.clone(),
-                                            like_author.clone(),
-                                            cx,
-                                        );
-                                    })),
-                            )
+                            .children(QUICK_REACTIONS.iter().enumerate().map(
+                                |(r_ix, &(wire, emoji))| {
+                                    let count = event_counts
+                                        .and_then(|m| m.get(emoji))
+                                        .copied()
+                                        .unwrap_or(0);
+                                    let own_active = self
+                                        .own_reactions
+                                        .contains_key(&(event.id.clone(), emoji.to_string()));
+                                    let label = if count > 0 {
+                                        format!("{emoji} {count}")
+                                    } else {
+                                        emoji.to_string()
+                                    };
+                                    let r_event_id = event.id.clone();
+                                    let r_author = event.author.clone();
+                                    let r_wire = wire.to_string();
+                                    ui::Button::new(("nostr-detail-react", r_ix), label)
+                                        .label_size(LabelSize::XSmall)
+                                        .toggle_state(own_active)
+                                        .disabled(reacting)
+                                        .tooltip(ui::Tooltip::text(if own_active {
+                                            format!(
+                                                "Remove your {emoji} reaction (NIP-09 kind:5 deletion)"
+                                            )
+                                        } else {
+                                            format!(
+                                                "React {emoji} (NIP-25 kind:7 '{wire}')"
+                                            )
+                                        }))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.send_reaction(
+                                                r_event_id.clone(),
+                                                r_author.clone(),
+                                                r_wire.clone(),
+                                                cx,
+                                            );
+                                        }))
+                                },
+                            ))
                             .child(
                                 ui::Button::new("nostr-detail-comment", "Comment")
                                     .label_size(LabelSize::XSmall)
@@ -3430,11 +3707,11 @@ impl NostrViewer {
                                     })),
                             )
                             .child(
-                                ui::Button::new("nostr-detail-zap", "Zap")
+                                ui::Button::new("nostr-detail-zap", "⚡ Zap")
                                     .label_size(LabelSize::XSmall)
                                     .toggle_state(zap_open)
                                     .tooltip(ui::Tooltip::text(
-                                        "Zap this post via NIP-57 & wallet connection (https://nostr-nips.com/nip-57)",
+                                        "Zap this post via NIP-57 Lightning or NIP-61 Cashu Nutzap",
                                     ))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.toggle_zap_strip(
@@ -3449,7 +3726,7 @@ impl NostrViewer {
                                 row.child(
                                     ui::Button::new("nostr-detail-delete", "Delete")
                                         .label_size(LabelSize::XSmall)
-                                        .disabled(liking)
+                                        .disabled(reacting)
                                         .tooltip(ui::Tooltip::text(
                                             "Publish a NIP-09 kind:5 deletion request (always asks for confirmation; irreversible)",
                                         ))
@@ -3476,6 +3753,66 @@ impl NostrViewer {
                             el
                         }
                     })
+                },
+            )
+            // Collapsible raw protocol metadata (id, author hex, kind, source).
+            .when(self.detail_meta_expanded, |el| {
+                el.child(Self::line(format!("id  {}", event.id), Color::Muted))
+                    .child(Self::line(
+                        match name {
+                            Some(name) => format!("author {} · {}", event.author, display_text(name)),
+                            None => format!("author {}", event.author),
+                        },
+                        Color::Muted,
+                    ))
+                    .child(Self::line(
+                        match kind_label(event.kind) {
+                            Some((label, spec)) => format!(
+                                "kind {} · {} ({}) · {} as the author claims ({})",
+                                event.kind,
+                                label,
+                                spec,
+                                utc_text(event.created_at),
+                                event.created_at
+                            ),
+                            None => format!(
+                                "kind {} ({}) · {} as the author claims ({})",
+                                event.kind,
+                                kind_range_name(event.kind),
+                                utc_text(event.created_at),
+                                event.created_at
+                            ),
+                        },
+                        Color::Muted,
+                    ))
+                    .child(Self::line(display_text(&source), Color::Hint))
+            })
+            // Names come from the page's kind 0; an author with none there
+            // can be asked for, on a labelled click that says what it
+            // contacts. Once asked, the click is not offered again.
+            .when(
+                name.is_none() && !self.profile_lookups.contains_key(&event.author),
+                |el| {
+                    let author = event.author.clone();
+                    el.child(div().child(
+                        ui::Button::new("nostr-look-up-profile", "Look up profile")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text(
+                                "Asks the local relay and the seed relays for this author's profile",
+                            ))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.look_up_profile(author.clone(), cx);
+                            })),
+                    ))
+                },
+            )
+            .when(
+                matches!(self.profile_lookups.get(&event.author), Some(None)),
+                |el| {
+                    el.child(Self::line(
+                        "Profile asked: this author published no readable name",
+                        Color::Hint,
+                    ))
                 },
             )
             // Only a note or a comment has a conversation, and only the
@@ -3699,6 +4036,27 @@ impl NostrViewer {
                                     .flex_wrap()
                                     .justify_end()
                                     .gap_1()
+                                    .child(
+                                        ui::Button::new(
+                                            "nostr-timeline-new-note",
+                                            if self.composer.has_draft() && !self.composer.is_open()
+                                            {
+                                                "+ Resume Draft"
+                                            } else {
+                                                "+ New Note"
+                                            },
+                                        )
+                                        .style(ui::ButtonStyle::Filled)
+                                        .label_size(LabelSize::XSmall)
+                                        .tooltip(ui::Tooltip::text(
+                                            "Compose a public Nostr kind:1 note (Ctrl/Cmd+Shift+N)",
+                                        ))
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.toggle_compose(window, cx);
+                                            }),
+                                        ),
+                                    )
                                     .child(self.filter_button(
                                         "nostr-filter-reading",
                                         "For reading",
@@ -4055,6 +4413,66 @@ impl NostrViewer {
         editor
     }
 
+    /// Open and focus the collapsible compose drawer (`nostr_panel::Compose`).
+    pub(crate) fn open_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.composer.open_compose();
+        let editor = self.ensure_composer_editor(window, cx);
+        editor.update(cx, |ed, cx| {
+            if ed.text(cx) != self.composer.draft {
+                ed.set_text(self.composer.draft.clone(), window, cx);
+            }
+            window.focus(&ed.focus_handle(cx), cx);
+        });
+        cx.notify();
+    }
+
+    fn ensure_composer_media_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(existing) = &self.composer_media_editor {
+            return existing.clone();
+        }
+        let editor = cx.new(|cx| {
+            let mut ed = editor::Editor::single_line(window, cx);
+            ed.set_placeholder_text("Local media file path to attach (Blossom)…", window, cx);
+            ed
+        });
+        self.composer_media_editor = Some(editor.clone());
+        editor
+    }
+
+    fn ensure_zap_editors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
+        let amount_ed = if let Some(existing) = &self.zap_amount_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut ed = editor::Editor::single_line(window, cx);
+                ed.set_placeholder_text("Custom sats…", window, cx);
+                ed
+            });
+            self.zap_amount_editor = Some(ed.clone());
+            ed
+        };
+        let comment_ed = if let Some(existing) = &self.zap_comment_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut ed = editor::Editor::single_line(window, cx);
+                ed.set_placeholder_text("Optional zap comment…", window, cx);
+                ed
+            });
+            self.zap_comment_editor = Some(ed.clone());
+            ed
+        };
+        (amount_ed, comment_ed)
+    }
+
     /// Toggle the collapsible compose drawer; collapsing always preserves the draft.
     fn toggle_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.composer.toggle();
@@ -4106,11 +4524,29 @@ impl NostrViewer {
         cx.notify();
     }
 
-    /// Dispatch a NIP-25 `kind: 7` '+' reaction (`nostr_publish_reaction`).
-    fn send_like(&mut self, event_id: String, author: String, cx: &mut Context<Self>) {
+    /// Dispatch a NIP-25 `kind: 7` reaction (`nostr_publish_reaction`), or
+    /// unreact via NIP-09 `kind: 5` deletion if the operator already published
+    /// this reaction on `event_id`.
+    fn send_reaction(
+        &mut self,
+        event_id: String,
+        author: String,
+        content: String,
+        cx: &mut Context<Self>,
+    ) {
         if self.reaction_in_flight.is_some() {
             return;
         }
+        let emoji = reaction_emoji(&content);
+        if let Some(own_id) = self
+            .own_reactions
+            .get(&(event_id.clone(), emoji.clone()))
+            .cloned()
+        {
+            self.request_delete(own_id, 7, cx);
+            return;
+        }
+
         self.reaction_in_flight = Some(event_id.clone());
         self.reaction_feedback = None;
         cx.notify();
@@ -4118,7 +4554,7 @@ impl NostrViewer {
         let args = json!({
             "target_event_id": event_id,
             "target_pubkey": author,
-            "content": "+",
+            "content": content,
         });
         let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_REACTION_TOOL, args) {
             Ok(task) => task,
@@ -4138,18 +4574,28 @@ impl NostrViewer {
                     Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
                         Ok(outcome) if outcome.any_accepted() => {
                             let accepted = outcome.receipt().accepted.len();
+                            *this
+                                .reactions
+                                .entry(event_id.clone())
+                                .or_default()
+                                .entry(emoji.clone())
+                                .or_insert(0) += 1;
+                            if let Some(published_id) = outcome.receipt().event_id.clone() {
+                                this.own_reactions
+                                    .insert((event_id.clone(), emoji.clone()), published_id);
+                            }
                             this.reaction_feedback = Some((
                                 event_id.clone(),
                                 true,
-                                format!("Liked (NIP-25 · {accepted} relay(s))"),
+                                format!("Reacted {emoji} (NIP-25 · {accepted} relay(s))"),
                             ));
-                            this.load_archive(cx);
+                            this.refresh_active_view(cx);
                         }
                         Ok(_) => {
                             this.reaction_feedback = Some((
                                 event_id,
                                 false,
-                                "Like failed: no relay accepted the reaction.".to_string(),
+                                format!("Reaction {emoji} failed: no relay accepted the event."),
                             ));
                         }
                         Err(err) => {
@@ -4204,7 +4650,10 @@ impl NostrViewer {
                                 true,
                                 format!("Deletion requested (NIP-09 · {accepted} relay(s))"),
                             ));
-                            this.load_archive(cx);
+                            if target_kind == 7 {
+                                this.own_reactions.retain(|_, own_id| own_id != &event_id);
+                            }
+                            this.refresh_active_view(cx);
                         }
                         Ok(_) => {
                             this.reaction_feedback = Some((
@@ -4246,25 +4695,224 @@ impl NostrViewer {
             }
         } else {
             self.zap = Some(ZapDraftState::new(event_id, author, label));
+            self.fetch_zap_wallet_status(cx);
         }
         cx.notify();
     }
 
-    /// Execute an Amethyst-style NIP-57 Lightning zap:
-    /// 1) resolve recipient `lud16` via `nostr_profile`,
-    /// 2) call `nostr_prepare_zap` (mandatory editor `Approve Zap` modal),
-    /// 3) detect active wallet rail via `wallet_status` and call `wallet_pay_invoice`
-    ///    (mandatory editor spend approval).
+    fn fetch_zap_wallet_status(&mut self, cx: &mut Context<Self>) {
+        let task = match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
+            Ok(task) => task,
+            Err(err) => {
+                if let Some(z) = self.zap.as_mut() {
+                    z.wallet = WalletBadge::Unavailable(err);
+                }
+                return;
+            }
+        };
+        self._zap_wallet_task = Some(cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                if let Some(z) = this.zap.as_mut() {
+                    z.wallet = match res {
+                        Ok(raw) => match parse_wallet_status(&raw) {
+                            Ok(summary) => WalletBadge::Ready(summary),
+                            Err(err) => WalletBadge::Unavailable(err),
+                        },
+                        Err(err) => {
+                            WalletBadge::Unavailable(sanitize_untrusted_text(&err.to_string()))
+                        }
+                    };
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
+    /// Execute a NIP-57 Lightning zap or NIP-61 Cashu nutzap.
     fn execute_zap(&mut self, cx: &mut Context<Self>) {
+        let custom_amount_text = self
+            .zap_amount_editor
+            .as_ref()
+            .map(|ed| ed.read(cx).text(cx))
+            .unwrap_or_default();
+        let comment_text = self
+            .zap_comment_editor
+            .as_ref()
+            .map(|ed| ed.read(cx).text(cx).trim().to_string())
+            .unwrap_or_default();
+
         let Some(zap) = self.zap.as_mut() else {
             return;
         };
         if zap.is_busy() {
             return;
         }
+        if !custom_amount_text.trim().is_empty() {
+            match parse_custom_sats(&custom_amount_text) {
+                Ok(sats) => zap.amount_sats = sats,
+                Err(err) => {
+                    zap.status = ZapStatus::Failed(err);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        zap.comment = comment_text.clone();
+
         let target_event_id = zap.target_event_id.clone();
         let target_pubkey = zap.target_pubkey.clone();
         let amount_sats = zap.amount_sats;
+        let rail_mode = zap.rail;
+        let cached_wallet = zap.wallet.clone();
+
+        if rail_mode == ZapRail::Nutzap {
+            let summary = match cached_wallet {
+                WalletBadge::Ready(summary) => summary,
+                WalletBadge::Unavailable(err) => {
+                    zap.status = ZapStatus::Failed(format!("Wallet unavailable: {err}"));
+                    cx.notify();
+                    return;
+                }
+                WalletBadge::Loading => {
+                    zap.status = ZapStatus::Failed(
+                        "Still loading wallet status; wait a moment and retry.".to_string(),
+                    );
+                    cx.notify();
+                    return;
+                }
+            };
+            let Some(mint_url) = summary.default_mint.clone() else {
+                zap.status = ZapStatus::Failed(
+                    "No allowlisted Cashu mint configured for NIP-61 nutzaps.".to_string(),
+                );
+                cx.notify();
+                return;
+            };
+            let allowed_mints = summary.allowed_mints;
+            let p2pk_pubkey = format!("02{}", target_pubkey.to_ascii_lowercase());
+            zap.status = ZapStatus::PayingInvoice;
+            cx.notify();
+
+            let idempotency_key = format!(
+                "nostr-nutzap-{}-{}",
+                target_event_id,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let mut ecash_args = json!({
+                "amount_sats": amount_sats,
+                "mint_url": mint_url,
+                "p2pk_pubkey": p2pk_pubkey,
+                "idempotency_key": idempotency_key,
+            });
+            if !comment_text.is_empty() {
+                ecash_args["memo"] = json!(comment_text);
+            }
+            let send_task = match invoke(WALLET_SERVER_ID, WALLET_SEND_ECASH_TOOL, ecash_args) {
+                Ok(t) => t,
+                Err(err) => {
+                    if let Some(z) = self.zap.as_mut() {
+                        z.status = ZapStatus::Failed(err);
+                    }
+                    cx.notify();
+                    return;
+                }
+            };
+            self._zap_task = Some(cx.spawn(async move |this, cx| {
+                let ecash_raw = match send_task.await {
+                    Ok(raw) => raw,
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(z) = this.zap.as_mut() {
+                                z.status =
+                                    ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()));
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                };
+                let proofs_json: Vec<String> = serde_json::from_str::<Value>(&ecash_raw)
+                    .ok()
+                    .and_then(|v| {
+                        let root = v.get("content").unwrap_or(&v);
+                        root.get("proofs_json")
+                            .or_else(|| root.get("proofs"))
+                            .and_then(Value::as_array)
+                            .map(|arr| {
+                                arr.iter()
+                                    .map(|item| {
+                                        item.as_str()
+                                            .map(str::to_string)
+                                            .unwrap_or_else(|| item.to_string())
+                                    })
+                                    .collect()
+                            })
+                    })
+                    .unwrap_or_default();
+                if proofs_json.is_empty() {
+                    this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(
+                                "wallet_send_ecash did not return P2PK-locked Cashu proofs."
+                                    .to_string(),
+                            );
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+                let mut nutzap_args = json!({
+                    "recipient": target_pubkey,
+                    "recipient_p2pk_pubkey": p2pk_pubkey,
+                    "mint_url": mint_url,
+                    "allowed_mints": allowed_mints,
+                    "proofs_json": proofs_json,
+                    "event_id": target_event_id,
+                });
+                if !comment_text.is_empty() {
+                    nutzap_args["comment"] = json!(comment_text);
+                }
+                let pub_task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_NUTZAP_TOOL, nutzap_args) {
+                    Ok(t) => t,
+                    Err(err) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(z) = this.zap.as_mut() {
+                                z.status = ZapStatus::Failed(err);
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                };
+                let pub_res = pub_task.await;
+                this.update(cx, |this, cx| {
+                    if let Some(z) = this.zap.as_mut() {
+                        z.status = match pub_res {
+                            Ok(_) => ZapStatus::Settled(format!(
+                                "Nutzapped {amount_sats} sats via Cashu (NIP-61)"
+                            )),
+                            Err(err) => {
+                                ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()))
+                            }
+                        };
+                    }
+                    this.refresh_reactions_for_active_view(cx);
+                    cx.notify();
+                })
+                .log_err();
+            }));
+            return;
+        }
+
+        // NIP-57 Lightning zap flow.
         zap.status = ZapStatus::ResolvingProfile;
         cx.notify();
 
@@ -4307,7 +4955,8 @@ impl NostrViewer {
                 this.update(cx, |this, cx| {
                     if let Some(z) = this.zap.as_mut() {
                         z.status = ZapStatus::Failed(
-                            "Recipient profile has no Lightning Address (lud16).".to_string(),
+                            "Recipient profile has no Lightning Address (lud16). Switch to Cashu Nutzap (NIP-61) instead."
+                                .to_string(),
                         );
                     }
                     cx.notify();
@@ -4324,16 +4973,16 @@ impl NostrViewer {
                 cx.notify();
             })
             .log_err();
-            let prep_task = match invoke(
-                NOSTR_CLIENT_SERVER,
-                PREPARE_ZAP_TOOL,
-                json!({
-                    "recipient": target_pubkey,
-                    "lud16": lud16,
-                    "amount_sats": amount_sats,
-                    "event_id": target_event_id,
-                }),
-            ) {
+            let mut prep_args = json!({
+                "recipient": target_pubkey,
+                "lud16": lud16,
+                "amount_sats": amount_sats,
+                "event_id": target_event_id,
+            });
+            if !comment_text.is_empty() {
+                prep_args["comment"] = json!(comment_text);
+            }
+            let prep_task = match invoke(NOSTR_CLIENT_SERVER, PREPARE_ZAP_TOOL, prep_args) {
                 Ok(t) => t,
                 Err(err) => {
                     this.update(cx, |this, cx| {
@@ -4376,21 +5025,29 @@ impl NostrViewer {
                 return;
             };
 
-            // 3. Pick active wallet rail (`nwc` if configured, else `cashu`) and pay.
-            let rail = match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
-                Ok(status_task) => match status_task.await {
-                    Ok(raw) => serde_json::from_str::<Value>(&raw)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("nwc_label")
-                                .and_then(Value::as_str)
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|_| "nwc")
-                        })
-                        .unwrap_or("cashu"),
-                    Err(_) => "cashu",
+            // 3. Verify active wallet rail via `wallet_status` — never silently default.
+            let rail_result: Result<String, String> = match cached_wallet {
+                WalletBadge::Ready(summary) => Ok(summary.active_rail),
+                _ => match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
+                    Ok(status_task) => match status_task.await {
+                        Ok(raw) => parse_wallet_status(&raw).map(|s| s.active_rail),
+                        Err(err) => Err(sanitize_untrusted_text(&err.to_string())),
+                    },
+                    Err(err) => Err(err),
                 },
-                Err(_) => "cashu",
+            };
+            let rail = match rail_result {
+                Ok(rail) => rail,
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(format!("Wallet unavailable: {err}"));
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
             };
 
             this.update(cx, |this, cx| {
@@ -4431,6 +5088,7 @@ impl NostrViewer {
             };
             let pay_result = pay_task.await;
             this.update(cx, |this, cx| {
+                let settled = pay_result.is_ok();
                 if let Some(z) = this.zap.as_mut() {
                     z.status = match pay_result {
                         Ok(_) => ZapStatus::Settled(format!(
@@ -4438,6 +5096,15 @@ impl NostrViewer {
                         )),
                         Err(err) => ZapStatus::Failed(sanitize_untrusted_text(&err.to_string())),
                     };
+                }
+                if settled {
+                    let entry = this
+                        .zap_totals
+                        .entry(target_event_id.clone())
+                        .or_insert((0, 0));
+                    entry.0 = entry.0.saturating_add(1);
+                    entry.1 = entry.1.saturating_add(amount_sats);
+                    this.refresh_reactions_for_active_view(cx);
                 }
                 cx.notify();
             })
@@ -4463,6 +5130,11 @@ impl NostrViewer {
             ZapStatus::Settled(msg) => Some((msg.clone(), Color::Success)),
             ZapStatus::Failed(msg) => Some((msg.clone(), Color::Error)),
         };
+        let (wallet_badge, wallet_color) = match &zap.wallet {
+            WalletBadge::Loading => ("Checking wallet status…".to_string(), Color::Muted),
+            WalletBadge::Ready(summary) => (summary.badge_text(), Color::Hint),
+            WalletBadge::Unavailable(err) => (format!("Wallet: {err}"), Color::Error),
+        };
 
         v_flex()
             .w_full()
@@ -4479,29 +5151,90 @@ impl NostrViewer {
                     .flex_wrap()
                     .items_center()
                     .child(
-                        Label::new(format!("Zap {}:", zap.target_label))
+                        Label::new(format!("Zap {}", zap.target_label))
                             .size(LabelSize::XSmall)
-                            .color(Color::Muted),
+                            .color(Color::Default),
                     )
+                    .child(
+                        Label::new(wallet_badge)
+                            .size(LabelSize::XSmall)
+                            .color(wallet_color)
+                            .truncate(),
+                    )
+                    .child(
+                        h_flex()
+                            .ml_auto()
+                            .gap_1()
+                            .child(
+                                ui::Button::new("nostr-zap-rail-ln", "Lightning")
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(zap.rail == ZapRail::Lightning)
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(z) = this.zap.as_mut() {
+                                            z.rail = ZapRail::Lightning;
+                                            z.status = ZapStatus::Ready;
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new("nostr-zap-rail-nutzap", "Cashu Nutzap")
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(zap.rail == ZapRail::Nutzap)
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(z) = this.zap.as_mut() {
+                                            z.rail = ZapRail::Nutzap;
+                                            z.status = ZapStatus::Ready;
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .flex_wrap()
+                    .items_center()
                     .children(ZAP_PRESETS_SATS.iter().map(|&sats| {
                         let selected = zap.amount_sats == sats;
                         ui::Button::new(("nostr-zap-preset", sats as usize), format!("{sats}"))
                             .label_size(LabelSize::XSmall)
                             .toggle_state(selected)
                             .disabled(busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 if let Some(z) = this.zap.as_mut() {
                                     z.amount_sats = sats;
                                     z.status = ZapStatus::Ready;
                                 }
+                                if let Some(ed) = &this.zap_amount_editor {
+                                    ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                }
                                 cx.notify();
                             }))
                     }))
+                    .when_some(self.zap_amount_editor.clone(), |row, ed| {
+                        row.child(
+                            div()
+                                .w(px(88.))
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .child(ed),
+                        )
+                    })
                     .child(
                         ui::Button::new(
                             "nostr-zap-send",
                             if busy {
                                 "Zapping…".to_string()
+                            } else if zap.rail == ZapRail::Nutzap {
+                                format!("Nutzap {} sats", zap.amount_sats)
                             } else {
                                 format!("Zap {} sats", zap.amount_sats)
                             },
@@ -4512,6 +5245,18 @@ impl NostrViewer {
                         .on_click(cx.listener(|this, _, _, cx| this.execute_zap(cx))),
                     ),
             )
+            .when_some(self.zap_comment_editor.clone(), |col, ed| {
+                col.child(
+                    div()
+                        .w_full()
+                        .px_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .child(ed),
+                )
+            })
             .when_some(status_line, |el, (msg, color)| {
                 el.child(Label::new(msg).size(LabelSize::XSmall).color(color))
             })
@@ -4552,13 +5297,16 @@ impl NostrViewer {
                     "created_at": payload.created_at,
                 }),
             ),
-            None => (
-                PUBLISH_TOOL,
-                json!({
+            None => {
+                let mut note_args = json!({
                     "content": payload.content,
                     "created_at": payload.created_at,
-                }),
-            ),
+                });
+                if !payload.media_paths.is_empty() {
+                    note_args["media_paths"] = json!(payload.media_paths);
+                }
+                (PUBLISH_TOOL, note_args)
+            }
         };
         let task = match invoke(NOSTR_CLIENT_SERVER, tool, args) {
             Ok(task) => task,
@@ -4585,7 +5333,7 @@ impl NostrViewer {
                                     })
                                     .log_err();
                             }
-                            this.load_archive(cx);
+                            this.refresh_active_view(cx);
                         }
                     }
                     Err(err) => {
@@ -4596,6 +5344,17 @@ impl NostrViewer {
             })
             .log_err();
         }));
+    }
+
+    fn retry_last_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer.restore_last_for_retry() {
+            return;
+        }
+        let editor = self.ensure_composer_editor(window, cx);
+        editor.update(cx, |ed, cx| {
+            ed.set_text(self.composer.draft.clone(), window, cx);
+        });
+        self.submit_compose(window, cx);
     }
 
     fn render_publish_receipt(&self, outcome: &PublishOutcome, cx: &Context<Self>) -> AnyElement {
@@ -4652,6 +5411,18 @@ impl NostrViewer {
                                 .truncate(),
                         ),
                     )
+                    .when(self.composer.can_retry_last(), |row| {
+                        row.child(
+                            ui::Button::new("nostr-receipt-retry", "Retry")
+                                .label_size(LabelSize::XSmall)
+                                .tooltip(ui::Tooltip::text(
+                                    "Re-submit the preserved note payload to relays",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.retry_last_compose(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         ui::IconButton::new("nostr-receipt-dismiss", ui::IconName::Close)
                             .icon_size(ui::IconSize::XSmall)
@@ -4686,6 +5457,11 @@ impl NostrViewer {
             return None;
         }
         let editor = self.ensure_composer_editor(window, cx);
+        let media_editor = if self.composer.reply_target.is_none() {
+            Some(self.ensure_composer_media_editor(window, cx))
+        } else {
+            None
+        };
         let chars = self.composer.char_count();
         let publishing = self.composer.is_publishing();
         let can_publish = !publishing && self.composer.has_draft() && chars <= MAX_CONTENT_CHARS;
@@ -4696,11 +5472,23 @@ impl NostrViewer {
         } else {
             Color::Muted
         };
+        let (npub_short, relay_count) = {
+            let nostr_cfg = &KaskSettings::get_global(cx).nostr;
+            let trimmed = nostr_cfg.npub.trim();
+            let npub = if trimmed.is_empty() {
+                "no identity".to_string()
+            } else {
+                short_hex(trimmed)
+            };
+            let relays = 1 + nostr_cfg.seed_relays.len();
+            (npub, relays)
+        };
         let status_text = if publishing {
             "Awaiting approval / publishing…".to_string()
         } else {
-            format!("{chars} / {MAX_CONTENT_CHARS}")
+            format!("{chars}/{MAX_CONTENT_CHARS} · {npub_short} · {relay_count} relays")
         };
+        let media_paths = self.composer.media_paths.clone();
         let error = self.composer.error.clone();
         let reply_banner = self.composer.reply_target.as_ref().map(|target| {
             format!(
@@ -4780,6 +5568,73 @@ impl NostrViewer {
                         .bg(cx.theme().colors().editor_background)
                         .child(editor),
                 )
+                .when_some(media_editor, |drawer, med_ed| {
+                    let at_limit = media_paths.len() >= MAX_MEDIA_ATTACHMENTS;
+                    drawer
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .min_w_0()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .px_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(med_ed.clone()),
+                                )
+                                .child(
+                                    ui::Button::new("nostr-compose-attach", "Attach")
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(publishing || at_limit)
+                                        .tooltip(ui::Tooltip::text(format!(
+                                            "Attach local media file for Blossom upload (max {MAX_MEDIA_ATTACHMENTS})"
+                                        )))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            let path = med_ed.read(cx).text(cx);
+                                            match this.composer.add_media_path(path) {
+                                                Ok(()) => {
+                                                    med_ed.update(cx, |ed, cx| {
+                                                        ed.set_text("", window, cx);
+                                                    });
+                                                }
+                                                Err(err) => {
+                                                    this.composer.error = Some(err);
+                                                }
+                                            }
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .when(!media_paths.is_empty(), |d| {
+                            d.child(h_flex().w_full().gap_1().flex_wrap().children(
+                                media_paths.iter().enumerate().map(|(m_ix, path)| {
+                                    let file_label = std::path::Path::new(path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(path.as_str());
+                                    ui::Button::new(
+                                        ("nostr-compose-media-rm", m_ix),
+                                        format!("📎 {file_label} ×"),
+                                    )
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(publishing)
+                                    .tooltip(ui::Tooltip::text(format!(
+                                        "Remove attachment: {path}"
+                                    )))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.composer.remove_media_path(m_ix);
+                                        cx.notify();
+                                    }))
+                                }),
+                            ))
+                        })
+                })
                 .when_some(error, |this, err| {
                     this.child(
                         Label::new(err)
@@ -5175,6 +6030,9 @@ impl NostrViewer {
 
 impl Render for NostrViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.zap.is_some() {
+            let _ = self.ensure_zap_editors(window, cx);
+        }
         let compose_drawer = self.render_composer_drawer(window, cx);
         let publish_receipt = self
             .composer
@@ -5184,11 +6042,11 @@ impl Render for NostrViewer {
         let compose_open = self.composer.is_open();
         let has_draft = self.composer.has_draft();
         let compose_tooltip = if has_draft && !compose_open {
-            "Resume unsent Nostr note draft"
+            "Resume unsent Nostr note draft (Ctrl/Cmd+Shift+N)"
         } else if compose_open {
             "Collapse composer (preserves draft · Esc)"
         } else {
-            "Compose Nostr note"
+            "New Note (Ctrl/Cmd+Shift+N)"
         };
 
         let body = match self.tab {
@@ -7045,13 +7903,56 @@ mod tests {
     }
 
     #[test]
+    fn reaction_emoji_maps_like_and_dislike_and_tracks_own_reactions() {
+        assert_eq!(reaction_emoji("+"), "👍");
+        assert_eq!(reaction_emoji(""), "👍");
+        assert_eq!(reaction_emoji("-"), "👎");
+        assert_eq!(reaction_emoji("🔥"), "🔥");
+
+        let mine = "a".repeat(64);
+        let other = "b".repeat(64);
+        let mut r1 = kind_event(7, "rx1", 100, "+", &[&["e", "note-1"]]);
+        r1["author"] = json!(mine);
+        let mut r2 = kind_event(7, "rx2", 101, "-", &[&["e", "note-1"]]);
+        r2["author"] = json!(other);
+        let rows = vec![wire_row(&r1), wire_row(&r2)];
+        let own = own_reactions_from(&rows, Some(&mine));
+        assert_eq!(
+            own.get(&("note-1".to_string(), "👍".to_string())),
+            Some(&"rx1".to_string())
+        );
+        assert!(!own.contains_key(&("note-1".to_string(), "👎".to_string())));
+    }
+
+    #[test]
     fn zap_receipt_totals_sums_valid_nip57_receipts_and_skips_malformed() {
         assert_eq!(bolt11_amount_sats("lnbc210n1dummy"), Some(21));
         assert_eq!(bolt11_amount_sats("lnbc10u1dummy"), Some(1_000));
         assert_eq!(bolt11_amount_sats("lnbc1dummy"), None);
 
-        let valid_desc = r#"{"id":"aa","kind":9734,"pubkey":"bb","created_at":1,"tags":[],"content":"gm","sig":"cc"}"#;
-        let wrong_kind_desc = r#"{"id":"aa","kind":1,"pubkey":"bb","created_at":1,"tags":[],"content":"not a zap","sig":"cc"}"#;
+        // Standard NIP-19 published test vector (never a real key).
+        let key = hkask_nostr_signer::SecretKey::from_nsec(
+            "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5",
+        )
+        .expect("test key");
+        let recipient = "b".repeat(64);
+        let signed_zap_req = hkask_nostr_signer::sign_zap_request(
+            &key,
+            1_700_000_000,
+            &recipient,
+            21_000,
+            &["wss://nos.lol".to_string()],
+            None,
+            None,
+            "gm",
+        )
+        .expect("signed zap request");
+        let valid_desc = signed_zap_req.to_json();
+        let forged_desc = r#"{"id":"aa","kind":9734,"pubkey":"bb","created_at":1,"tags":[],"content":"forged","sig":"cc"}"#;
+        let signed_note =
+            hkask_nostr_signer::sign_event(&key, 1, 1_700_000_000, "not a zap").expect("note");
+        let wrong_kind_desc = signed_note.to_json();
+
         let make_receipt = |id: &str, target: &str, bolt11: &str, desc: &str| {
             let ev = kind_event(
                 9735,
@@ -7063,10 +7964,11 @@ mod tests {
             wire_row(&ev)
         };
         let rows = vec![
-            make_receipt("z1", "note-a", "lnbc210n1qq", valid_desc),
-            make_receipt("z2", "note-a", "lnbc1u1qq", valid_desc),
-            make_receipt("z3", "note-a", "lnbc5u1qq", wrong_kind_desc),
-            make_receipt("z4", "note-b", "lnbc10u1qq", valid_desc),
+            make_receipt("z1", "note-a", "lnbc210n1qq", &valid_desc),
+            make_receipt("z2", "note-a", "lnbc1u1qq", &valid_desc),
+            make_receipt("z3", "note-a", "lnbc5u1qq", &wrong_kind_desc),
+            make_receipt("z4", "note-a", "lnbc5u1qq", forged_desc),
+            make_receipt("z5", "note-b", "lnbc10u1qq", &valid_desc),
         ];
         let totals = zap_receipt_totals(&rows);
         assert_eq!(totals.get("note-a"), Some(&(2, 121)));

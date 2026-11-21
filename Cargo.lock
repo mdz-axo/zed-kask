@@ -12635,6 +12635,8 @@ dependencies = [
  "fs",
  "gpui",
  "hkask-media-widget",
+ "hkask-nostr-core",
+ "hkask-nostr-signer",
  "hkask-panel-ui",
  "hkask-steer",
  "hkask-tool-invoker",

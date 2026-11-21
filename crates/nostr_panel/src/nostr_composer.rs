@@ -6,7 +6,7 @@
 //! the inference IPC wire (`kask_bridge/src/nostr_signing.rs`) for operator
 //! approval before touching the keychain.
 
-use hkask_types::nostr_wire::MAX_CONTENT_CHARS;
+use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, WireEvent};
 use serde_json::Value;
 
 /// The MCP tool on `hkask-mcp-nostr-client` that publishes a `kind: 1` note
@@ -29,12 +29,26 @@ pub(crate) const PUBLISH_DELETION_TOOL: &str = "nostr_publish_deletion";
 /// (<https://nostr-nips.com/nip-57>).
 pub(crate) const PREPARE_ZAP_TOOL: &str = "nostr_prepare_zap";
 
-/// The MCP tools on `hkask-mcp-wallet` used to inspect rails and settle a zap invoice.
+/// The MCP tool that publishes a NIP-61 Cashu nutzap (`kind: 9321`,
+/// <https://nostr-nips.com/nip-61>).
+pub(crate) const PUBLISH_NUTZAP_TOOL: &str = "nostr_publish_nutzap";
+
+/// The MCP tools on `hkask-mcp-wallet` used to inspect rails and settle a zap or nutzap.
 pub(crate) const WALLET_STATUS_TOOL: &str = "wallet_status";
 pub(crate) const WALLET_PAY_INVOICE_TOOL: &str = "wallet_pay_invoice";
+pub(crate) const WALLET_SEND_ECASH_TOOL: &str = "wallet_send_ecash";
 
 /// Amethyst-style quick-zap preset amounts in satoshis.
 pub(crate) const ZAP_PRESETS_SATS: &[u64] = &[21, 100, 500, 1_000];
+
+/// Quick reaction choices `(wire_content, display_label)` for NIP-25 `kind: 7`.
+pub(crate) const QUICK_REACTIONS: &[(&str, &str)] = &[
+    ("+", "👍"),
+    ("-", "👎"),
+    ("🔥", "🔥"),
+    ("🤙", "🤙"),
+    ("❤", "❤"),
+];
 
 /// Character count at which the live counter switches to warning emphasis.
 pub(crate) const CHAR_WARNING_THRESHOLD: usize = 3_800;
@@ -95,11 +109,21 @@ impl PublishOutcome {
     }
 }
 
-/// Validated payload ready to send to `nostr_publish_note`.
+/// Validated payload ready to send to `nostr_publish_note` or `nostr_publish_reply`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PublishPayload {
     pub(crate) content: String,
     pub(crate) created_at: u64,
+    pub(crate) media_paths: Vec<String>,
+}
+
+/// Snapshot of the most recently submitted draft so `Retry` works after partial
+/// or total relay failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LastSubmittedPayload {
+    pub(crate) content: String,
+    pub(crate) reply_target: Option<ReplyContext>,
+    pub(crate) media_paths: Vec<String>,
 }
 
 /// Lifecycle phase of the collapsible compose drawer.
@@ -130,9 +154,238 @@ impl ReplyContext {
             "NIP-22"
         }
     }
+
+    /// Derive a NIP-10 or NIP-22 reply target from an existing `WireEvent`:
+    /// - `kind: 1111` (NIP-22): preserves uppercase `E` root event id and uppercase
+    ///   `K` root kind (e.g. `30023` article) while setting `reply_to_event_id`
+    ///   to this comment.
+    /// - `kind: 1` (NIP-10): checks marked `["e", id, ..., "root"]` first, then
+    ///   legacy unmarked positional `e` tags (skipping `"mention"`), else treats
+    ///   this note as the thread root.
+    /// - Other kinds (e.g. `kind: 30023` article): treats this event as the root
+    ///   for a NIP-22 `kind: 1111` comment.
+    pub(crate) fn from_event(event: &WireEvent, target_label: String) -> Self {
+        if event.kind == 1111 {
+            let root_e = event
+                .tags
+                .iter()
+                .find_map(|t| {
+                    (t.first().map(String::as_str) == Some("E"))
+                        .then(|| t.get(1).filter(|v| !v.is_empty()))
+                        .flatten()
+                        .map(String::as_str)
+                })
+                .or_else(|| {
+                    event.tags.iter().find_map(|t| {
+                        (t.first().map(String::as_str) == Some("e")
+                            && t.get(3).map(String::as_str) == Some("root"))
+                        .then(|| t.get(1).filter(|v| !v.is_empty()))
+                        .flatten()
+                        .map(String::as_str)
+                    })
+                })
+                .or_else(|| {
+                    event.tags.iter().find_map(|t| {
+                        (t.first().map(String::as_str) == Some("e")
+                            && t.get(3).map(String::as_str) != Some("mention"))
+                        .then(|| t.get(1).filter(|v| !v.is_empty()))
+                        .flatten()
+                        .map(String::as_str)
+                    })
+                });
+            let root_k = event
+                .tags
+                .iter()
+                .find_map(|t| {
+                    (t.first().map(String::as_str) == Some("K"))
+                        .then(|| t.get(1).and_then(|v| v.parse::<u16>().ok()))
+                        .flatten()
+                })
+                .unwrap_or(event.kind);
+            let root_event_id = root_e.unwrap_or(event.id.as_str()).to_string();
+            let reply_to_event_id = if root_event_id != event.id {
+                Some(event.id.clone())
+            } else {
+                None
+            };
+            return Self {
+                root_event_id,
+                reply_to_event_id,
+                target_pubkey: event.author.clone(),
+                target_label,
+                root_kind: root_k,
+            };
+        }
+
+        if event.kind == 1 {
+            let marked_root = event.tags.iter().find_map(|t| {
+                (t.first().map(String::as_str) == Some("e")
+                    && t.get(3).map(String::as_str) == Some("root"))
+                .then(|| t.get(1).filter(|v| !v.is_empty()))
+                .flatten()
+                .map(String::as_str)
+            });
+            let positional_root = if marked_root.is_none() {
+                event.tags.iter().find_map(|t| {
+                    let marker = t.get(3).map(String::as_str);
+                    (t.first().map(String::as_str) == Some("e") && marker != Some("mention"))
+                        .then(|| t.get(1).filter(|v| !v.is_empty()))
+                        .flatten()
+                        .map(String::as_str)
+                })
+            } else {
+                None
+            };
+            if let Some(root) = marked_root.or(positional_root) {
+                return Self {
+                    root_event_id: root.to_string(),
+                    reply_to_event_id: Some(event.id.clone()),
+                    target_pubkey: event.author.clone(),
+                    target_label,
+                    root_kind: 1,
+                };
+            }
+        }
+
+        Self {
+            root_event_id: event.id.clone(),
+            reply_to_event_id: None,
+            target_pubkey: event.author.clone(),
+            target_label,
+            root_kind: event.kind,
+        }
+    }
 }
 
-/// Lifecycle of an in-panel NIP-57 zap flow.
+/// Payment rail selected in the quick-zap strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ZapRail {
+    /// NIP-57 Lightning zap (`lud16` → `nostr_prepare_zap` → `wallet_pay_invoice`).
+    #[default]
+    Lightning,
+    /// NIP-61 Cashu nutzap (`wallet_send_ecash` → `nostr_publish_nutzap`).
+    Nutzap,
+}
+
+/// Parsed subset of `wallet_status` surfaced as a badge in the zap strip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WalletStatusSummary {
+    pub(crate) network: String,
+    pub(crate) active_rail: String,
+    pub(crate) per_tx_cap_sats: Option<u64>,
+    pub(crate) daily_cap_sats: Option<u64>,
+    pub(crate) default_mint: Option<String>,
+    pub(crate) allowed_mints: Vec<String>,
+}
+
+impl WalletStatusSummary {
+    pub(crate) fn badge_text(&self) -> String {
+        let mut parts = vec![self.network.clone(), self.active_rail.clone()];
+        if let Some(cap) = self.per_tx_cap_sats {
+            parts.push(format!("cap {cap} sats/tx"));
+        }
+        parts.join(" · ")
+    }
+}
+
+/// Pre-fetched wallet state for the zap strip.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum WalletBadge {
+    #[default]
+    Loading,
+    Ready(WalletStatusSummary),
+    Unavailable(String),
+}
+
+/// Parse `wallet_status` JSON into a `WalletStatusSummary`. Returns `Err` if
+/// the response is malformed or reports an error rather than silently
+/// defaulting to `"cashu"`.
+pub(crate) fn parse_wallet_status(raw_json: &str) -> Result<WalletStatusSummary, String> {
+    let value: Value = serde_json::from_str(raw_json)
+        .map_err(|err| format!("wallet_status was not valid JSON: {err}"))?;
+    if let Some(err) = value.get("error").and_then(|e| {
+        e.get("message")
+            .and_then(Value::as_str)
+            .or_else(|| e.as_str())
+    }) {
+        return Err(sanitize_untrusted_text(err));
+    }
+    let root = value.get("content").unwrap_or(&value);
+    let network = root
+        .get("network")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let nwc_configured = root
+        .get("nwc_label")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.trim().is_empty());
+    let allowed_mints: Vec<String> = root
+        .get("allowed_mints")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let default_mint = root
+        .get("default_mint")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| allowed_mints.first().cloned());
+    let active_rail = if nwc_configured {
+        "nwc".to_string()
+    } else if !allowed_mints.is_empty() {
+        "cashu".to_string()
+    } else {
+        return Err("No NWC or Cashu mint rail is configured in wallet settings.".to_string());
+    };
+    let per_tx_cap_sats = root
+        .get("per_tx_cap_sats")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            root.pointer("/spending_caps/per_tx_sats")
+                .and_then(Value::as_u64)
+        });
+    let daily_cap_sats = root
+        .get("daily_cap_sats")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            root.pointer("/spending_caps/daily_sats")
+                .and_then(Value::as_u64)
+        });
+    Ok(WalletStatusSummary {
+        network: sanitize_untrusted_text(&network),
+        active_rail,
+        per_tx_cap_sats,
+        daily_cap_sats,
+        default_mint,
+        allowed_mints,
+    })
+}
+
+/// Parse a user-typed custom satoshi amount (`> 0`).
+pub(crate) fn parse_custom_sats(input: &str) -> Result<u64, String> {
+    let cleaned: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ',' && *c != '_')
+        .collect();
+    if cleaned.is_empty() {
+        return Err("Enter a satoshi amount.".to_string());
+    }
+    let sats: u64 = cleaned
+        .parse()
+        .map_err(|_| "Custom amount must be a whole number of sats.".to_string())?;
+    if sats == 0 {
+        return Err("Zap amount must be at least 1 sat.".to_string());
+    }
+    Ok(sats)
+}
+
+/// Lifecycle of an in-panel NIP-57 / NIP-61 zap flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ZapStatus {
     Ready,
@@ -150,6 +403,9 @@ pub(crate) struct ZapDraftState {
     pub(crate) target_pubkey: String,
     pub(crate) target_label: String,
     pub(crate) amount_sats: u64,
+    pub(crate) comment: String,
+    pub(crate) rail: ZapRail,
+    pub(crate) wallet: WalletBadge,
     pub(crate) status: ZapStatus,
 }
 
@@ -164,6 +420,9 @@ impl ZapDraftState {
             target_pubkey,
             target_label,
             amount_sats: ZAP_PRESETS_SATS[0],
+            comment: String::new(),
+            rail: ZapRail::Lightning,
+            wallet: WalletBadge::Loading,
             status: ZapStatus::Ready,
         }
     }
@@ -182,8 +441,10 @@ pub(crate) struct ComposerState {
     pub(crate) phase: ComposerPhase,
     pub(crate) draft: String,
     pub(crate) reply_target: Option<ReplyContext>,
+    pub(crate) media_paths: Vec<String>,
     pub(crate) error: Option<String>,
     pub(crate) last_outcome: Option<PublishOutcome>,
+    pub(crate) last_submitted: Option<LastSubmittedPayload>,
 }
 
 /// Sanitize untrusted third-party text (relay addresses/reasons) by replacing
@@ -199,8 +460,18 @@ pub(crate) fn sanitize_untrusted_text(text: &str) -> String {
 }
 
 /// Validate a plain `kind: 1` note draft against `MAX_CONTENT_CHARS`.
+#[cfg(test)]
 pub(crate) fn validate_draft(text: &str) -> Result<&str, DraftValidationError> {
-    if text.trim().is_empty() {
+    validate_draft_with_media(text, false)
+}
+
+/// Validate a note draft, allowing empty text when at least one Blossom media
+/// attachment is attached (top-level `kind: 1` notes only).
+pub(crate) fn validate_draft_with_media(
+    text: &str,
+    has_media: bool,
+) -> Result<&str, DraftValidationError> {
+    if text.trim().is_empty() && !has_media {
         return Err(DraftValidationError::Empty);
     }
     let chars = text.chars().count();
@@ -299,10 +570,39 @@ impl ComposerState {
 
     pub(crate) fn has_draft(&self) -> bool {
         !self.draft.trim().is_empty()
+            || (!self.media_paths.is_empty() && self.reply_target.is_none())
     }
 
     pub(crate) fn char_count(&self) -> usize {
         self.draft.chars().count()
+    }
+
+    /// Attach a local media file path for Blossom upload (`NIP-92 imeta`,
+    /// top-level `kind: 1` notes only, max `MAX_MEDIA_ATTACHMENTS`).
+    pub(crate) fn add_media_path(&mut self, path: String) -> Result<(), String> {
+        if self.is_publishing() {
+            return Err("Cannot change attachments while publishing.".to_string());
+        }
+        let trimmed = path.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Enter a local media file path to attach.".to_string());
+        }
+        if self.media_paths.len() >= MAX_MEDIA_ATTACHMENTS {
+            return Err(format!(
+                "At most {MAX_MEDIA_ATTACHMENTS} media files may be attached per note."
+            ));
+        }
+        if !self.media_paths.contains(&trimmed) {
+            self.media_paths.push(trimmed);
+        }
+        self.error = None;
+        Ok(())
+    }
+
+    pub(crate) fn remove_media_path(&mut self, index: usize) {
+        if !self.is_publishing() && index < self.media_paths.len() {
+            self.media_paths.remove(index);
+        }
     }
 
     /// Open the drawer if idle, or collapse to idle while preserving the draft.
@@ -319,12 +619,21 @@ impl ComposerState {
         }
     }
 
+    /// Open the drawer (no-op if already open or publishing).
+    pub(crate) fn open_compose(&mut self) {
+        if matches!(self.phase, ComposerPhase::Idle) {
+            self.phase = ComposerPhase::Drafting;
+            self.error = None;
+        }
+    }
+
     /// Open the drawer targeting a specific note/article for a NIP-10 or NIP-22 reply.
     pub(crate) fn open_reply(&mut self, target: ReplyContext) {
         if self.is_publishing() {
             return;
         }
         self.reply_target = Some(target);
+        self.media_paths.clear();
         self.phase = ComposerPhase::Drafting;
         self.error = None;
     }
@@ -343,15 +652,18 @@ impl ComposerState {
         }
         self.draft.clear();
         self.reply_target = None;
+        self.media_paths.clear();
         self.error = None;
         self.last_outcome = None;
+        self.last_submitted = None;
         self.phase = ComposerPhase::Idle;
     }
 
     /// Update the draft text from the editor.
     pub(crate) fn set_draft(&mut self, text: String) {
         self.draft = text;
-        if validate_draft(&self.draft).is_ok() {
+        let has_media = self.reply_target.is_none() && !self.media_paths.is_empty();
+        if validate_draft_with_media(&self.draft, has_media).is_ok() {
             self.error = None;
         }
     }
@@ -361,20 +673,58 @@ impl ComposerState {
         &mut self,
         now_unix_secs: u64,
     ) -> Result<PublishPayload, DraftValidationError> {
-        let content = match validate_draft(&self.draft) {
+        let has_media = self.reply_target.is_none() && !self.media_paths.is_empty();
+        let content = match validate_draft_with_media(&self.draft, has_media) {
             Ok(valid) => valid.to_string(),
             Err(err) => {
                 self.error = Some(err.message());
                 return Err(err);
             }
         };
+        let media_paths = if self.reply_target.is_none() {
+            self.media_paths.clone()
+        } else {
+            Vec::new()
+        };
+        self.last_submitted = Some(LastSubmittedPayload {
+            content: content.clone(),
+            reply_target: self.reply_target.clone(),
+            media_paths: media_paths.clone(),
+        });
         self.error = None;
         self.last_outcome = None;
         self.phase = ComposerPhase::Publishing;
         Ok(PublishPayload {
             content,
             created_at: now_unix_secs,
+            media_paths,
         })
+    }
+
+    /// Whether a failed/partial publish receipt can be retried in one click.
+    pub(crate) fn can_retry_last(&self) -> bool {
+        !self.is_publishing()
+            && self.last_submitted.is_some()
+            && matches!(
+                self.last_outcome,
+                Some(PublishOutcome::PartialFailure(_) | PublishOutcome::AllFailed(_))
+            )
+    }
+
+    /// Restore the last submitted payload into the composer so it can be retried.
+    pub(crate) fn restore_last_for_retry(&mut self) -> bool {
+        if self.is_publishing() {
+            return false;
+        }
+        let Some(last) = self.last_submitted.clone() else {
+            return false;
+        };
+        self.draft = last.content;
+        self.reply_target = last.reply_target;
+        self.media_paths = last.media_paths;
+        self.error = None;
+        self.phase = ComposerPhase::Drafting;
+        true
     }
 
     /// Record a completed `nostr_publish_note` JSON response.
@@ -386,8 +736,12 @@ impl ComposerState {
                 if any_accepted {
                     self.draft.clear();
                     self.reply_target = None;
+                    self.media_paths.clear();
                     self.error = None;
                     self.phase = ComposerPhase::Idle;
+                    if matches!(outcome, PublishOutcome::Published(_)) {
+                        self.last_submitted = None;
+                    }
                 } else {
                     self.error = Some(
                         "No relay accepted the note. Your draft was preserved so you can retry."
@@ -430,19 +784,133 @@ mod tests {
             PUBLISH_TOOL,
             PUBLISH_REACTION_TOOL,
             PUBLISH_REPLY_TOOL,
+            PUBLISH_DELETION_TOOL,
             PREPARE_ZAP_TOOL,
+            PUBLISH_NUTZAP_TOOL,
         ] {
             assert!(
                 CLIENT_TOOL_NAMES.contains(&tool),
                 "{tool} must belong to hkask-mcp-nostr-client"
             );
         }
-        for tool in [WALLET_STATUS_TOOL, WALLET_PAY_INVOICE_TOOL] {
+        for tool in [
+            WALLET_STATUS_TOOL,
+            WALLET_PAY_INVOICE_TOOL,
+            WALLET_SEND_ECASH_TOOL,
+        ] {
             assert!(
                 WALLET_TOOL_NAMES.contains(&tool),
                 "{tool} must belong to hkask-mcp-wallet"
             );
         }
+    }
+
+    #[test]
+    fn reply_context_from_event_handles_nip10_marked_positional_and_nip22() {
+        let mk = |id: &str, kind: u16, tags: Vec<Vec<&str>>| WireEvent {
+            id: id.to_string(),
+            kind,
+            author: "b".repeat(64),
+            created_at: 100,
+            content: "hi".to_string(),
+            content_truncated: false,
+            tags: tags
+                .into_iter()
+                .map(|t| t.into_iter().map(str::to_string).collect())
+                .collect(),
+            tags_truncated: false,
+            served_by: Vec::new(),
+        };
+
+        // Top-level kind:1 note
+        let top = mk(&"1".repeat(64), 1, vec![]);
+        let ctx = ReplyContext::from_event(&top, "@alice".into());
+        assert_eq!(ctx.root_event_id, "1".repeat(64));
+        assert_eq!(ctx.reply_to_event_id, None);
+        assert_eq!(ctx.root_kind, 1);
+
+        // NIP-10 marked root reply
+        let marked = mk(
+            &"2".repeat(64),
+            1,
+            vec![vec!["e", &"1".repeat(64), "", "root"]],
+        );
+        let ctx = ReplyContext::from_event(&marked, "@alice".into());
+        assert_eq!(ctx.root_event_id, "1".repeat(64));
+        assert_eq!(ctx.reply_to_event_id, Some("2".repeat(64)));
+        assert_eq!(ctx.root_kind, 1);
+
+        // NIP-10 legacy positional e tag (unmarked)
+        let legacy = mk(&"3".repeat(64), 1, vec![vec!["e", &"1".repeat(64)]]);
+        let ctx = ReplyContext::from_event(&legacy, "@alice".into());
+        assert_eq!(ctx.root_event_id, "1".repeat(64));
+        assert_eq!(ctx.reply_to_event_id, Some("3".repeat(64)));
+        assert_eq!(ctx.root_kind, 1);
+
+        // NIP-22 kind:1111 comment on a kind:30023 article
+        let comment = mk(
+            &"4".repeat(64),
+            1111,
+            vec![
+                vec!["E", &"9".repeat(64)],
+                vec!["K", "30023"],
+                vec!["e", &"9".repeat(64)],
+            ],
+        );
+        let ctx = ReplyContext::from_event(&comment, "@bob".into());
+        assert_eq!(ctx.root_event_id, "9".repeat(64));
+        assert_eq!(ctx.reply_to_event_id, Some("4".repeat(64)));
+        assert_eq!(ctx.root_kind, 30023);
+        assert_eq!(ctx.nip_label(), "NIP-22");
+    }
+
+    #[test]
+    fn parse_custom_sats_and_wallet_status_validate_inputs() {
+        assert_eq!(parse_custom_sats("21"), Ok(21));
+        assert_eq!(parse_custom_sats("1,000"), Ok(1_000));
+        assert!(parse_custom_sats("0").is_err());
+        assert!(parse_custom_sats("abc").is_err());
+
+        let ok = r#"{"network":"signet","allowed_mints":["https://testnut.cashu.space"],"per_tx_cap_sats":10000}"#;
+        let summary = parse_wallet_status(ok).expect("parses cashu wallet status");
+        assert_eq!(summary.network, "signet");
+        assert_eq!(summary.active_rail, "cashu");
+        assert_eq!(summary.per_tx_cap_sats, Some(10_000));
+
+        let no_rails = r#"{"network":"signet","allowed_mints":[]}"#;
+        assert!(parse_wallet_status(no_rails).is_err());
+    }
+
+    #[test]
+    fn media_attachments_allow_media_only_notes_and_cap_at_four() {
+        let mut state = ComposerState::new();
+        state.toggle();
+        for i in 0..MAX_MEDIA_ATTACHMENTS {
+            state
+                .add_media_path(format!("/tmp/img{i}.png"))
+                .expect("within limit");
+        }
+        assert!(state.add_media_path("/tmp/img4.png".into()).is_err());
+        assert!(state.has_draft());
+        let payload = state
+            .begin_publish(1_700_000_000)
+            .expect("media-only allowed");
+        assert!(payload.content.is_empty());
+        assert_eq!(payload.media_paths.len(), MAX_MEDIA_ATTACHMENTS);
+    }
+
+    #[test]
+    fn partial_failure_supports_one_click_retry() {
+        let mut state = ComposerState::new();
+        state.toggle();
+        state.set_draft("retry me".into());
+        state.begin_publish(1_700_000_000).expect("valid");
+        let partial = r#"{"published":{"id":"e1"},"relays":[{"address":"ws://127.0.0.1:43301","role":"local","state":"accepted"},{"address":"wss://nos.lol","role":"seed","state":"refused","reason":"timeout"}],"read_back":{"found":true}}"#;
+        assert!(state.finish_publish_ok(partial));
+        assert!(state.can_retry_last());
+        assert!(state.restore_last_for_retry());
+        assert_eq!(state.draft, "retry me");
+        assert!(state.is_open());
     }
 
     #[test]

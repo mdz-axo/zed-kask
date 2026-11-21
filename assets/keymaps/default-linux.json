@@ -41,6 +41,12 @@
     },
   },
   {
+    "context": "NostrPanel",
+    "bindings": {
+      "ctrl-shift-n": "nostr_panel::Compose"
+    }
+  },
+  {
     "context": "Picker || menu",
     "bindings": {
       "up": "menu::SelectPrevious",

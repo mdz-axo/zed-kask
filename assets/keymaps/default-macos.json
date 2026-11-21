@@ -45,6 +45,12 @@
     },
   },
   {
+    "context": "NostrPanel",
+    "bindings": {
+      "cmd-shift-n": "nostr_panel::Compose"
+    }
+  },
+  {
     "context": "menu",
     "bindings": {
       "right": "menu::SelectChild",

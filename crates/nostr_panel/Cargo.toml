@@ -30,6 +30,8 @@ image.workspace = true
 # neither server: the relay brings an LMDB store and an HTTP listener, the
 # client a relay client, and neither belongs in the editor process.
 hkask-types.workspace = true
+# Pure Nostr event & NIP-57 zap verification (no secret keys, no network).
+hkask-nostr-core.workspace = true
 # The reader's own identity (`kask.nostr.npub`), read from the live
 # settings for the Following feed. Public data only.
 kask_bridge.workspace = true
@@ -50,6 +52,7 @@ workspace.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+hkask-nostr-signer.workspace = true
 # Feature-propagation-only dev-deps: not `use`d in source. Same trap as
 # `media_panel`'s: a build that turns on `remote/test-support` exposes the
 # `Mock` variants of the remote connection types, and the match arms that

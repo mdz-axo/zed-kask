@@ -48,6 +48,8 @@ actions!(
         Toggle,
         /// Focuses an existing Nostr Panel (no-op if none is open).
         ToggleFocus,
+        /// Opens and focuses the public note composer drawer in the Nostr Panel.
+        Compose,
     ]
 );
 
@@ -143,6 +145,12 @@ impl NostrPanel {
         self.thread_observation = None;
         self.ensure_steer(window, cx);
         cx.notify();
+    }
+
+    /// Open and focus the public note compose drawer (`nostr_panel::Compose`).
+    fn open_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.viewer
+            .update(cx, |viewer, cx| viewer.open_compose(window, cx));
     }
 
     /// Lazily construct the Steer conversation. The prompt's tool names are
@@ -260,15 +268,21 @@ impl gpui::Render for NostrPanel {
             });
         }
 
-        hkask_steer::render_vertical_split(
-            "nostr-panel",
-            self.split.bottom_fraction(),
-            self.viewer.clone(),
-            self.thread_picker.clone(),
-            self.steer.conversation().cloned(),
-            |this| &mut this.split,
-            cx,
-        )
+        div()
+            .key_context("NostrPanel")
+            .size_full()
+            .on_action(cx.listener(|this, _: &Compose, window, cx| {
+                this.open_compose(window, cx);
+            }))
+            .child(hkask_steer::render_vertical_split(
+                "nostr-panel",
+                self.split.bottom_fraction(),
+                self.viewer.clone(),
+                self.thread_picker.clone(),
+                self.steer.conversation().cloned(),
+                |this| &mut this.split,
+                cx,
+            ))
     }
 }
 
