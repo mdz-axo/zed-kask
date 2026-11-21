@@ -769,3 +769,109 @@ async fn concurrent_duplicate_idempotency_key_allows_at_most_one_spend() {
     );
     assert_eq!(bal.total_reserved_sats, 0);
 }
+
+#[tokio::test]
+async fn phase_b1_nip61_inbound_p2pk_nutzap_redemption_round_trip() {
+    let mint = start_fake_mint().await;
+    let factory: Arc<dyn ConnectorFactory> = Arc::new(DirectConnectorFactory {
+        mint: Arc::clone(&mint),
+    });
+
+    // 1. Open sender and recipient wallets (no manual with_p2pk_key — must derive from seed!)
+    let sender = WalletEngine::open_in_memory(
+        test_config(std::path::PathBuf::from(":memory:")),
+        Zeroizing::new([11u8; 64]),
+        Arc::new(TestApprovalPort::new(true)),
+        Arc::clone(&factory),
+    )
+    .await
+    .expect("open sender");
+
+    let recipient = WalletEngine::open_in_memory(
+        test_config(std::path::PathBuf::from(":memory:")),
+        Zeroizing::new([22u8; 64]),
+        Arc::new(TestApprovalPort::new(true)),
+        Arc::clone(&factory),
+    )
+    .await
+    .expect("open recipient");
+
+    // 2. Recipient wallet_status exposes deterministic 02-prefixed P2PK pubkey + 64-char x-only hex
+    let status = recipient.status().expect("recipient status");
+    let p2pk_pubkey = status
+        .p2pk_pubkey
+        .clone()
+        .expect("unlocked wallet exposes p2pk_pubkey");
+    let xonly = status
+        .p2pk_xonly_pubkey
+        .clone()
+        .expect("unlocked wallet exposes p2pk_xonly_pubkey");
+    assert_eq!(p2pk_pubkey.len(), 66);
+    assert!(p2pk_pubkey.starts_with("02"));
+    assert_eq!(xonly.len(), 64);
+    assert_eq!(p2pk_pubkey, format!("02{xonly}"));
+
+    // 3. Fund sender, then send a P2PK-locked ecash nutzap to recipient's 02-prefixed pubkey
+    let quote = sender
+        .create_invoice("cashu", 500, None, None)
+        .await
+        .expect("sender mint quote");
+    wait_for_fake_mint_paid(&sender, &quote.quote_id).await;
+    sender
+        .mint_paid_quote(Some(TEST_MINT_URL), &quote.quote_id)
+        .await
+        .expect("mint sender sats");
+
+    let sent = sender
+        .send_ecash(
+            "nutzap-b1-1",
+            125,
+            None,
+            Some(&p2pk_pubkey),
+            Some("great post".into()),
+        )
+        .await
+        .expect("send p2pk ecash");
+    assert!(sent.p2pk_locked);
+    assert!(
+        !sent.proofs_json.is_empty(),
+        "send_ecash must emit raw proofs_json for NIP-61 kind:9321 proof tags"
+    );
+
+    // 4. Unauthorized third party cannot redeem those raw NIP-61 proofs
+    let intruder = WalletEngine::open_in_memory(
+        test_config(std::path::PathBuf::from(":memory:")),
+        Zeroizing::new([33u8; 64]),
+        Arc::new(TestApprovalPort::new(true)),
+        Arc::clone(&factory),
+    )
+    .await
+    .expect("open intruder");
+    assert!(
+        intruder
+            .receive_nutzap_proofs(TEST_MINT_URL, &sent.proofs_json, Some("ev-9321-b1"))
+            .await
+            .is_err(),
+        "unauthorized wallet must fail NUT-11 P2PK redemption"
+    );
+
+    // 5. Recipient redeems raw NIP-61 kind:9321 proofs using its seed-derived P2PK key
+    let redeemed = recipient
+        .receive_nutzap_proofs(TEST_MINT_URL, &sent.proofs_json, Some("ev-9321-b1"))
+        .await
+        .expect("recipient redeems NIP-61 nutzap proofs");
+    assert_eq!(redeemed.amount_sats, 125);
+    assert_eq!(redeemed.status, "settled");
+
+    let bal = recipient.balance().await.expect("recipient bal");
+    assert_eq!(bal.total_confirmed_sats, 125);
+
+    let txs = recipient
+        .transactions(Some("cashu"), Some("settled"), None, Some(10), Some(0))
+        .expect("recipient txs");
+    assert!(
+        txs.iter()
+            .any(|tx| tx.nostr_event_id.as_deref() == Some("ev-9321-b1") && tx.amount_sats == 125),
+        "inbound nutzap redemption must be attributed to nostr_event_id in ledger"
+    );
+}

@@ -72,11 +72,21 @@ pub struct WalletCreateInvoiceParams {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WalletReceiveEcashParams {
-    /// Encoded Cashu token (`cashuA...` or `cashuB...`).
-    pub token: String,
+    /// Encoded Cashu token (`cashuA...` or `cashuB...`). Mutually exclusive with `mint_url` + `proofs_json`.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Allowlisted Cashu mint URL for inbound NIP-61 `kind: 9321` nutzap proofs.
+    #[serde(default)]
+    pub mint_url: Option<String>,
+    /// Raw Cashu proof JSON strings from a NIP-61 `kind: 9321` event's `proof` tags.
+    #[serde(default)]
+    pub proofs_json: Option<Vec<String>>,
+    /// Optional Nostr `kind: 9321` event ID for inbound nutzap ledger attribution.
+    #[serde(default)]
+    pub nostr_event_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -171,6 +181,8 @@ impl WalletServer {
                         default_mint: cfg.default_mint,
                         nwc_label: cfg.nwc_label,
                         pending_reconciliation_count: 0,
+                        p2pk_pubkey: None,
+                        p2pk_xonly_pubkey: None,
                     }
                 }
             };
@@ -271,7 +283,7 @@ impl WalletServer {
     }
 
     #[tool(
-        description = "Validate an encoded Cashu token against the mint allowlist, verify DLEQ (NUT-12), swap proofs (including NUT-11 P2PK redemption), and persist fresh proofs."
+        description = "Validate an encoded Cashu token (or inbound NIP-61 kind:9321 nutzap mint_url + proofs_json) against the mint allowlist, verify DLEQ (NUT-12), swap proofs (including NUT-11 P2PK redemption), and persist fresh proofs."
     )]
     pub async fn wallet_receive_ecash(
         &self,
@@ -279,10 +291,24 @@ impl WalletServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "wallet_receive_ecash", async {
             let engine = self.require_engine()?;
-            let report = engine
-                .receive_ecash(&params.token)
-                .await
-                .map_err(map_wallet_err)?;
+            let report = match (params.token, params.mint_url, params.proofs_json) {
+                (Some(token), None, None) => {
+                    engine.receive_ecash(&token).await.map_err(map_wallet_err)?
+                }
+                (None, Some(mint_url), Some(proofs_json)) => engine
+                    .receive_nutzap_proofs(
+                        &mint_url,
+                        &proofs_json,
+                        params.nostr_event_id.as_deref(),
+                    )
+                    .await
+                    .map_err(map_wallet_err)?,
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "provide either `token` OR both `mint_url` and `proofs_json` (mutually exclusive)",
+                    ));
+                }
+            };
             serde_json::to_value(report).map_err(|e| McpToolError::internal(e.to_string()))
         })
         .await

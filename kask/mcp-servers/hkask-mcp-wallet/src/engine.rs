@@ -18,7 +18,9 @@ use std::sync::Arc;
 
 use cdk::Amount;
 use cdk::amount::SplitTarget;
-use cdk::nuts::{CurrencyUnit, PaymentMethod, PublicKey, SecretKey, SpendingConditions, Token};
+use cdk::nuts::{
+    CurrencyUnit, PaymentMethod, Proof, PublicKey, SecretKey, SpendingConditions, Token,
+};
 use cdk::wallet::{
     HttpClient, MintConnector, ReceiveOptions, SendMemo, SendOptions, Wallet, WalletBuilder,
 };
@@ -157,6 +159,14 @@ pub struct StatusReport {
     pub default_mint: String,
     pub nwc_label: String,
     pub pending_reconciliation_count: u64,
+    /// Compressed `02`-prefixed 66-char secp256k1 P2PK pubkey derived from the
+    /// wallet seed for NIP-61 inbound nutzaps (`None` while locked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p2pk_pubkey: Option<String>,
+    /// 64-char x-only hex P2PK pubkey for NIP-61 `kind: 10019` `pubkey` tags
+    /// (`None` while locked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p2pk_xonly_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +213,10 @@ pub struct SendEcashReport {
     pub fee_sats: u64,
     pub p2pk_locked: bool,
     pub token: String,
+    /// Individual serialized Cashu proof JSON strings (for NIP-61 `kind: 9321`
+    /// `["proof", ...]` tags).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proofs_json: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +279,29 @@ pub struct WalletEngine {
     db_unlocked: bool,
 }
 
+/// Derive a deterministic secp256k1 P2PK receiving `SecretKey` from the 64-byte
+/// wallet seed whose compressed public key is guaranteed to carry the NIP-61
+/// `02` even-Y prefix.
+pub fn derive_nip61_p2pk_key(seed: &[u8; 64]) -> SecretKey {
+    for counter in 0u8..=255 {
+        let mut preimage = Vec::with_capacity(27 + 64 + 1);
+        preimage.extend_from_slice(b"hkask-wallet-nip61-p2pk-v1:");
+        preimage.extend_from_slice(seed);
+        preimage.push(counter);
+        let hex_digest = sha256_hex(&preimage);
+        if let Ok(sk) = SecretKey::from_hex(&hex_digest) {
+            if sk.public_key().to_hex().starts_with("02") {
+                return sk;
+            }
+        }
+    }
+    // Statistically unreachable (~2^-256); deterministic fallback.
+    let mut preimage = Vec::with_capacity(33 + 64);
+    preimage.extend_from_slice(b"hkask-wallet-nip61-p2pk-fallback:");
+    preimage.extend_from_slice(seed);
+    SecretKey::from_hex(&sha256_hex(&preimage)).expect("valid secp256k1 scalar")
+}
+
 impl WalletEngine {
     /// Open an encrypted SQLCipher-backed `WalletEngine` with an explicit seed
     /// and passphrase (used in production after IPC unlock and in encrypted tests).
@@ -283,6 +320,7 @@ impl WalletEngine {
         .map_err(|e| WalletError::Locked(format!("failed to open SQLCipher wallet DB: {e}")))?;
 
         let ledger = WalletLedger::open_encrypted(&config.db_path, &passphrase)?;
+        let default_p2pk = derive_nip61_p2pk_key(&seed);
 
         Ok(Self {
             config,
@@ -291,7 +329,7 @@ impl WalletEngine {
             localstore: Arc::new(db),
             ledger: Arc::new(ledger),
             seed,
-            p2pk_signing_keys: Vec::new(),
+            p2pk_signing_keys: vec![default_p2pk],
             wallets: RwLock::new(HashMap::new()),
             db_unlocked: true,
         })
@@ -308,6 +346,7 @@ impl WalletEngine {
             .await
             .map_err(|e| WalletError::Locked(format!("failed to open in-memory DB: {e}")))?;
         let ledger = WalletLedger::open_in_memory()?;
+        let default_p2pk = derive_nip61_p2pk_key(&seed);
         Ok(Self {
             config,
             approval,
@@ -315,7 +354,7 @@ impl WalletEngine {
             localstore: Arc::new(db),
             ledger: Arc::new(ledger),
             seed,
-            p2pk_signing_keys: Vec::new(),
+            p2pk_signing_keys: vec![default_p2pk],
             wallets: RwLock::new(HashMap::new()),
             db_unlocked: true,
         })
@@ -367,6 +406,14 @@ impl WalletEngine {
     /// 1. `wallet_status`
     pub fn status(&self) -> Result<StatusReport, WalletError> {
         let pending = self.ledger.count_pending()?;
+        let p2pk_pubkey = self
+            .p2pk_signing_keys
+            .first()
+            .map(|sk| sk.public_key().to_hex().to_ascii_lowercase());
+        let p2pk_xonly_pubkey = p2pk_pubkey
+            .as_deref()
+            .and_then(|pk| pk.strip_prefix("02").or_else(|| pk.strip_prefix("03")))
+            .map(str::to_string);
         Ok(StatusReport {
             network: self.config.network.as_str().to_string(),
             mainnet_enabled: self.config.mainnet_enabled,
@@ -378,6 +425,8 @@ impl WalletEngine {
             default_mint: self.config.default_mint.clone(),
             nwc_label: self.config.nwc_label.clone(),
             pending_reconciliation_count: pending,
+            p2pk_pubkey,
+            p2pk_xonly_pubkey,
         })
     }
 
@@ -710,6 +759,88 @@ impl WalletEngine {
             status: "settled".to_string(),
             target_summary: format!("received ecash from {resolved_mint}"),
             nostr_event_id: None,
+            approval_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let _ = self.ledger.insert(&row);
+
+        Ok(ReceiveEcashReport {
+            ledger_id,
+            mint_url: resolved_mint,
+            amount_sats,
+            status: "settled".to_string(),
+        })
+    }
+
+    /// Redeem inbound NIP-61 `kind: 9321` P2PK-locked Cashu proofs directly
+    /// from `(mint_url, proofs_json, nostr_event_id)`. Validates the mint
+    /// against `allowed_mints`, verifies DLEQ (NUT-12), signs NUT-11 P2PK
+    /// witnesses with the wallet's registered P2PK keys, swaps at the mint,
+    /// and records the inbound settlement with `nostr_event_id`.
+    pub async fn receive_nutzap_proofs(
+        &self,
+        mint_url: &str,
+        proofs_json: &[String],
+        nostr_event_id: Option<&str>,
+    ) -> Result<ReceiveEcashReport, WalletError> {
+        if proofs_json.is_empty() {
+            return Err(WalletError::InvalidArgument(
+                "proofs_json must contain at least one Cashu proof".to_string(),
+            ));
+        }
+        let resolved_mint = self
+            .config
+            .resolve_allowed_mint(Some(mint_url.trim()))
+            .map_err(|e| WalletError::PolicyDenied(e.to_string()))?;
+
+        let mut proofs = Vec::with_capacity(proofs_json.len());
+        for raw in proofs_json {
+            let proof: Proof = serde_json::from_str(raw).map_err(|e| {
+                WalletError::InvalidArgument(format!("invalid NIP-61 Cashu proof JSON: {e}"))
+            })?;
+            proofs.push(proof);
+        }
+
+        let parsed_mint = resolved_mint
+            .parse()
+            .map_err(|_| WalletError::InvalidArgument("invalid mint URL".to_string()))?;
+        let token = Token::new(parsed_mint, proofs, None, CurrencyUnit::Sat);
+        let encoded = token.to_string();
+
+        let wallet = self.wallet_for_mint(Some(&resolved_mint)).await?;
+        let opts = ReceiveOptions {
+            p2pk_signing_keys: self.p2pk_signing_keys.clone(),
+            ..Default::default()
+        };
+        let amount = wallet
+            .receive(&encoded, opts)
+            .await
+            .map_err(|e| WalletError::Cashu(format!("NIP-61 nutzap redemption failed: {e}")))?;
+        let amount_sats = u64::from(amount);
+
+        let now = now_unix_secs();
+        let ledger_id = uuid::Uuid::new_v4().to_string();
+        let idempotency_key = match nostr_event_id.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(ev_id) => format!("nutzap-{ev_id}"),
+            None => format!("nutzap-{}", sha256_hex(encoded.as_bytes())),
+        };
+        let row = LedgerRow {
+            id: ledger_id.clone(),
+            idempotency_key,
+            direction: "inbound".to_string(),
+            rail: "cashu".to_string(),
+            network: self.config.network.as_str().to_string(),
+            mint_url: Some(resolved_mint.clone()),
+            payment_hash: None,
+            amount_sats,
+            fee_sats: 0,
+            status: "settled".to_string(),
+            target_summary: format!("redeemed NIP-61 nutzap from {resolved_mint}"),
+            nostr_event_id: nostr_event_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             approval_id: None,
             created_at: now,
             updated_at: now,
@@ -1162,6 +1293,29 @@ impl WalletEngine {
         let send_memo = memo.map(|m| SendMemo::for_token(&m));
         match prepared.confirm(send_memo).await {
             Ok(token) => {
+                let proofs_json: Vec<String> = match &token {
+                    Token::TokenV3(v3) => v3
+                        .token
+                        .iter()
+                        .flat_map(|t| t.proofs.iter())
+                        .filter_map(|p| serde_json::to_string(p).ok())
+                        .collect(),
+                    Token::TokenV4(v4) => {
+                        let keysets = wallet
+                            .localstore
+                            .get_mint_keysets(wallet.mint_url.clone())
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default();
+                        v4.proofs(&keysets)
+                            .ok()
+                            .unwrap_or_default()
+                            .iter()
+                            .filter_map(|p| serde_json::to_string(p).ok())
+                            .collect()
+                    }
+                };
                 self.ledger.update_status(
                     &intent_id,
                     "settled",
@@ -1177,6 +1331,7 @@ impl WalletEngine {
                     fee_sats,
                     p2pk_locked,
                     token: token.to_string(),
+                    proofs_json,
                 })
             }
             Err(err) => {

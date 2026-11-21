@@ -883,6 +883,51 @@ pub(crate) struct ReplyReference {
     pub(crate) label: String,
 }
 
+/// Inbound NIP-61 `kind: 9321` nutzap payload extracted from event tags
+/// (`["u", mint_url]` + one or more `["proof", proof_json]`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NutzapPayload {
+    pub(crate) mint_url: String,
+    pub(crate) proofs_json: Vec<String>,
+}
+
+/// Extract the mint URL and raw Cashu proof JSON strings from a NIP-61
+/// `kind: 9321` nutzap event.
+pub(crate) fn extract_nutzap_payload(event: &WireEvent) -> Option<NutzapPayload> {
+    if event.kind != 9_321 {
+        return None;
+    }
+    let mint_url = event.tags.iter().find_map(|tag| {
+        if tag.first().map(String::as_str) == Some("u") {
+            tag.get(1)
+                .map(|s| s.trim().to_string())
+                .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+        } else {
+            None
+        }
+    })?;
+    let proofs_json: Vec<String> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            if tag.first().map(String::as_str) == Some("proof") {
+                tag.get(1)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if proofs_json.is_empty() {
+        return None;
+    }
+    Some(NutzapPayload {
+        mint_url,
+        proofs_json,
+    })
+}
+
 /// A NIP-10 quote reference (`["q", "<event_id>", <optional_relay>, <optional_pubkey>]`)
 /// parsed from an incoming `kind: 1` note's tags.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1697,6 +1742,27 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn extract_nutzap_payload_parses_kind_9321_u_and_proof_tags() {
+        let ev = WireEvent {
+            id: "a".repeat(64),
+            author: "b".repeat(64),
+            created_at: 100,
+            kind: 9_321,
+            content: "nice!".to_string(),
+            content_truncated: false,
+            tags: vec![
+                vec!["u".into(), "https://mint.example.com".into()],
+                vec!["proof".into(), r#"{"amount":21,"secret":"s"}"#.into()],
+            ],
+            tags_truncated: false,
+            served_by: vec![],
+        };
+        let payload = extract_nutzap_payload(&ev).expect("parses kind:9321");
+        assert_eq!(payload.mint_url, "https://mint.example.com");
+        assert_eq!(payload.proofs_json.len(), 1);
     }
 
     #[test]

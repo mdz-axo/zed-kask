@@ -68,10 +68,11 @@ pub(crate) const PREPARE_ZAP_TOOL: &str = "nostr_prepare_zap";
 /// <https://nostr-nips.com/nip-61>).
 pub(crate) const PUBLISH_NUTZAP_TOOL: &str = "nostr_publish_nutzap";
 
-/// The MCP tools on `hkask-mcp-wallet` used to inspect rails and settle a zap or nutzap.
+/// The MCP tools on `hkask-mcp-wallet` used to inspect rails and settle or redeem a zap/nutzap.
 pub(crate) const WALLET_STATUS_TOOL: &str = "wallet_status";
 pub(crate) const WALLET_PAY_INVOICE_TOOL: &str = "wallet_pay_invoice";
 pub(crate) const WALLET_SEND_ECASH_TOOL: &str = "wallet_send_ecash";
+pub(crate) const WALLET_RECEIVE_ECASH_TOOL: &str = "wallet_receive_ecash";
 
 /// Amethyst-style quick-zap preset amounts in satoshis.
 pub(crate) const ZAP_PRESETS_SATS: &[u64] = &[21, 100, 500, 1_000];
@@ -313,6 +314,7 @@ pub(crate) struct WalletStatusSummary {
     pub(crate) per_tx_cap_sats: Option<u64>,
     pub(crate) default_mint: Option<String>,
     pub(crate) allowed_mints: Vec<String>,
+    pub(crate) p2pk_xonly_pubkey: Option<String>,
 }
 
 impl WalletStatusSummary {
@@ -387,12 +389,19 @@ pub(crate) fn parse_wallet_status(raw_json: &str) -> Result<WalletStatusSummary,
             root.pointer("/spending_caps/per_tx_sats")
                 .and_then(Value::as_u64)
         });
+    let p2pk_xonly_pubkey = root
+        .get("p2pk_xonly_pubkey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|s| s.to_ascii_lowercase());
     Ok(WalletStatusSummary {
         network: sanitize_untrusted_text(&network),
         active_rail,
         per_tx_cap_sats,
         default_mint,
         allowed_mints,
+        p2pk_xonly_pubkey,
     })
 }
 
@@ -862,6 +871,7 @@ mod tests {
             WALLET_STATUS_TOOL,
             WALLET_PAY_INVOICE_TOOL,
             WALLET_SEND_ECASH_TOOL,
+            WALLET_RECEIVE_ECASH_TOOL,
         ] {
             assert!(
                 WALLET_TOOL_NAMES.contains(&tool),

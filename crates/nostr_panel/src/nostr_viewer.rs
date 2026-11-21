@@ -59,7 +59,8 @@ use std::sync::Arc;
 
 use crate::nostr_composer::{
     PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL, PUBLISH_REACTION_TOOL,
-    PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext, sanitize_untrusted_text,
+    PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext, WALLET_RECEIVE_ECASH_TOOL,
+    WALLET_STATUS_TOOL, parse_publish_receipt, parse_wallet_status, sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -75,6 +76,7 @@ use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media
 use hkask_tool_invoker::InvokeError;
 use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
 use hkask_types::nostr_wire::{NOSTR_BLOSSOM_SERVER, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
+use hkask_types::wallet_wire::WALLET_SERVER_ID;
 use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
@@ -180,6 +182,8 @@ pub struct NostrViewer {
     seed_relay_probes: Vec<SeedRelayProbe>,
     /// Request state for opt-in `nostr_account` seed-relay probes.
     probe_request: Request,
+    /// Status feedback for publishing NIP-61 `kind: 10019` nutzap info.
+    nutzap_info_status: Option<(bool, String)>,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -486,6 +490,7 @@ impl NostrViewer {
             blossom_status: None,
             seed_relay_probes: Vec::new(),
             probe_request: Request::new(),
+            nutzap_info_status: None,
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -1799,6 +1804,194 @@ impl NostrViewer {
         cx.notify();
     }
 
+    /// Publish the operator's NIP-61 `kind: 10019` nutzap receiving info
+    /// (`relay_urls`, `mint_urls`, and the wallet's seed-derived `p2pk_pubkey`).
+    /// Always prompts in the editor.
+    fn publish_nutzap_info(&mut self, cx: &mut Context<Self>) {
+        let relays: Vec<String> = KaskSettings::get_global(cx)
+            .nostr
+            .seed_relays
+            .iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| r.starts_with("wss://"))
+            .collect();
+        if relays.is_empty() {
+            self.nutzap_info_status = Some((
+                false,
+                "Configure at least one public wss:// seed relay in Settings > Kask > Nostr first."
+                    .to_string(),
+            ));
+            cx.notify();
+            return;
+        }
+        self.nutzap_info_status = Some((true, "Reading wallet P2PK receive key & mints…".into()));
+        cx.notify();
+        let status_task = match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
+            Ok(t) => t,
+            Err(err) => {
+                self.nutzap_info_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let status_raw = match status_task.await {
+                Ok(raw) => raw,
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.nutzap_info_status =
+                            Some((false, sanitize_untrusted_text(&err.to_string())));
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+            let summary = match parse_wallet_status(&status_raw) {
+                Ok(s) => s,
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.nutzap_info_status = Some((false, err));
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+            if summary.allowed_mints.is_empty() {
+                this.update(cx, |this, cx| {
+                    this.nutzap_info_status = Some((
+                        false,
+                        "Configure at least one allowlisted Cashu mint in Settings > Kask > Wallet first."
+                            .to_string(),
+                    ));
+                    cx.notify();
+                })
+                .log_err();
+                return;
+            }
+            let Some(p2pk_pubkey) = summary.p2pk_xonly_pubkey else {
+                this.update(cx, |this, cx| {
+                    this.nutzap_info_status = Some((
+                        false,
+                        "Wallet is locked or has no P2PK receive key; unlock wallet before publishing kind:10019."
+                            .to_string(),
+                    ));
+                    cx.notify();
+                })
+                .log_err();
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.nutzap_info_status = Some((
+                    true,
+                    "Awaiting editor approval to publish NIP-61 kind:10019 nutzap info…".into(),
+                ));
+                cx.notify();
+            })
+            .log_err();
+            let pub_task = match invoke(
+                NOSTR_CLIENT_SERVER,
+                PUBLISH_LIST_TOOL,
+                json!({
+                    "kind": 10_019,
+                    "relay_urls": relays,
+                    "mint_urls": summary.allowed_mints,
+                    "p2pk_pubkey": p2pk_pubkey,
+                }),
+            ) {
+                Ok(t) => t,
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.nutzap_info_status = Some((false, err));
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+            let pub_res = pub_task.await;
+            this.update(cx, |this, cx| {
+                this.nutzap_info_status = match pub_res {
+                    Ok(raw) => match parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => Some((
+                            true,
+                            format!(
+                                "Published NIP-61 nutzap info (kind:10019 · {} relay(s))",
+                                outcome.receipt().accepted.len()
+                            ),
+                        )),
+                        Ok(_) => Some((
+                            false,
+                            "Publishing kind:10019 failed: no relay accepted.".into(),
+                        )),
+                        Err(err) => Some((false, err)),
+                    },
+                    Err(err) => Some((false, sanitize_untrusted_text(&err.to_string()))),
+                };
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// Redeem an inbound NIP-61 `kind: 9321` nutzap event via `wallet_receive_ecash`.
+    fn redeem_nutzap(&mut self, event_id: String, payload: NutzapPayload, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = Some((
+            event_id.clone(),
+            true,
+            "Redeeming NIP-61 Cashu nutzap proofs…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            WALLET_SERVER_ID,
+            WALLET_RECEIVE_ECASH_TOOL,
+            json!({
+                "mint_url": payload.mint_url,
+                "proofs_json": payload.proofs_json,
+                "nostr_event_id": event_id,
+            }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                this.reaction_feedback = match result {
+                    Ok(raw) => {
+                        let sats = serde_json::from_str::<Value>(&raw)
+                            .ok()
+                            .and_then(|v| {
+                                let root = v.get("content").unwrap_or(&v);
+                                root.get("amount_sats").and_then(Value::as_u64)
+                            })
+                            .unwrap_or(0);
+                        Some((
+                            event_id,
+                            true,
+                            format!("Redeemed {sats} sats from NIP-61 nutzap"),
+                        ))
+                    }
+                    Err(err) => Some((event_id, false, sanitize_untrusted_text(&err.to_string()))),
+                };
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
     /// Explicit opt-in seed-relay connectivity probe via `nostr_account`.
     fn probe_seed_relays(&mut self, cx: &mut Context<Self>) {
         let epoch = self.probe_request.begin();
@@ -2116,6 +2309,8 @@ impl NostrViewer {
         let supporting = supporting_line(&row.event);
         let reply = reply_reference(&row.event, names);
         let quote = quote_reference(&row.event, names);
+        let nutzap_payload = extract_nutzap_payload(&row.event);
+        let nutzap_event_id = row.event.id.clone();
         let notification = row.label.clone();
         let thread_jump_id = if notification.is_some() {
             Some(
@@ -2129,6 +2324,7 @@ impl NostrViewer {
         };
         let has_context = reply.is_some()
             || quote.is_some()
+            || nutzap_payload.is_some()
             || row.parent_missing
             || row.is_focus
             || notification.is_some();
@@ -2326,6 +2522,21 @@ impl NostrViewer {
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.read_conversation(target_id.clone(), cx);
+                                    })),
+                            )
+                        })
+                        .when_some(nutzap_payload, |el, payload| {
+                            let ev_id = nutzap_event_id.clone();
+                            el.child(
+                                ui::Button::new(("nostr-redeem-nutzap", ix), "Redeem Nutzap")
+                                    .style(ui::ButtonStyle::Filled)
+                                    .label_size(LabelSize::XSmall)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Redeem NIP-61 P2PK Cashu proofs into your local wallet",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.redeem_nutzap(ev_id.clone(), payload.clone(), cx);
                                     })),
                             )
                         }),
@@ -4125,9 +4336,23 @@ impl NostrViewer {
                                 "Contacts configured seed relays via nostr_account to test connectivity",
                             ))
                             .on_click(cx.listener(|this, _, _, cx| this.probe_seed_relays(cx))),
+                    )
+                    .child(
+                        ui::Button::new("nostr-publish-10019", "Publish Nutzap info (10019)")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text(
+                                "Publish your wallet's NIP-61 P2PK key, allowlisted mints, and seed relays (kind:10019; always prompts)",
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| this.publish_nutzap_info(cx))),
                     ),
             )
             .children(request)
+            .when_some(self.nutzap_info_status.as_ref(), |el, (ok, msg)| {
+                el.child(Self::line(
+                    display_text(msg),
+                    if *ok { Color::Muted } else { Color::Error },
+                ))
+            })
             .children(Self::request_line(
                 &self.probe_request,
                 "Probing seed relays via nostr_account…",
