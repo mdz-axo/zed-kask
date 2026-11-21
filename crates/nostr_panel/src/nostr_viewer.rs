@@ -2370,21 +2370,24 @@ impl NostrViewer {
         let names = self.names_of(rows);
         let offset = local_offset();
         let now = OffsetDateTime::now_utc();
-        v_flex()
+        let frame_id = if indent {
+            "nostr-thread-scroll-frame"
+        } else {
+            "nostr-alerts-scroll-frame"
+        };
+        let scrollbar_id = if indent {
+            "nostr-thread-scrollbar"
+        } else {
+            "nostr-alerts-scrollbar"
+        };
+        let inner = v_flex()
             .id("nostr-viewer-rows")
             .debug_selector(|| "nostr-viewer-rows".into())
-            .w_full()
+            .size_full()
             .min_w_0()
             .min_h_0()
-            .flex_1()
             .overflow_y_scroll()
             .track_scroll(scroll_handle)
-            .custom_scrollbars(
-                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
-                    .tracked_scroll_handle(scroll_handle),
-                window,
-                cx,
-            )
             .gap_0p5()
             .p_1()
             .pr_3()
@@ -2392,6 +2395,22 @@ impl NostrViewer {
                 rows.iter()
                     .enumerate()
                     .map(|(ix, row)| self.row(ix, row, indent, &names, offset, now, cx)),
+            );
+        div()
+            .id(frame_id)
+            .relative()
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .flex_1()
+            .overflow_hidden()
+            .child(inner)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .id(scrollbar_id)
+                    .tracked_scroll_handle(scroll_handle),
+                window,
+                cx,
             )
     }
 
@@ -2524,24 +2543,14 @@ impl NostrViewer {
         let name = names
             .get(event.author.as_str())
             .and_then(|profile| profile.name.as_deref());
-        v_flex()
+        let inner = v_flex()
             .id("nostr-viewer-detail")
             .debug_selector(|| "nostr-viewer-detail".into())
-            .w_full()
+            .size_full()
             .min_w_0()
             .min_h_0()
-            .h(DefiniteLength::Fraction(DETAIL_FRACTION))
-            .flex_shrink_0()
             .overflow_y_scroll()
             .track_scroll(&self.detail_scroll_handle)
-            .custom_scrollbars(
-                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
-                    .tracked_scroll_handle(&self.detail_scroll_handle),
-                window,
-                cx,
-            )
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
             .p_2()
             .pr_3()
             .gap_1()
@@ -3248,7 +3257,26 @@ impl NostrViewer {
                             Color::Hint,
                         ))
                     })
-            })
+            });
+        div()
+            .id("nostr-detail-scroll-frame")
+            .relative()
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .h(DefiniteLength::Fraction(DETAIL_FRACTION))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(inner)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .id("nostr-detail-scrollbar")
+                    .tracked_scroll_handle(&self.detail_scroll_handle),
+                window,
+                cx,
+            )
     }
 
     fn render_timeline(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -3462,25 +3490,34 @@ impl NostrViewer {
                         }
                     })
                     .collect();
-                v_flex()
+                let inner = v_flex()
                     .id("nostr-viewer-rows")
                     .debug_selector(|| "nostr-viewer-rows".into())
+                    .size_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.timeline_scroll_handle)
+                    .gap_0p5()
+                    .p_1()
+                    .pr_3()
+                    .children(line_elements);
+                div()
+                    .id("nostr-timeline-scroll-frame")
+                    .relative()
                     .w_full()
                     .min_w_0()
                     .min_h_0()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.timeline_scroll_handle)
+                    .overflow_hidden()
+                    .child(inner)
                     .custom_scrollbars(
                         ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                            .id("nostr-timeline-scrollbar")
                             .tracked_scroll_handle(&self.timeline_scroll_handle),
                         window,
                         cx,
                     )
-                    .gap_0p5()
-                    .p_1()
-                    .pr_3()
-                    .children(line_elements)
                     .into_any_element()
             })
             .children(
@@ -3678,19 +3715,13 @@ impl NostrViewer {
             (None, None) => format!("Listener {}", status.listener.state),
         };
         let listening = status.listener.state == "listening";
-        v_flex()
+        let inner = v_flex()
             .id("nostr-viewer-relay")
             .size_full()
             .min_w_0()
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.relay_scroll_handle)
-            .custom_scrollbars(
-                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
-                    .tracked_scroll_handle(&self.relay_scroll_handle),
-                window,
-                cx,
-            )
             .p_2()
             .pr_3()
             .gap_1()
@@ -3790,7 +3821,22 @@ impl NostrViewer {
                         Color::Warning
                     },
                 )
-            }))
+            }));
+        div()
+            .id("nostr-relay-scroll-frame")
+            .relative()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .child(inner)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .id("nostr-relay-scrollbar")
+                    .tracked_scroll_handle(&self.relay_scroll_handle),
+                window,
+                cx,
+            )
             .into_any_element()
     }
 

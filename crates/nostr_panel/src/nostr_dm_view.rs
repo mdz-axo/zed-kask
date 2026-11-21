@@ -470,45 +470,55 @@ impl Render for NostrDmView {
                 )
             })
             .child(
-                v_flex()
-                    .id("nostr-dm-messages-list")
+                div()
+                    .id("nostr-dm-scroll-frame")
+                    .relative()
                     .w_full()
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
+                    .overflow_hidden()
+                    .child(
+                        v_flex()
+                            .id("nostr-dm-messages-list")
+                            .size_full()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll_handle)
+                            .pr_3()
+                            .gap_1()
+                            .when(self.messages.is_empty(), |el| {
+                                el.child(Self::line(
+                                    "No decrypted NIP-17 messages in this thread yet. Click Sync DMs or send a message below.",
+                                    Color::Muted,
+                                ))
+                            })
+                            .children(self.messages.iter().map(|msg| {
+                                let who = if msg.outgoing {
+                                    "You".to_string()
+                                } else {
+                                    format_peer_label(&msg.peer_pubkey_hex, &self.peer_names, None)
+                                };
+                                v_flex()
+                                    .w_full()
+                                    .p_1()
+                                    .rounded_sm()
+                                    .bg(cx.theme().colors().surface_background)
+                                    .child(Self::line(
+                                        format!("{who} · {}", utc_text(msg.created_at)),
+                                        Color::Hint,
+                                    ))
+                                    .child(Self::line(display_text(&msg.content), Color::Default))
+                            })),
+                    )
                     .custom_scrollbars(
                         ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                            .id("nostr-dm-scrollbar")
                             .tracked_scroll_handle(&self.scroll_handle),
                         window,
                         cx,
-                    )
-                    .pr_3()
-                    .gap_1()
-                    .when(self.messages.is_empty(), |el| {
-                        el.child(Self::line(
-                            "No decrypted NIP-17 messages in this thread yet. Click Sync DMs or send a message below.",
-                            Color::Muted,
-                        ))
-                    })
-                    .children(self.messages.iter().map(|msg| {
-                        let who = if msg.outgoing {
-                            "You".to_string()
-                        } else {
-                            format_peer_label(&msg.peer_pubkey_hex, &self.peer_names, None)
-                        };
-                        v_flex()
-                            .w_full()
-                            .p_1()
-                            .rounded_sm()
-                            .bg(cx.theme().colors().surface_background)
-                            .child(Self::line(
-                                format!("{who} · {}", utc_text(msg.created_at)),
-                                Color::Hint,
-                            ))
-                            .child(Self::line(display_text(&msg.content), Color::Default))
-                    })),
+                    ),
             )
             .child(
                 v_flex()
