@@ -121,6 +121,10 @@ enum RequestOwner {
     Transcript(String),
     TranscriptListing,
     VisualEvents(String),
+    Export {
+        transcript_id: String,
+        format: &'static str,
+    },
 }
 
 /// A strict-parsed `educt_list_transcripts` row — the fields the workspace
@@ -575,7 +579,13 @@ enum ResourceState {
     Failed(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TranscriptExportSummary {
+    format: String,
+    output_path: String,
+    export_id: Option<String>,
+}
+
 struct RequestLifecycle {
     epoch: u64,
     owner: Option<RequestOwner>,
@@ -1003,6 +1013,10 @@ pub struct MediaViewer {
     /// The last redaction render's review/lineage summary (S3's segments[]
     /// + applied_items[]), rendered in the events tail.
     redaction_render: Option<RedactionRenderSummary>,
+    /// Last completed standards export (`web_annotation`, `webvtt`, `otio`)
+    /// surfaced with its durable output path (plan §4 S7).
+    export_request: RequestLifecycle,
+    export_result: Option<TranscriptExportSummary>,
     edit_request: RequestLifecycle,
     edit_progress: Option<String>,
     /// Two-step delete confirmation for Library rows: the armed asset row
@@ -1097,6 +1111,8 @@ impl MediaViewer {
             redaction_target: None,
             redaction_effect: PaneRedactionEffect::default(),
             redaction_render: None,
+            export_request: RequestLifecycle::new(),
+            export_result: None,
             edit_request: RequestLifecycle::new(),
             edit_progress: None,
             confirm_delete: ConfirmArm::default(),

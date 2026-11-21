@@ -6229,4 +6229,138 @@ mod edit_tests {
             assert!(viewer.assets.is_empty());
         });
     }
+
+    /// expect: `export_transcript` dispatches `educt_export` for `web_annotation`,
+    /// `webvtt`, and `otio` (with optional `layer_id`) on its own read lifecycle
+    /// (independent of `edit_request`), surfaces the durable `output` path, and
+    /// preserves last-good `export_result` when a subsequent export fails. [P1]
+    #[gpui::test]
+    fn export_transcript_dispatches_standards_formats_and_surfaces_path(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (calls, _restore) = install_scripted_invoker(vec![
+            serde_json::json!({
+                "content": {
+                    "export_id": "exp-wa",
+                    "format": "web_annotation",
+                    "output": "/tmp/exports/t1-highlights.annotations.json",
+                    "status": "exported",
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "content": {
+                    "export_id": "exp-vtt",
+                    "format": "webvtt",
+                    "output": "/tmp/exports/t1.vtt",
+                    "status": "exported",
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "content": {
+                    "export_id": "exp-otio",
+                    "format": "otio",
+                    "output": "/tmp/exports/t1-reel.otio",
+                    "status": "exported",
+                }
+            })
+            .to_string(),
+            // Malformed payload -> failure must preserve last-good export_result.
+            "not json".to_string(),
+        ]);
+
+        let viewer = cx.new(|_| MediaViewer::new());
+        // Simulate an in-flight edit: exports ride their own read lifecycle (axis 8)
+        // and must not be blocked by `edit_request`.
+        viewer.update(cx, |viewer, cx| {
+            let _ = viewer.edit_request.begin(RequestOwner::Edit("busy"));
+            viewer.export_transcript("tr-1".to_string(), "web_annotation", None, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, cx| {
+            let exported = viewer
+                .export_result
+                .as_ref()
+                .expect("web_annotation export must land");
+            assert_eq!(exported.format, "web_annotation");
+            assert_eq!(
+                exported.output_path,
+                "/tmp/exports/t1-highlights.annotations.json"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("/tmp/exports/t1-highlights.annotations.json")
+            );
+            viewer.export_transcript("tr-1".to_string(), "webvtt", None, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, cx| {
+            let exported = viewer
+                .export_result
+                .as_ref()
+                .expect("webvtt export must land");
+            assert_eq!(exported.format, "webvtt");
+            assert_eq!(exported.output_path, "/tmp/exports/t1.vtt");
+            viewer.export_transcript("tr-1".to_string(), "otio", Some("edl-42".to_string()), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, cx| {
+            let exported = viewer
+                .export_result
+                .as_ref()
+                .expect("otio export must land");
+            assert_eq!(exported.format, "otio");
+            assert_eq!(exported.output_path, "/tmp/exports/t1-reel.otio");
+            // Fourth call returns malformed payload -> Failed state, last-good preserved.
+            viewer.export_transcript("tr-1".to_string(), "otio", None, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(matches!(
+                viewer.export_request.state,
+                ResourceState::Failed(_)
+            ));
+            let exported = viewer
+                .export_result
+                .as_ref()
+                .expect("failed export must preserve last-good result");
+            assert_eq!(exported.output_path, "/tmp/exports/t1-reel.otio");
+        });
+
+        let recorded = calls.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(recorded.len(), 4);
+        assert_eq!(recorded[0].0, "educt_export");
+        assert_eq!(recorded[0].1["format"], "web_annotation");
+        assert_eq!(recorded[1].1["format"], "webvtt");
+        assert_eq!(recorded[2].1["format"], "otio");
+        assert_eq!(recorded[2].1["layer_id"], "edl-42");
+
+        // Also pin `parse_reel_render_target` for the inspector Reel tab.
+        let detail = serde_json::json!({
+            "transcript_render": {
+                "transcript_id": "tr-1",
+                "source_transcript_id": "tr-1",
+                "edl_layer_id": "edl-42",
+                "created_at": "2026-11-20T00:00:00Z",
+            }
+        });
+        assert_eq!(
+            parse_reel_render_target(&detail),
+            Some(("tr-1".to_string(), Some("edl-42".to_string())))
+        );
+        let detached = serde_json::json!({
+            "transcript_render": {
+                "transcript_id": null,
+                "source_transcript_id": "tr-1",
+                "edl_layer_id": null,
+                "created_at": "2026-11-20T00:00:00Z",
+            }
+        });
+        assert_eq!(parse_reel_render_target(&detached), None);
+    }
 }

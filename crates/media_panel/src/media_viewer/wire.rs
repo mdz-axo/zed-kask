@@ -394,6 +394,54 @@ pub(super) fn parse_reel_provenance(detail: &Value) -> Option<String> {
     Some(format!("{source} (created {created})"))
 }
 
+/// Live transcript/EDL target for the inspector's Reel tab OTIO export (S7):
+/// requires a non-empty live `transcript_id` (detached renders have null).
+pub(super) fn parse_reel_render_target(detail: &Value) -> Option<(String, Option<String>)> {
+    let render = detail.get("transcript_render")?.as_object()?;
+    let transcript_id = render
+        .get("transcript_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let edl_layer_id = render
+        .get("edl_layer_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    Some((transcript_id, edl_layer_id))
+}
+
+/// Parse an `educt_export` tool response into its durable output summary (S7).
+pub(super) fn parse_export_result(
+    output: &str,
+    expected_format: &str,
+) -> Result<TranscriptExportSummary, String> {
+    let payload = hkask_types::tool_response::parse_tool_response(output)
+        .ok_or_else(|| "educt_export returned malformed data".to_string())?;
+    let output_path = payload
+        .get("output")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "educt_export response did not include a durable output path".to_string())?
+        .to_string();
+    let format = payload
+        .get("format")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(expected_format)
+        .to_string();
+    let export_id = payload
+        .get("export_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(TranscriptExportSummary {
+        format,
+        output_path,
+        export_id,
+    })
+}
+
 /// Deterministic label color (D8): the label's FNV-1a hash spreads hues —
 /// no palette editor, no settings.
 pub(super) fn highlight_label_color(label: &str) -> gpui::Hsla {

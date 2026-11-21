@@ -4524,6 +4524,153 @@ async fn otio_export_holds_the_clips_the_render_cuts() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// expect: `educt_export` pins all OTIO layer-resolution branches (absent,
+/// unknown id, wrong kind, empty keeps, latest EDL) and produces durable
+/// `webvtt` and `web_annotation` documents through the tool seam. [P1]
+#[tokio::test]
+async fn educt_export_s7_otio_layer_resolution_and_standards_formats()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::test_support::wire;
+    let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+        media_test_env().await?;
+    let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+    let wav = gallery_root.path().join("s7-export-source.wav");
+    sine_fixture(&wav, 3, &["-ac", "1", "-ar", "16000"]).await?;
+    let transcript_id = store_three_words_over(&server, &wav.to_string_lossy()).await;
+
+    // 1. OTIO with no EDL layer -> not_found.
+    let err = server
+        .educt_export(wire(serde_json::json!({
+            "transcript_id": transcript_id,
+            "format": "otio",
+        }))?)
+        .await
+        .expect_err("otio without any EDL layer must fail");
+    assert_eq!(err.kind, hkask_types::McpErrorKind::NotFound);
+
+    // 2. OTIO with unknown layer_id -> not_found.
+    let err = server
+        .educt_export(wire(serde_json::json!({
+            "transcript_id": transcript_id,
+            "format": "otio",
+            "layer_id": "nonexistent-layer",
+        }))?)
+        .await
+        .expect_err("otio with unknown layer_id must fail");
+    assert_eq!(err.kind, hkask_types::McpErrorKind::NotFound);
+
+    // 3. Create a researcher highlight so we can test both web_annotation and wrong-kind OTIO.
+    let hl_stored = content_of(
+        &server
+            .educt_annotation_create(wire(serde_json::json!({
+                "transcript_id": transcript_id,
+                "start_word": 0,
+                "end_word": 1,
+                "label": "key claim",
+                "note": "s7 test",
+            }))?)
+            .await?,
+    );
+    let hl_layer_id = hl_stored["annotation_id"]
+        .as_str()
+        .ok_or("annotation_id")?
+        .to_string();
+
+    // Wrong-kind layer_id passed to OTIO -> invalid_argument.
+    let err = server
+        .educt_export(wire(serde_json::json!({
+            "transcript_id": transcript_id,
+            "format": "otio",
+            "layer_id": hl_layer_id,
+        }))?)
+        .await
+        .expect_err("otio with highlight layer_id must fail");
+    assert_eq!(err.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+    // 4. All-cut EDL -> invalid_argument (empty keeps).
+    let cut_all_id = store_layer_object(
+        &server,
+        &transcript_id,
+        edl_layer(serde_json::json!([{"op": "cut", "range": {"start_word": 0, "end_word": 2}}])),
+    )
+    .await
+    .map_err(|error| error.message)?["stored"]["id"]
+        .as_str()
+        .ok_or("layer_id")?
+        .to_string();
+    let err = server
+        .educt_export(wire(serde_json::json!({
+            "transcript_id": transcript_id,
+            "format": "otio",
+            "layer_id": cut_all_id,
+        }))?)
+        .await
+        .expect_err("otio over all-cut EDL must fail");
+    assert_eq!(err.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+    // 5. Valid EDL -> latest-EDL OTIO export succeeds.
+    let _keep = store_layer_object(
+        &server,
+        &transcript_id,
+        edl_layer(serde_json::json!([{"op": "keep", "range": {"start_word": 0, "end_word": 1}}])),
+    )
+    .await
+    .map_err(|error| error.message)?;
+    let otio_out = content_of(
+        &server
+            .educt_export(wire(serde_json::json!({
+                "transcript_id": transcript_id,
+                "format": "otio",
+            }))?)
+            .await?,
+    );
+    let otio_path = otio_out["output"].as_str().ok_or("otio output")?;
+    let otio_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(otio_path)?)?;
+    assert_eq!(otio_json["OTIO_SCHEMA"].as_str(), Some("Timeline.1"));
+
+    // 6. WebVTT export succeeds with WEBVTT header and karaoke cues.
+    let vtt_out = content_of(
+        &server
+            .educt_export(wire(serde_json::json!({
+                "transcript_id": transcript_id,
+                "format": "webvtt",
+            }))?)
+            .await?,
+    );
+    let vtt_text = std::fs::read_to_string(vtt_out["output"].as_str().ok_or("vtt output")?)?;
+    assert!(vtt_text.starts_with("WEBVTT"));
+    assert!(vtt_text.contains(" --> "));
+
+    // 7. Web Annotation JSON export succeeds with dual selectors.
+    let wa_out = content_of(
+        &server
+            .educt_export(wire(serde_json::json!({
+                "transcript_id": transcript_id,
+                "format": "web_annotation",
+            }))?)
+            .await?,
+    );
+    let wa_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        wa_out["output"].as_str().ok_or("wa output")?,
+    )?)?;
+    let items = wa_json["items"].as_array().ok_or("items array")?;
+    assert_eq!(items.len(), 1);
+    let selectors = items[0]["target"]["selector"]
+        .as_array()
+        .ok_or("selectors array")?;
+    assert!(
+        selectors
+            .iter()
+            .any(|s| s["type"].as_str() == Some("TextPositionSelector"))
+    );
+    assert!(
+        selectors
+            .iter()
+            .any(|s| s["type"].as_str() == Some("TextQuoteSelector"))
+    );
+    Ok(())
+}
+
 /// expect: a reel's container follows the streams of its source, and a
 /// recording with embedded cover art is an audio recording.
 /// [P1] Measured on the installed server (round e5): an `.opus` source

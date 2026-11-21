@@ -11,6 +11,8 @@ impl MediaViewer {
     pub(super) fn open_transcript(&mut self, transcript_id: String, cx: &mut Context<Self>) {
         self.transcript = None;
         self.transcript_request.invalidate();
+        self.export_result = None;
+        self.export_request.invalidate();
         self.current_word = None;
         self.selection_mode = false;
         self.selection_anchor = None;
@@ -88,6 +90,8 @@ impl MediaViewer {
     pub(super) fn close_transcript_workspace(&mut self, cx: &mut Context<Self>) {
         self.transcript = None;
         self.transcript_request.invalidate();
+        self.export_result = None;
+        self.export_request.invalidate();
         self.current_word = None;
         self.selection_mode = false;
         self.selection_anchor = None;
@@ -1520,6 +1524,81 @@ impl MediaViewer {
     /// stored layer id: a two-invoke chain under the single edit admission,
     /// ending in the render's display hint (which lands the reel as a
     /// playable asset through the existing ingestion).
+    /// Dispatch a standards export (`web_annotation`, `webvtt`, `otio`) via
+    /// `educt_export` on its own read lifecycle (plan §4 S7, axis 8: never
+    /// competes with `edit_request`).
+    pub(super) fn export_transcript(
+        &mut self,
+        transcript_id: String,
+        format: &'static str,
+        layer_id: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(epoch) = self.export_request.begin(RequestOwner::Export {
+            transcript_id: transcript_id.clone(),
+            format,
+        }) else {
+            return;
+        };
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.export_request
+                .complete(epoch, Err("Media tool runtime unavailable.".to_string()));
+            self.status = Some("Media tool runtime unavailable.".to_string());
+            cx.notify();
+            return;
+        };
+        self.status = Some(format!("Exporting {format}…"));
+        cx.notify();
+        let mut args = serde_json::json!({
+            "transcript_id": transcript_id,
+            "format": format,
+        });
+        if let Some(layer_id) = layer_id {
+            args["layer_id"] = Value::String(layer_id);
+        }
+        let task = invoker.invoke_tool(MEDIA_SERVER, "educt_export", args);
+        cx.spawn(async move |this, cx| {
+            let outcome = match task.await {
+                Ok(text) => Ok(text),
+                Err(error) => Err(format!(
+                    "educt_export ({format}) failed: {}",
+                    error.message()
+                )),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.apply_export_result(epoch, format, outcome, cx);
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn apply_export_result(
+        &mut self,
+        epoch: u64,
+        format: &'static str,
+        result: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.export_request.owns(epoch) {
+            return;
+        }
+        match result.and_then(|raw| parse_export_result(&raw, format)) {
+            Ok(summary) => {
+                self.export_request.complete(epoch, Ok(()));
+                self.status = Some(format!(
+                    "Exported {} → {}",
+                    summary.format, summary.output_path
+                ));
+                self.export_result = Some(summary);
+            }
+            Err(error) => {
+                self.export_request.complete(epoch, Err(error.clone()));
+                self.status = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn compose_workspace_reel(&mut self, mode: ReelComposeMode, cx: &mut Context<Self>) {
         let Some(state) = self.transcript.as_ref() else {
             return;
@@ -4532,6 +4611,60 @@ impl MediaViewer {
                 );
             }
         }
+        let transcript_id_wa = state.transcript_id.clone();
+        let transcript_id_vtt = state.transcript_id.clone();
+        section = section.child(
+            h_flex()
+                .flex_wrap()
+                .gap_3()
+                .child(
+                    div()
+                        .id("media-transcript-export-web-annotation")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Export Web Annotation"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.export_transcript(
+                                transcript_id_wa.clone(),
+                                "web_annotation",
+                                None,
+                                cx,
+                            );
+                        })),
+                )
+                .child(
+                    div()
+                        .id("media-transcript-export-webvtt")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Export WebVTT"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.export_transcript(transcript_id_vtt.clone(), "webvtt", None, cx);
+                        })),
+                ),
+        );
+        if let Some(exported) = self
+            .export_result
+            .as_ref()
+            .filter(|res| matches!(res.format.as_str(), "web_annotation" | "webvtt"))
+        {
+            section = section.child(
+                Label::new(SharedString::from(format!(
+                    "Exported ({}) → {}",
+                    exported.format, exported.output_path
+                )))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+            );
+        }
         section.into_any_element()
     }
 
@@ -4853,6 +4986,43 @@ impl MediaViewer {
                         this.compose_workspace_reel(mode, cx);
                     })),
             );
+        }
+        if affordances.iter().any(|(_, visible)| *visible)
+            || !self.reel_clips.is_empty()
+            || any_included_clip
+        {
+            let transcript_id_otio = state.transcript_id.clone();
+            section = section.child(
+                div()
+                    .id("media-transcript-export-otio")
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Export OTIO"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.export_transcript(transcript_id_otio.clone(), "otio", None, cx);
+                    })),
+            );
+            if let Some(exported) = self
+                .export_result
+                .as_ref()
+                .filter(|res| res.format == "otio")
+            {
+                section = section.child(
+                    Label::new(SharedString::from(format!(
+                        "Exported (otio) → {}",
+                        exported.output_path
+                    )))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
         }
         section.into_any_element()
     }

@@ -1255,6 +1255,34 @@ impl MediaViewer {
                 let mut body = v_flex().gap_2().p_3();
                 if let Some(provenance) = parse_reel_provenance(detail) {
                     body = body.child(Self::kv_row("rendered from transcript", &provenance, cx));
+                    if let Some((transcript_id, edl_layer_id)) = parse_reel_render_target(detail) {
+                        body = body.child(
+                            div()
+                                .id("media-inspector-export-otio")
+                                .cursor_pointer()
+                                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    Label::new(SharedString::from("Export OTIO"))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Default),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.export_transcript(
+                                        transcript_id.clone(),
+                                        "otio",
+                                        edl_layer_id.clone(),
+                                        cx,
+                                    );
+                                })),
+                        );
+                    }
+                    if let Some(exported) = self
+                        .export_result
+                        .as_ref()
+                        .filter(|res| res.format == "otio")
+                    {
+                        body = body.child(Self::kv_row("otio export", &exported.output_path, cx));
+                    }
                 } else {
                     body = body.child(Self::inspector_absent(
                         "No reel provenance — the asset was not rendered from a transcript.",

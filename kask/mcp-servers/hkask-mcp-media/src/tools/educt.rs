@@ -2104,7 +2104,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Publish a durable transcript document with stable export_id and provenance. SRT and mapped corpus text use the timing-aligned working transcript; review_csv derives paragraph-block review flags from the latest speaker layer's stored confidences; unaligned corrected text remains exportable for search with an explicit no-range-mapping degradation. Documents stay outside the playable-media gallery."
+        description = "Publish a durable transcript document with stable export_id and provenance. SRT and WebVTT (word-level karaoke cues) and mapped corpus text use the timing-aligned working transcript; review_csv derives paragraph-block review flags from the latest speaker layer's stored confidences; highlights_csv and web_annotation (W3C Web Annotation JSON with position and quote selectors) anchor to immutable source words; otio serializes a named or latest EDL layer to OpenTimelineIO; unaligned corrected text remains exportable for search with an explicit no-range-mapping degradation. Documents stay outside the playable-media gallery."
     )]
     pub async fn educt_export(
         &self,
