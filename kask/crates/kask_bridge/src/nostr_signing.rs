@@ -581,12 +581,16 @@ pub(crate) fn admit_list(
             "nostr_list payload is required for SignNostrList",
         ));
     };
-    if payload.kind != hkask_nostr_signer::MUTE_LIST_KIND
-        && payload.kind != hkask_nostr_signer::BOOKMARK_LIST_KIND
-    {
+    if !matches!(
+        payload.kind,
+        hkask_nostr_signer::MUTE_LIST_KIND
+            | hkask_nostr_signer::BOOKMARK_LIST_KIND
+            | hkask_nostr_signer::DM_RELAYS_KIND
+            | hkask_nostr_signer::NUTZAP_INFO_KIND
+    ) {
         return Err(refusal(
             "InvalidArgument",
-            "only NIP-51 mute lists (kind 10000) and bookmark lists (kind 10003) are admitted",
+            "only kinds 10000 (mute), 10003 (bookmark), 10050 (NIP-17 DM relays), and 10019 (NIP-61 nutzap info) are admitted",
         ));
     }
     if payload.event_ids_hex.len() + payload.pubkeys_hex.len() > hkask_nostr_signer::MAX_LIST_ITEMS
@@ -848,14 +852,33 @@ pub(crate) fn sign_operation_with_slots(
             hkask_nostr_signer::sign_article(&key, article.created_at, &article.content, &draft)
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
-        NostrSignOperation::List(list) => hkask_nostr_signer::sign_list(
-            &key,
-            list.created_at,
-            list.kind,
-            &list.event_ids_hex,
-            &list.pubkeys_hex,
-        )
-        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::List(list) => match list.kind {
+            hkask_nostr_signer::DM_RELAYS_KIND => {
+                hkask_nostr_signer::sign_dm_relays(&key, list.created_at, &list.relay_urls)
+                    .map_err(|error| {
+                        refusal("InvalidArgument", format!("signing failed: {error}"))
+                    })?
+            }
+            hkask_nostr_signer::NUTZAP_INFO_KIND => {
+                let p2pk = list.p2pk_pubkey_hex.as_deref().unwrap_or("");
+                hkask_nostr_signer::sign_nutzap_info(
+                    &key,
+                    list.created_at,
+                    &list.relay_urls,
+                    &list.mint_urls,
+                    p2pk,
+                )
+                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+            }
+            _ => hkask_nostr_signer::sign_list(
+                &key,
+                list.created_at,
+                list.kind,
+                &list.event_ids_hex,
+                &list.pubkeys_hex,
+            )
+            .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        },
     };
     drop(key);
     serde_json::from_str(&event.to_json()).map_err(|error| {
@@ -1089,26 +1112,57 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                     "the operator did not approve the article; nothing was signed",
                 )
             }
-            NostrSignOperation::List(list) => {
-                let label = if list.kind == hkask_nostr_signer::BOOKMARK_LIST_KIND {
-                    "bookmark list (NIP-51 kind:10003)"
-                } else {
-                    "mute list (NIP-51 kind:10000)"
-                };
-                (
+            NostrSignOperation::List(list) => match list.kind {
+                hkask_nostr_signer::DM_RELAYS_KIND => (
                     format!(
-                        "Publish updated Nostr {label} ({} event(s), {} pubkey(s))?",
-                        list.event_ids_hex.len(),
-                        list.pubkeys_hex.len()
+                        "Publish NIP-17 DM inbox relay list ({} relay(s), kind:10050)?",
+                        list.relay_urls.len()
                     ),
                     format!(
-                        "This replaces your {label} across relays.\nRelays: {}",
+                        "DM inbox relays:\n{}\n\nPublishing to relays: {}",
+                        list.relay_urls.join("\n"),
                         list.relays.join(", ")
                     ),
                     [APPROVE_LABEL, DECLINE_LABEL],
-                    "the operator did not approve the list update; nothing was signed",
-                )
-            }
+                    "the operator did not approve the DM relay list; nothing was signed",
+                ),
+                hkask_nostr_signer::NUTZAP_INFO_KIND => (
+                    format!(
+                        "Publish NIP-61 nutzap info ({} mint(s), {} relay(s), kind:10019)?",
+                        list.mint_urls.len(),
+                        list.relay_urls.len()
+                    ),
+                    format!(
+                        "Mints: {}\nNutzap relays: {}\nP2PK pubkey: {}\nPublishing to relays: {}",
+                        list.mint_urls.join(", "),
+                        list.relay_urls.join(", "),
+                        list.p2pk_pubkey_hex.as_deref().unwrap_or(""),
+                        list.relays.join(", ")
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the nutzap info update; nothing was signed",
+                ),
+                _ => {
+                    let label = if list.kind == hkask_nostr_signer::BOOKMARK_LIST_KIND {
+                        "bookmark list (NIP-51 kind:10003)"
+                    } else {
+                        "mute list (NIP-51 kind:10000)"
+                    };
+                    (
+                        format!(
+                            "Publish updated Nostr {label} ({} event(s), {} pubkey(s))?",
+                            list.event_ids_hex.len(),
+                            list.pubkeys_hex.len()
+                        ),
+                        format!(
+                            "This replaces your {label} across relays.\nRelays: {}",
+                            list.relays.join(", ")
+                        ),
+                        [APPROVE_LABEL, DECLINE_LABEL],
+                        "the operator did not approve the list update; nothing was signed",
+                    )
+                }
+            },
         };
         let answer = cx.update_window(window, |_, window, cx| {
             window.prompt(PromptLevel::Warning, &message, Some(&detail), &buttons, cx)

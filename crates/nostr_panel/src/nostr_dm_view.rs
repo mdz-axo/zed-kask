@@ -8,11 +8,16 @@ use std::collections::BTreeMap;
 use gpui::{
     AnyElement, Context, Entity, Focusable, IntoElement, Render, ScrollHandle, Task, Window,
 };
+use hkask_types::nostr_wire::NOSTR_CLIENT_SERVER;
+use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm::{self, DmMessage, DmThreadSummary};
+use serde_json::json;
+use settings::Settings as _;
 use ui::{Label, LabelSize, WithScrollbar as _, prelude::*};
 use util::ResultExt as _;
 
-use crate::nostr_viewer::{display_text, short_hex, utc_text};
+use crate::nostr_composer::{PUBLISH_LIST_TOOL, parse_publish_receipt, sanitize_untrusted_text};
+use crate::nostr_viewer::{display_text, invoke, short_hex, utc_text};
 
 /// Format a peer chip label using a resolved display name when known, falling
 /// back to a truncated hex pubkey.
@@ -211,6 +216,75 @@ impl NostrDmView {
         }));
     }
 
+    fn publish_dm_relays(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let relays: Vec<String> = KaskSettings::get_global(cx)
+            .nostr
+            .seed_relays
+            .iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| r.starts_with("wss://"))
+            .collect();
+        if relays.is_empty() {
+            self.status = Some((
+                false,
+                "Configure at least one public wss:// seed relay in Settings > Kask > Nostr first."
+                    .into(),
+            ));
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        self.status = Some((
+            true,
+            format!(
+                "Awaiting approval to publish {} DM inbox relay(s) (NIP-17 kind:10050)…",
+                relays.len()
+            ),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PUBLISH_LIST_TOOL,
+            json!({ "kind": 10_050, "relay_urls": relays }),
+        ) {
+            Ok(task) => task,
+            Err(err) => {
+                self.busy = false;
+                self.status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        self._task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.busy = false;
+                this.status = match result {
+                    Ok(raw) => match parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => Some((
+                            true,
+                            format!(
+                                "Published NIP-17 DM relay list (kind:10050 · {} relay(s))",
+                                outcome.receipt().accepted.len()
+                            ),
+                        )),
+                        Ok(_) => Some((
+                            false,
+                            "Publishing DM relay list failed: no relay accepted.".into(),
+                        )),
+                        Err(err) => Some((false, err)),
+                    },
+                    Err(err) => Some((false, sanitize_untrusted_text(&err.to_string()))),
+                };
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
     fn send_dm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
@@ -305,15 +379,29 @@ impl Render for NostrDmView {
                         ),
                     )
                     .child(
-                        div().flex_shrink_0().child(
-                            ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync DMs" })
-                                .label_size(LabelSize::XSmall)
-                                .disabled(busy)
-                                .tooltip(ui::Tooltip::text(
-                                    "Fetch & unwrap NIP-17 kind:1059 gift wraps from seed relays (https://nostr-nips.com/nip-17)",
-                                ))
-                                .on_click(cx.listener(|this, _, _, cx| this.sync_dms(cx))),
-                        ),
+                        h_flex()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(
+                                ui::Button::new("nostr-dm-publish-relays", "DM relays")
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(busy)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Publish configured seed relays as your NIP-17 kind:10050 DM inbox relay list (always prompts)",
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.publish_dm_relays(cx);
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync DMs" })
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(busy)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Fetch & unwrap NIP-17 kind:1059 gift wraps from seed relays (https://nostr-nips.com/nip-17)",
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| this.sync_dms(cx))),
+                            ),
                     ),
             )
             .child(

@@ -249,10 +249,10 @@ pub struct NostrArticleWire {
     pub relays: Vec<String>,
 }
 
-/// Wire payload for requesting an editor-signed NIP-51 replaceable list:
-/// `kind: 10000` (Mute list) or `kind: 10003` (Bookmark list)
-/// (<https://nostr-nips.com/nip-51>). Gated by `host/sign_nostr_note` and NEVER
-/// bypassed by `autopublish`.
+/// Wire payload for requesting an editor-signed replaceable list:
+/// `kind: 10000` (NIP-51 Mute list), `kind: 10003` (NIP-51 Bookmark list),
+/// `kind: 10050` (NIP-17 DM inbox relay list), or `kind: 10019` (NIP-61 Nutzap
+/// info). Gated by `host/sign_nostr_note` and NEVER bypassed by `autopublish`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NostrListWire {
     pub created_at: u64,
@@ -261,6 +261,12 @@ pub struct NostrListWire {
     pub event_ids_hex: Vec<String>,
     #[serde(default)]
     pub pubkeys_hex: Vec<String>,
+    #[serde(default)]
+    pub relay_urls: Vec<String>,
+    #[serde(default)]
+    pub mint_urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p2pk_pubkey_hex: Option<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }

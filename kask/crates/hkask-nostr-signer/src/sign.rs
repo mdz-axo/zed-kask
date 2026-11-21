@@ -48,6 +48,12 @@ pub const MUTE_LIST_KIND: u16 = 10_000;
 /// Bookmark list kind (NIP-51: <https://nostr-nips.com/nip-51>).
 pub const BOOKMARK_LIST_KIND: u16 = 10_003;
 
+/// DM inbox relay list kind (NIP-17: <https://nostr-nips.com/nip-17>).
+pub const DM_RELAYS_KIND: u16 = 10_050;
+
+/// Nutzap info kind (NIP-61: <https://nostr-nips.com/nip-61>).
+pub const NUTZAP_INFO_KIND: u16 = 10_019;
+
 /// Maximum entries in one NIP-51 list (`kind: 10000` or `kind: 10003`).
 pub const MAX_LIST_ITEMS: usize = 500;
 
@@ -566,6 +572,85 @@ pub fn sign_list(
         }
     }
     sign_verified_parts(key, kind, created_at, tags, "")
+}
+
+/// Sign a NIP-17 `kind: 10050` DM inbox relay list (<https://nostr-nips.com/nip-17>).
+pub fn sign_dm_relays(
+    key: &SecretKey,
+    created_at: u64,
+    relay_urls: &[String],
+) -> Result<Event, SignError> {
+    if relay_urls.is_empty() || relay_urls.len() > 16 {
+        return Err(SignError::InvalidList {
+            reason: "kind 10050 DM relay list must name between 1 and 16 wss:// relays",
+        });
+    }
+    let mut tags = Vec::with_capacity(relay_urls.len());
+    let mut seen = std::collections::HashSet::new();
+    for raw in relay_urls {
+        let url = raw.trim();
+        if !url.starts_with("wss://") || url.len() > 256 {
+            return Err(SignError::InvalidList {
+                reason: "every DM relay URL must start with wss://",
+            });
+        }
+        if seen.insert(url.to_string()) {
+            tags.push(vec!["relay".to_string(), url.to_string()]);
+        }
+    }
+    sign_verified_parts(key, DM_RELAYS_KIND, created_at, tags, "")
+}
+
+/// Sign a NIP-61 `kind: 10019` nutzap info event (<https://nostr-nips.com/nip-61>).
+pub fn sign_nutzap_info(
+    key: &SecretKey,
+    created_at: u64,
+    relay_urls: &[String],
+    mint_urls: &[String],
+    p2pk_pubkey_hex: &str,
+) -> Result<Event, SignError> {
+    if relay_urls.is_empty() || relay_urls.len() > 16 {
+        return Err(SignError::InvalidList {
+            reason: "kind 10019 nutzap info must name between 1 and 16 wss:// relays",
+        });
+    }
+    if mint_urls.is_empty() || mint_urls.len() > 8 {
+        return Err(SignError::InvalidList {
+            reason: "kind 10019 nutzap info must name between 1 and 8 https:// mints",
+        });
+    }
+    if !is_lower_sha256_hex(p2pk_pubkey_hex) {
+        return Err(SignError::InvalidList {
+            reason: "kind 10019 p2pk_pubkey_hex must be 64 lowercase hex characters",
+        });
+    }
+    let mut tags = Vec::with_capacity(relay_urls.len() + mint_urls.len() + 1);
+    let mut seen_relays = std::collections::HashSet::new();
+    for raw in relay_urls {
+        let url = raw.trim();
+        if !url.starts_with("wss://") || url.len() > 256 {
+            return Err(SignError::InvalidList {
+                reason: "every nutzap relay URL must start with wss://",
+            });
+        }
+        if seen_relays.insert(url.to_string()) {
+            tags.push(vec!["relay".to_string(), url.to_string()]);
+        }
+    }
+    let mut seen_mints = std::collections::HashSet::new();
+    for raw in mint_urls {
+        let url = raw.trim();
+        if !url.starts_with("https://") || url.len() > 256 {
+            return Err(SignError::InvalidList {
+                reason: "every nutzap mint URL must start with https://",
+            });
+        }
+        if seen_mints.insert(url.to_string()) {
+            tags.push(vec!["mint".to_string(), url.to_string()]);
+        }
+    }
+    tags.push(vec!["pubkey".to_string(), p2pk_pubkey_hex.to_string()]);
+    sign_verified_parts(key, NUTZAP_INFO_KIND, created_at, tags, "")
 }
 
 /// Sign a NIP-09 `kind: 5` event deletion request (<https://nostr-nips.com/nip-09>)
@@ -1214,6 +1299,43 @@ mod tests {
             sign_list(&key, 1_700_000_000, 10_001, &[], &[]),
             Err(SignError::InvalidList { .. })
         ));
+    }
+
+    #[test]
+    fn sign_dm_relays_and_nutzap_info_emit_verified_kinds_10050_and_10019() {
+        let key = SecretKey::from_bytes(&[11u8; 32]).expect("valid test key");
+        let dm = sign_dm_relays(
+            &key,
+            1_700_000_000,
+            &["wss://nos.lol".into(), "wss://nostr.mom".into()],
+        )
+        .expect("10050 signs");
+        assert_eq!(dm.kind(), DM_RELAYS_KIND);
+        Event::from_json(&dm.to_json()).expect("10050 verifies");
+        assert_eq!(
+            dm.tags(),
+            &[
+                vec!["relay".to_string(), "wss://nos.lol".to_string()],
+                vec!["relay".to_string(), "wss://nostr.mom".to_string()],
+            ]
+        );
+
+        let nz = sign_nutzap_info(
+            &key,
+            1_700_000_000,
+            &["wss://nos.lol".into()],
+            &["https://mint.example.com".into()],
+            &"cc".repeat(32),
+        )
+        .expect("10019 signs");
+        assert_eq!(nz.kind(), NUTZAP_INFO_KIND);
+        Event::from_json(&nz.to_json()).expect("10019 verifies");
+        assert!(
+            nz.tags()
+                .iter()
+                .any(|t| t == &["mint", "https://mint.example.com"])
+        );
+        assert!(nz.tags().iter().any(|t| t == &["pubkey", &"cc".repeat(32)]));
     }
 
     #[test]

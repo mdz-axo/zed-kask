@@ -251,18 +251,31 @@ pub struct PublishArticleRequest {
     pub hashtags: Option<Vec<String>>,
 }
 
-/// Request for `nostr_publish_list` (NIP-51 `kind: 10000` Mute list or `kind: 10003` Bookmark list).
+/// Request for `nostr_publish_list`:
+/// - `kind: 10000` (NIP-51 Mute list) — uses `pubkeys` / `event_ids`
+/// - `kind: 10003` (NIP-51 Bookmark list) — uses `event_ids` / `pubkeys`
+/// - `kind: 10050` (NIP-17 DM inbox relay list) — uses `relay_urls` (`wss://`)
+/// - `kind: 10019` (NIP-61 Nutzap info) — uses `relay_urls`, `mint_urls`, `p2pk_pubkey`
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PublishListRequest {
-    /// List kind: `10000` (Mute list) or `10003` (Bookmark list). Any other kind is refused.
+    /// List kind: `10000` (Mute), `10003` (Bookmark), `10050` (NIP-17 DM relays), or `10019` (NIP-61 Nutzap info).
     pub kind: u16,
-    /// Event IDs (`note`, `nevent`, or 64-char hex) stored as `e` tags (e.g. bookmarks).
+    /// Event IDs (`note`, `nevent`, or 64-char hex) stored as `e` tags (kinds 10000/10003).
     #[serde(default)]
     pub event_ids: Option<Vec<String>>,
-    /// Author pubkeys (`npub`, `nprofile`, or 64-char hex) stored as `p` tags (e.g. muted authors).
+    /// Author pubkeys (`npub`, `nprofile`, or 64-char hex) stored as `p` tags (kinds 10000/10003).
     #[serde(default)]
     pub pubkeys: Option<Vec<String>>,
+    /// Public `wss://` relay URLs stored as `relay` tags (kinds 10050/10019).
+    #[serde(default)]
+    pub relay_urls: Option<Vec<String>>,
+    /// Public `https://` Cashu mint URLs stored as `mint` tags (kind 10019).
+    #[serde(default)]
+    pub mint_urls: Option<Vec<String>>,
+    /// P2PK receive pubkey (`npub`, `nprofile`, or 64-char hex) stored as `pubkey` tag (kind 10019).
+    #[serde(default)]
+    pub p2pk_pubkey: Option<String>,
 }
 
 fn npub_of(public_key: &PublicKey) -> String {
@@ -2279,16 +2292,16 @@ impl NostrClientServer {
     }
 
     #[tool(
-        description = "Publish an updated NIP-51 replaceable list: kind 10000 (Mute list) or kind 10003 (Bookmark list) (https://nostr-nips.com/nip-51). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because replaceable lists overwrite prior state."
+        description = "Publish an updated replaceable Nostr list: kind 10000 (NIP-51 Mute list), kind 10003 (NIP-51 Bookmark list), kind 10050 (NIP-17 DM inbox relay list), or kind 10019 (NIP-61 Nutzap info). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish)."
     )]
     pub async fn nostr_publish_list(
         &self,
         Parameters(request): Parameters<PublishListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "nostr_publish_list", async {
-            if request.kind != 10_000 && request.kind != 10_003 {
+            if !matches!(request.kind, 10_000 | 10_003 | 10_050 | 10_019) {
                 return Err(McpToolError::invalid_argument(
-                    "kind must be 10000 (mute list) or 10003 (bookmark list)",
+                    "kind must be 10000 (mute), 10003 (bookmark), 10050 (DM relays), or 10019 (nutzap info)",
                 ));
             }
             let mut event_ids_hex = Vec::new();
@@ -2309,6 +2322,28 @@ impl NostrClientServer {
                     pubkeys_hex.push(hex);
                 }
             }
+            let relay_urls: Vec<String> = request
+                .relay_urls
+                .unwrap_or_default()
+                .into_iter()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+                .collect();
+            let mint_urls: Vec<String> = request
+                .mint_urls
+                .unwrap_or_default()
+                .into_iter()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+                .collect();
+            let p2pk_pubkey_hex = match request.p2pk_pubkey.as_deref() {
+                Some(raw) => Some(
+                    identifiers::parse_public_key(raw)
+                        .map_err(|error| refused("p2pk_pubkey", error))?
+                        .to_hex(),
+                ),
+                None => None,
+            };
             if event_ids_hex.len() + pubkeys_hex.len() > 500 {
                 return Err(McpToolError::invalid_argument(
                     "list exceeds maximum of 500 entries",
@@ -2338,6 +2373,9 @@ impl NostrClientServer {
                 kind: request.kind,
                 event_ids_hex,
                 pubkeys_hex,
+                relay_urls,
+                mint_urls,
+                p2pk_pubkey_hex,
                 relays: targets,
             };
             let signed = ipc.sign_nostr_list(wire).await.map_err(|e| {
