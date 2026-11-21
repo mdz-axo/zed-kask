@@ -58,9 +58,10 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::nostr_composer::{
-    PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL, PUBLISH_REACTION_TOOL,
-    PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext, WALLET_RECEIVE_ECASH_TOOL,
-    WALLET_STATUS_TOOL, parse_publish_receipt, parse_wallet_status, sanitize_untrusted_text,
+    PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL, PUBLISH_PROFILE_TOOL,
+    PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext,
+    WALLET_RECEIVE_ECASH_TOOL, WALLET_STATUS_TOOL, parse_publish_receipt, parse_wallet_status,
+    sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -184,6 +185,15 @@ pub struct NostrViewer {
     probe_request: Request,
     /// Status feedback for publishing NIP-61 `kind: 10019` nutzap info.
     nutzap_info_status: Option<(bool, String)>,
+    /// Opt-in NIP-05 verification results keyed by author hex pubkey: `(verified, reason)`.
+    nip05_verified: BTreeMap<String, (bool, String)>,
+    /// Collapsible NIP-01 `kind: 0` self-profile editor state in the Relay tab.
+    profile_editor_open: bool,
+    profile_name_editor: Option<Entity<editor::Editor>>,
+    profile_about_editor: Option<Entity<editor::Editor>>,
+    profile_nip05_editor: Option<Entity<editor::Editor>>,
+    profile_lud16_editor: Option<Entity<editor::Editor>>,
+    profile_publish_status: Option<(bool, String)>,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -491,6 +501,13 @@ impl NostrViewer {
             seed_relay_probes: Vec::new(),
             probe_request: Request::new(),
             nutzap_info_status: None,
+            nip05_verified: BTreeMap::new(),
+            profile_editor_open: false,
+            profile_name_editor: None,
+            profile_about_editor: None,
+            profile_nip05_editor: None,
+            profile_lud16_editor: None,
+            profile_publish_status: None,
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -1804,6 +1821,268 @@ impl NostrViewer {
         cx.notify();
     }
 
+    /// Explicitly verify an author's claimed NIP-05 address via
+    /// `nostr_profile(verify_nip05: true)` (opt-in HTTPS `/.well-known/nostr.json`).
+    fn verify_author_nip05(
+        &mut self,
+        event_id: String,
+        author_hex: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.reaction_feedback = Some((
+            event_id.clone(),
+            true,
+            "Verifying NIP-05 against domain /.well-known/nostr.json…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PROFILE_TOOL,
+            json!({ "authors": [author_hex], "verify_nip05": true }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(PROFILE_TOOL, task.await);
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(content) => {
+                        let nip05_obj = content
+                            .get("profiles")
+                            .and_then(Value::as_array)
+                            .and_then(|arr| arr.first())
+                            .and_then(|p| p.get("nip05"));
+                        let verified = nip05_obj
+                            .and_then(|n| n.get("verified"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let reason = nip05_obj
+                            .and_then(|n| n.get("reason"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("NIP-05 check returned no result")
+                            .to_string();
+                        this.nip05_verified
+                            .insert(author_hex, (verified, reason.clone()));
+                        this.reaction_feedback = Some((
+                            event_id,
+                            verified,
+                            if verified {
+                                format!("NIP-05 verified: {reason}")
+                            } else {
+                                format!("NIP-05 not verified: {reason}")
+                            },
+                        ));
+                    }
+                    Err(err) => {
+                        this.reaction_feedback = Some((event_id, false, err));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn ensure_profile_editors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (
+        Entity<editor::Editor>,
+        Entity<editor::Editor>,
+        Entity<editor::Editor>,
+        Entity<editor::Editor>,
+    ) {
+        let mk = |slot: &mut Option<Entity<editor::Editor>>,
+                  placeholder: &'static str,
+                  window: &mut Window,
+                  cx: &mut Context<Self>| {
+            if let Some(existing) = slot.as_ref() {
+                existing.clone()
+            } else {
+                let ed = cx.new(|cx| {
+                    let mut e = editor::Editor::single_line(window, cx);
+                    e.set_placeholder_text(placeholder, window, cx);
+                    e
+                });
+                *slot = Some(ed.clone());
+                ed
+            }
+        };
+        let name_ed = mk(&mut self.profile_name_editor, "Name / handle…", window, cx);
+        let about_ed = mk(
+            &mut self.profile_about_editor,
+            "About / short bio…",
+            window,
+            cx,
+        );
+        let nip05_ed = mk(
+            &mut self.profile_nip05_editor,
+            "NIP-05 address (user@domain)…",
+            window,
+            cx,
+        );
+        let lud16_ed = mk(
+            &mut self.profile_lud16_editor,
+            "Lightning Address (user@domain, lud16)…",
+            window,
+            cx,
+        );
+        (name_ed, about_ed, nip05_ed, lud16_ed)
+    }
+
+    fn load_own_profile_into_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mine) = self.my_pubkey_hex(cx) else {
+            self.profile_publish_status = Some((
+                false,
+                "Configure your Nostr npub in Settings > Kask > Nostr first.".to_string(),
+            ));
+            cx.notify();
+            return;
+        };
+        let (name_ed, about_ed, nip05_ed, lud16_ed) = self.ensure_profile_editors(window, cx);
+        self.profile_publish_status = Some((true, "Loading current kind:0 profile…".to_string()));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PROFILE_TOOL,
+            json!({ "authors": [mine] }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.profile_publish_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        let window_handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let result = content_of(PROFILE_TOOL, task.await);
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(content) => {
+                        let fields = content
+                            .get("profiles")
+                            .and_then(Value::as_array)
+                            .and_then(|arr| arr.first())
+                            .and_then(|p| p.get("fields"))
+                            .and_then(Value::as_object);
+                        if let Some(fields) = fields {
+                            let get_str = |k: &str| {
+                                fields
+                                    .get(k)
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string()
+                            };
+                            let name_v = get_str("name");
+                            let about_v = get_str("about");
+                            let nip05_v = get_str("nip05");
+                            let lud16_v = get_str("lud16");
+                            window_handle
+                                .update(cx, |_, window, cx| {
+                                    name_ed.update(cx, |e, cx| e.set_text(name_v, window, cx));
+                                    about_ed.update(cx, |e, cx| e.set_text(about_v, window, cx));
+                                    nip05_ed.update(cx, |e, cx| e.set_text(nip05_v, window, cx));
+                                    lud16_ed.update(cx, |e, cx| e.set_text(lud16_v, window, cx));
+                                })
+                                .log_err();
+                            this.profile_publish_status =
+                                Some((true, "Loaded current kind:0 profile fields.".to_string()));
+                        } else {
+                            this.profile_publish_status = Some((
+                                true,
+                                "No existing kind:0 profile found on configured relays."
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        this.profile_publish_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn publish_own_profile(&mut self, cx: &mut Context<Self>) {
+        let read_opt = |ed: &Option<Entity<editor::Editor>>| {
+            ed.as_ref()
+                .map(|e| e.read(cx).text(cx).trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        let mut args = serde_json::Map::new();
+        for (k, v) in [
+            ("name", read_opt(&self.profile_name_editor)),
+            ("about", read_opt(&self.profile_about_editor)),
+            ("nip05", read_opt(&self.profile_nip05_editor)),
+            ("lud16", read_opt(&self.profile_lud16_editor)),
+        ] {
+            if let Some(val) = v {
+                args.insert(k.to_string(), json!(val));
+            }
+        }
+        if args.is_empty() {
+            self.profile_publish_status = Some((
+                false,
+                "Enter at least one profile field before publishing kind:0.".to_string(),
+            ));
+            cx.notify();
+            return;
+        }
+        self.profile_publish_status = Some((
+            true,
+            "Awaiting editor approval to publish NIP-01 kind:0 profile…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PUBLISH_PROFILE_TOOL,
+            Value::Object(args),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.profile_publish_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                this.profile_publish_status = match res {
+                    Ok(raw) => match parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => Some((
+                            true,
+                            format!(
+                                "Published NIP-01 profile (kind:0 · {} relay(s))",
+                                outcome.receipt().accepted.len()
+                            ),
+                        )),
+                        Ok(_) => Some((
+                            false,
+                            "Publishing kind:0 profile failed: no relay accepted.".to_string(),
+                        )),
+                        Err(err) => Some((false, err)),
+                    },
+                    Err(err) => Some((false, sanitize_untrusted_text(&err.to_string()))),
+                };
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     /// Publish the operator's NIP-61 `kind: 10019` nutzap receiving info
     /// (`relay_urls`, `mint_urls`, and the wallet's seed-derived `p2pk_pubkey`).
     /// Always prompts in the editor.
@@ -2409,6 +2688,25 @@ impl NostrViewer {
                         ),
                     )
                     .when_some(nip05, |el, nip05| {
+                        let verified_state = self.nip05_verified.get(&row.event.author).cloned();
+                        let (badge_text, badge_color, tip) = match verified_state {
+                            Some((true, _)) => (
+                                format!("✓ {}", display_text(&nip05)),
+                                Color::Success,
+                                "NIP-05 verified against domain /.well-known/nostr.json".to_string(),
+                            ),
+                            Some((false, reason)) => (
+                                format!("! {}", display_text(&nip05)),
+                                Color::Warning,
+                                format!("NIP-05 verification failed: {reason}"),
+                            ),
+                            None => (
+                                display_text(&nip05).to_string(),
+                                Color::Hint,
+                                "NIP-05 address claimed by author (unverified — verify in detail … menu)"
+                                    .to_string(),
+                            ),
+                        };
                         el.child(
                             div()
                                 .id(("nostr-row-nip05", ix))
@@ -2418,13 +2716,11 @@ impl NostrViewer {
                                 .px_1()
                                 .border_1()
                                 .border_color(cx.theme().colors().border_variant)
-                                .tooltip(ui::Tooltip::text(
-                                    "NIP-05 address claimed by author (unverified)",
-                                ))
+                                .tooltip(ui::Tooltip::text(tip))
                                 .child(
-                                    Label::new(display_text(&nip05))
+                                    Label::new(badge_text)
                                         .size(LabelSize::XSmall)
-                                        .color(Color::Hint)
+                                        .color(badge_color)
                                         .truncate(),
                                 ),
                         )
@@ -3088,6 +3384,11 @@ impl NostrViewer {
                         let viewer = cx.weak_entity();
                         let copy_content = event.content.clone();
                         let copy_id = event.id.clone();
+                        let nip05_claimed = names
+                            .get(event.author.as_str())
+                            .and_then(|p| p.nip05.clone());
+                        let verify_nip05_event_id = event.id.clone();
+                        let verify_nip05_author = event.author.clone();
                         let dm_author_hex = event.author.clone();
                         let dm_author_name = name.map(str::to_string);
                         let steer_prompt = format_steer_research_prompt(
@@ -3122,6 +3423,9 @@ impl NostrViewer {
                                 let viewer = viewer.clone();
                                 let copy_content = copy_content.clone();
                                 let copy_id = copy_id.clone();
+                                let nip05_claimed = nip05_claimed.clone();
+                                let verify_nip05_event_id = verify_nip05_event_id.clone();
+                                let verify_nip05_author = verify_nip05_author.clone();
                                 let dm_author_hex = dm_author_hex.clone();
                                 let dm_author_name = dm_author_name.clone();
                                 let steer_prompt = steer_prompt.clone();
@@ -3130,6 +3434,26 @@ impl NostrViewer {
                                 let mute_event_id = mute_event_id.clone();
                                 let mute_author_hex = mute_author_hex.clone();
                                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    if let Some(nip05) = nip05_claimed.clone() {
+                                        let viewer = viewer.clone();
+                                        let ev_id = verify_nip05_event_id.clone();
+                                        let author = verify_nip05_author.clone();
+                                        menu = menu.entry(
+                                            format!("Verify NIP-05 ({})", display_text(&nip05)),
+                                            None,
+                                            move |_, cx| {
+                                                viewer
+                                                    .update(cx, |this, cx| {
+                                                        this.verify_author_nip05(
+                                                            ev_id.clone(),
+                                                            author.clone(),
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .log_err();
+                                            },
+                                        );
+                                    }
                                     menu = menu
                                         .entry("Quote note (NIP-10)", None, {
                                             let viewer = viewer.clone();
@@ -4285,7 +4609,13 @@ impl NostrViewer {
         .detach();
     }
 
-    fn render_relay(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_relay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let profile_editors = if self.profile_editor_open {
+            Some(self.ensure_profile_editors(window, cx))
+        } else {
+            None
+        };
+        let profile_open = self.profile_editor_open;
         let request = Self::request_line(&self.relay_request, "Reading the local relay…");
         let Some(reading) = &self.relay else {
             return v_flex()
@@ -4344,7 +4674,85 @@ impl NostrViewer {
                                 "Publish your wallet's NIP-61 P2PK key, allowlisted mints, and seed relays (kind:10019; always prompts)",
                             ))
                             .on_click(cx.listener(|this, _, _, cx| this.publish_nutzap_info(cx))),
+                    )
+                    .child(
+                        ui::Button::new(
+                            "nostr-toggle-profile-editor",
+                            if profile_open {
+                                "▾ Hide Profile (kind:0)"
+                            } else {
+                                "▸ Edit Profile (kind:0)"
+                            },
+                        )
+                        .label_size(LabelSize::XSmall)
+                        .toggle_state(profile_open)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.profile_editor_open = !this.profile_editor_open;
+                            cx.notify();
+                        })),
                     ),
+            )
+            .when_some(
+                profile_editors,
+                |el, (name_ed, about_ed, nip05_ed, lud16_ed)| {
+                    el.child(
+                        v_flex()
+                            .w_full()
+                            .p_2()
+                            .gap_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .bg(cx.theme().colors().elevated_surface_background)
+                            .child(Self::line(
+                                "NIP-01 kind:0 profile metadata (always prompts in editor)",
+                                Color::Hint,
+                            ))
+                            .children([name_ed, about_ed, nip05_ed, lud16_ed].into_iter().map(
+                                |ed| {
+                                    div()
+                                        .w_full()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(ed)
+                                },
+                            ))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .flex_wrap()
+                                    .child(
+                                        ui::Button::new("nostr-profile-load", "Load current")
+                                            .label_size(LabelSize::XSmall)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.load_own_profile_into_editors(window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        ui::Button::new(
+                                            "nostr-profile-publish",
+                                            "Publish Profile (kind:0)",
+                                        )
+                                        .style(ui::ButtonStyle::Filled)
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.publish_own_profile(cx);
+                                        })),
+                                    ),
+                            )
+                            .when_some(self.profile_publish_status.as_ref(), |col, (ok, msg)| {
+                                col.child(Self::line(
+                                    display_text(msg),
+                                    if *ok { Color::Muted } else { Color::Error },
+                                ))
+                            }),
+                    )
+                },
             )
             .children(request)
             .when_some(self.nutzap_info_status.as_ref(), |el, (ok, msg)| {

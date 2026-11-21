@@ -9,6 +9,9 @@ use zeroize::Zeroizing;
 
 use crate::secret::SecretKey;
 
+/// Profile metadata kind (NIP-01: <https://nostr-nips.com/nip-01>).
+pub const PROFILE_KIND: u16 = 0;
+
 /// Short text note kind (NIP-01: <https://nostr-nips.com/nip-01>).
 pub const NOTE_KIND: u16 = 1;
 
@@ -92,6 +95,9 @@ pub enum SignError {
     /// The kind is not [`NOTE_KIND`]. Refused before the key is used.
     #[error("kind {kind} is not signed here; only kind 1 notes are")]
     KindNotAllowed { kind: u16 },
+    /// A NIP-01 `kind: 0` profile metadata request violated its field invariants.
+    #[error("invalid profile metadata: {reason}")]
+    InvalidProfile { reason: &'static str },
     /// An `imeta` attachment violated NIP-92's shape invariants.
     #[error("invalid media attachment: {reason}")]
     InvalidAttachment { reason: &'static str },
@@ -235,6 +241,120 @@ fn sign_verified_parts(
         signature,
     )
     .map_err(|_| SignError::Signature)
+}
+
+/// Validated NIP-01 `kind: 0` profile metadata fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProfileMetadata {
+    pub name: Option<String>,
+    pub display_name: Option<String>,
+    pub about: Option<String>,
+    pub picture: Option<String>,
+    pub website: Option<String>,
+    pub nip05: Option<String>,
+    pub lud16: Option<String>,
+}
+
+fn json_escape_str(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 2);
+    out.push('"');
+    for ch in input.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn is_valid_handle_address(value: &str) -> bool {
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && domain.contains('.')
+        && !value.chars().any(char::is_whitespace)
+        && !domain.contains('/')
+}
+
+/// Sign a NIP-01 `kind: 0` replaceable profile metadata event.
+pub fn sign_profile(
+    key: &SecretKey,
+    created_at: u64,
+    meta: &ProfileMetadata,
+) -> Result<Event, SignError> {
+    let mut entries: Vec<(&'static str, String)> = Vec::new();
+    let mut push_text =
+        |field: &'static str, raw: Option<&str>, max_len: usize| -> Result<(), SignError> {
+            if let Some(val) = raw.map(str::trim).filter(|s| !s.is_empty()) {
+                if val.chars().count() > max_len {
+                    return Err(SignError::InvalidProfile {
+                        reason: "profile field exceeds maximum character length",
+                    });
+                }
+                entries.push((field, val.to_string()));
+            }
+            Ok(())
+        };
+    push_text("name", meta.name.as_deref(), 200)?;
+    push_text("display_name", meta.display_name.as_deref(), 200)?;
+    push_text("about", meta.about.as_deref(), 2_000)?;
+
+    for (field, raw) in [
+        ("picture", meta.picture.as_deref()),
+        ("website", meta.website.as_deref()),
+    ] {
+        if let Some(val) = raw.map(str::trim).filter(|s| !s.is_empty()) {
+            if val.chars().count() > 500
+                || !val.starts_with("https://")
+                || val.chars().any(char::is_whitespace)
+            {
+                return Err(SignError::InvalidProfile {
+                    reason: "picture and website must be clean https:// URLs (<=500 chars)",
+                });
+            }
+            entries.push((field, val.to_string()));
+        }
+    }
+    for (field, raw) in [
+        ("nip05", meta.nip05.as_deref()),
+        ("lud16", meta.lud16.as_deref()),
+    ] {
+        if let Some(val) = raw.map(str::trim).filter(|s| !s.is_empty()) {
+            if val.chars().count() > 256 || !is_valid_handle_address(val) {
+                return Err(SignError::InvalidProfile {
+                    reason: "nip05 and lud16 must be valid user@domain addresses",
+                });
+            }
+            entries.push((field, val.to_string()));
+        }
+    }
+    if entries.is_empty() {
+        return Err(SignError::InvalidProfile {
+            reason: "at least one profile metadata field must be provided",
+        });
+    }
+    let mut content = String::from("{");
+    for (ix, (k, v)) in entries.iter().enumerate() {
+        if ix > 0 {
+            content.push(',');
+        }
+        content.push_str(&json_escape_str(k));
+        content.push(':');
+        content.push_str(&json_escape_str(v));
+    }
+    content.push('}');
+    sign_verified_parts(key, PROFILE_KIND, created_at, Vec::new(), &content)
 }
 
 /// Sign one untagged event with `key` and return it verified.
@@ -1299,6 +1419,57 @@ mod tests {
             sign_list(&key, 1_700_000_000, 10_001, &[], &[]),
             Err(SignError::InvalidList { .. })
         ));
+    }
+
+    #[test]
+    fn sign_profile_emits_verified_nip01_kind_0_and_validates_fields() {
+        let key = SecretKey::from_bytes(&[12u8; 32]).expect("valid test key");
+        // Empty profile rejected
+        assert!(matches!(
+            sign_profile(&key, 1_700_000_000, &ProfileMetadata::default()),
+            Err(SignError::InvalidProfile { .. })
+        ));
+        // Non-https website rejected
+        assert!(matches!(
+            sign_profile(
+                &key,
+                1_700_000_000,
+                &ProfileMetadata {
+                    website: Some("http://insecure.example".into()),
+                    ..Default::default()
+                }
+            ),
+            Err(SignError::InvalidProfile { .. })
+        ));
+        // Bad NIP-05 rejected
+        assert!(matches!(
+            sign_profile(
+                &key,
+                1_700_000_000,
+                &ProfileMetadata {
+                    nip05: Some("not-an-address".into()),
+                    ..Default::default()
+                }
+            ),
+            Err(SignError::InvalidProfile { .. })
+        ));
+        // Valid profile signs and verifies
+        let ev = sign_profile(
+            &key,
+            1_700_000_000,
+            &ProfileMetadata {
+                name: Some("alice".into()),
+                about: Some("Researcher\n\"quoted\"".into()),
+                nip05: Some("alice@example.com".into()),
+                lud16: Some("alice@getalby.com".into()),
+                ..Default::default()
+            },
+        )
+        .expect("kind 0 signs");
+        assert_eq!(ev.kind(), PROFILE_KIND);
+        Event::from_json(&ev.to_json()).expect("kind 0 verifies");
+        assert!(ev.content().contains("\"name\":\"alice\""));
+        assert!(ev.content().contains("\"nip05\":\"alice@example.com\""));
     }
 
     #[test]

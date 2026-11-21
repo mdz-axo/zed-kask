@@ -115,7 +115,7 @@ pub fn build_blossom_http_client(
         .map_err(|err| McpToolError::unavailable(format!("HTTP client init failed: {err}")))
 }
 
-async fn read_response_bytes_bounded(
+pub(crate) async fn read_response_bytes_bounded(
     mut resp: reqwest::Response,
     max_bytes: u64,
 ) -> Result<Vec<u8>, BlobDownloadError> {

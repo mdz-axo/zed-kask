@@ -241,9 +241,9 @@ fn steer_system_prompt() -> SharedString {
          is read. With the autopublish setting on (off by default), approval is \
          removed ONLY for notes, reactions, replies/comments, reposts, and \
          Blossom upload auth — deletions (kind 5), follow lists (kind 3), \
-         articles (kind 30023), replaceable lists (kinds 10000/10003/10050/10019), \
-         and zaps/nutzaps (kinds 9734/9321) ALWAYS require explicit editor \
-         confirmation. Never say that anything was posted unless the publishing \
+         articles (kind 30023), profile metadata (kind 0), replaceable lists \
+         (kinds 10000/10003/10050/10019), and zaps/nutzaps (kinds 9734/9321) \
+         ALWAYS require explicit editor confirmation. Never say that anything was posted unless the publishing \
          tool returned the signed event, and report each relay's answer. The key \
          never leaves the editor: no tool holds one, and key custody is the \
          operator's decision.\n\
@@ -423,8 +423,8 @@ mod tests {
         let tools = all_tool_names();
         assert_eq!(
             tools.len(),
-            26,
-            "19 client tools, 4 relay tools, and 3 Blossom tools"
+            27,
+            "20 client tools, 4 relay tools, and 3 Blossom tools"
         );
         for tool in tools {
             assert!(prompt.contains(tool), "the prompt never names `{tool}`");
@@ -467,6 +467,7 @@ mod tests {
             "nostr_publish_follows",
             "nostr_publish_list",
             "nostr_publish_note",
+            "nostr_publish_profile",
             "nostr_publish_reaction",
             "nostr_publish_reply",
             "nostr_publish_repost",

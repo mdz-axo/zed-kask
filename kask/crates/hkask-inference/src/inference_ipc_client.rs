@@ -933,6 +933,23 @@ impl InferenceIpcClient {
         }
     }
 
+    pub async fn sign_nostr_profile(
+        &self,
+        payload: hkask_types::nostr_wire::NostrProfileWire,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::SignNostrProfile;
+        let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            nostr_profile: Some(payload),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => Ok(event),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
     /// Ask the editor to sign a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list.
     /// Gated by `host/sign_nostr_note` and always requires native confirmation.
     pub async fn sign_nostr_list(

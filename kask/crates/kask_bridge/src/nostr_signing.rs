@@ -21,8 +21,8 @@ use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
     NostrArticleWire, NostrDeletionWire, NostrFollowsWire, NostrListWire, NostrMediaAttachment,
-    NostrNutzapWire, NostrQuoteWire, NostrReactionWire, NostrReplyWire, NostrRepostWire,
-    NostrZapRequestWire,
+    NostrNutzapWire, NostrProfileWire, NostrQuoteWire, NostrReactionWire, NostrReplyWire,
+    NostrRepostWire, NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -70,6 +70,8 @@ pub(crate) enum NostrSignOperation {
     Article(NostrArticleWire),
     /// Sign a NIP-51 `kind: 10000` (mute) or `kind: 10003` (bookmark) list (NEVER bypassed by `autopublish`).
     List(NostrListWire),
+    /// Sign a NIP-01 `kind: 0` profile metadata event (NEVER bypassed by `autopublish`).
+    Profile(NostrProfileWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -530,6 +532,43 @@ pub(crate) fn admit_follows(
     Ok(NostrSignOperation::Follows(payload.clone()))
 }
 
+/// Admit a NIP-01 `kind: 0` profile metadata sign request.
+pub(crate) fn admit_profile(
+    grant: Option<&str>,
+    payload: Option<&NostrProfileWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr profile requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_profile payload is required for SignNostrProfile",
+        ));
+    };
+    let has_any = [
+        &payload.name,
+        &payload.display_name,
+        &payload.about,
+        &payload.picture,
+        &payload.website,
+        &payload.nip05,
+        &payload.lud16,
+    ]
+    .iter()
+    .any(|f| f.as_deref().is_some_and(|s| !s.trim().is_empty()));
+    if !has_any {
+        return Err(refusal(
+            "InvalidArgument",
+            "at least one profile metadata field must be non-empty",
+        ));
+    }
+    Ok(NostrSignOperation::Profile(payload.clone()))
+}
+
 /// Admit a NIP-23 `kind: 30023` long-form article sign request.
 pub(crate) fn admit_article(
     grant: Option<&str>,
@@ -852,6 +891,19 @@ pub(crate) fn sign_operation_with_slots(
             hkask_nostr_signer::sign_article(&key, article.created_at, &article.content, &draft)
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
+        NostrSignOperation::Profile(profile) => {
+            let meta = hkask_nostr_signer::ProfileMetadata {
+                name: profile.name.clone(),
+                display_name: profile.display_name.clone(),
+                about: profile.about.clone(),
+                picture: profile.picture.clone(),
+                website: profile.website.clone(),
+                nip05: profile.nip05.clone(),
+                lud16: profile.lud16.clone(),
+            };
+            hkask_nostr_signer::sign_profile(&key, profile.created_at, &meta)
+                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+        }
         NostrSignOperation::List(list) => match list.kind {
             hkask_nostr_signer::DM_RELAYS_KIND => {
                 hkask_nostr_signer::sign_dm_relays(&key, list.created_at, &list.relay_urls)
@@ -933,6 +985,7 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
             | NostrSignOperation::Follows(_)
             | NostrSignOperation::Article(_)
             | NostrSignOperation::List(_)
+            | NostrSignOperation::Profile(_)
     );
     if is_zap_op || always_prompt_op || !autopublish {
         let Some(window) = cx.update(|cx| {
@@ -1110,6 +1163,40 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                     ),
                     [APPROVE_LABEL, DECLINE_LABEL],
                     "the operator did not approve the article; nothing was signed",
+                )
+            }
+            NostrSignOperation::Profile(profile) => {
+                let mut lines = Vec::new();
+                if let Some(v) = &profile.name {
+                    lines.push(format!("Name: {v}"));
+                }
+                if let Some(v) = &profile.display_name {
+                    lines.push(format!("Display name: {v}"));
+                }
+                if let Some(v) = &profile.about {
+                    lines.push(format!("About: {v}"));
+                }
+                if let Some(v) = &profile.nip05 {
+                    lines.push(format!("NIP-05: {v}"));
+                }
+                if let Some(v) = &profile.lud16 {
+                    lines.push(format!("Lightning Address (lud16): {v}"));
+                }
+                if let Some(v) = &profile.website {
+                    lines.push(format!("Website: {v}"));
+                }
+                if let Some(v) = &profile.picture {
+                    lines.push(format!("Picture: {v}"));
+                }
+                lines.push(format!("Relays: {}", profile.relays.join(", ")));
+                (
+                    "Publish updated Nostr profile metadata (NIP-01 kind:0)?".to_string(),
+                    format!(
+                        "This replaces your kind:0 profile metadata across relays.\n{}",
+                        lines.join("\n")
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the profile update; nothing was signed",
                 )
             }
             NostrSignOperation::List(list) => match list.kind {
@@ -1539,7 +1626,8 @@ mod tests {
             | NostrSignOperation::Repost(_)
             | NostrSignOperation::Follows(_)
             | NostrSignOperation::Article(_)
-            | NostrSignOperation::List(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::List(_)
+            | NostrSignOperation::Profile(_) => panic!("expected BlossomUpload"),
         }
     }
 

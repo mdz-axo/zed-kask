@@ -41,6 +41,10 @@ pub(crate) const PUBLISH_ARTICLE_TOOL: &str = "nostr_publish_article";
 /// (bookmark) list (<https://nostr-nips.com/nip-51>). Always requires native editor approval.
 pub(crate) const PUBLISH_LIST_TOOL: &str = "nostr_publish_list";
 
+/// The MCP tool that publishes a NIP-01 `kind: 0` profile metadata event
+/// (<https://nostr-nips.com/nip-01>). Always requires native editor approval.
+pub(crate) const PUBLISH_PROFILE_TOOL: &str = "nostr_publish_profile";
+
 /// Convert an article title into a clean ASCII NIP-23 `d`-tag slug.
 pub(crate) fn slugify_article_title(title: &str) -> String {
     let mut slug = String::new();
@@ -858,6 +862,9 @@ mod tests {
             PUBLISH_REPLY_TOOL,
             PUBLISH_DELETION_TOOL,
             PUBLISH_FOLLOWS_TOOL,
+            PUBLISH_ARTICLE_TOOL,
+            PUBLISH_LIST_TOOL,
+            PUBLISH_PROFILE_TOOL,
             PUBLISH_REPOST_TOOL,
             PREPARE_ZAP_TOOL,
             PUBLISH_NUTZAP_TOOL,

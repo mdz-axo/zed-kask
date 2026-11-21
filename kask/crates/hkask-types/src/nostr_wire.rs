@@ -61,6 +61,7 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_publish_list",
     "nostr_publish_note",
     "nostr_publish_nutzap",
+    "nostr_publish_profile",
     "nostr_publish_reaction",
     "nostr_publish_reply",
     "nostr_publish_repost",
@@ -267,6 +268,31 @@ pub struct NostrListWire {
     pub mint_urls: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub p2pk_pubkey_hex: Option<String>,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-01 `kind: 0` profile
+/// metadata event (<https://nostr-nips.com/nip-01>). Gated by
+/// `host/sign_nostr_note` and NEVER bypassed by `autopublish` because `kind: 0`
+/// replaces the operator's entire public profile metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct NostrProfileWire {
+    pub created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nip05: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lud16: Option<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }
