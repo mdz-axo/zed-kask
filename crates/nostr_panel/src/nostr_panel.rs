@@ -95,6 +95,8 @@ pub struct NostrPanel {
     /// The observation of the conversation's thread. Wired lazily in
     /// `render` once the Steer conversation exists.
     thread_observation: Option<gpui::Subscription>,
+    /// Subscription forwarding `SendToSteer` events from `NostrViewer`.
+    _viewer_steer_subscription: gpui::Subscription,
     /// Resumes a database thread in this panel's Steer surface.
     thread_picker: Entity<hkask_steer::ThreadPicker>,
     /// The steer pane's share of the panel height. In-memory only.
@@ -122,14 +124,25 @@ impl NostrPanel {
                     cx,
                 )
             });
+            let viewer = cx.new(|_| NostrViewer::new());
+            let viewer_steer_subscription = cx.subscribe_in(
+                &viewer,
+                _window,
+                |this, _viewer, event: &nostr_viewer::SendToSteer, window, cx| {
+                    this.ensure_steer(window, cx);
+                    this.steer.insert_prompt(&event.prompt, window, cx);
+                    cx.notify();
+                },
+            );
             Self {
                 focus_handle: cx.focus_handle(),
                 steer: hkask_steer::SteerSurface::new(),
                 project,
                 fs,
                 workspace_handle: workspace_handle.clone(),
-                viewer: cx.new(|_| NostrViewer::new()),
+                viewer,
                 thread_observation: None,
+                _viewer_steer_subscription: viewer_steer_subscription,
                 thread_picker,
                 split: hkask_steer::VerticalSplitState::default(),
             }

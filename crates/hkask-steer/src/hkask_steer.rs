@@ -29,7 +29,9 @@ use agent::{CuratorAgentServer, ThreadStore};
 use agent_client_protocol::v2::schema::SessionId;
 use agent_ui::{Agent, AgentConnectionStore, ConversationView};
 use fs::Fs;
-use gpui::{App, AppContext, Context, Entity, SharedString, Subscription, WeakEntity, Window};
+use gpui::{
+    App, AppContext, Context, Entity, Focusable, SharedString, Subscription, WeakEntity, Window,
+};
 use project::Project;
 use workspace::Workspace;
 
@@ -123,6 +125,25 @@ impl SteerSurface {
     /// The live conversation, if one has been constructed.
     pub fn conversation(&self) -> Option<&Entity<ConversationView>> {
         self.conversation.as_ref()
+    }
+
+    /// Insert `text` into the active Steer conversation's message editor and
+    /// focus it for operator review (never auto-submits). Returns `true` when
+    /// the conversation was ready and received the text.
+    pub fn insert_prompt(&self, text: &str, window: &mut Window, cx: &mut App) -> bool {
+        let Some(conversation) = self.conversation.as_ref() else {
+            return false;
+        };
+        let Some(thread_view) = conversation.read(cx).active_thread().cloned() else {
+            return false;
+        };
+        let message_editor = thread_view.read(cx).message_editor.clone();
+        message_editor.update(cx, |editor, cx| {
+            editor.insert_text(text, window, cx);
+            let focus = editor.focus_handle(cx);
+            window.focus(&focus, cx);
+        });
+        true
     }
 
     /// Stage an existing database thread to resume on the next `ensure`,
