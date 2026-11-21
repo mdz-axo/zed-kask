@@ -58,14 +58,12 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use crate::nostr_composer::{
-    CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_DELETION_TOOL,
-    PUBLISH_FOLLOWS_TOOL, PUBLISH_NUTZAP_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL,
-    PUBLISH_REPOST_TOOL, PUBLISH_TOOL, PublishOutcome, QUICK_REACTIONS, ReplyContext,
-    WALLET_PAY_INVOICE_TOOL, WALLET_SEND_ECASH_TOOL, WALLET_STATUS_TOOL, WalletBadge,
-    ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus, parse_custom_sats, parse_wallet_status,
-    sanitize_untrusted_text,
+    CHAR_WARNING_THRESHOLD, ComposerState, PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL,
+    PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_REPOST_TOOL, PUBLISH_TOOL, PublishOutcome,
+    QUICK_REACTIONS, ReplyContext, sanitize_untrusted_text,
 };
 use crate::nostr_dm_view::NostrDmView;
+use crate::nostr_zap_view::{NostrZapView, ZapSettled};
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
 use gpui::{
@@ -79,7 +77,6 @@ use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_
 use hkask_types::nostr_wire::{
     MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER,
 };
-use hkask_types::wallet_wire::WALLET_SERVER_ID;
 use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
@@ -101,7 +98,7 @@ const FETCH_TOOL: &str = "nostr_fetch_events";
 const NOTIFICATIONS_TOOL: &str = "nostr_notifications";
 /// A labelled click in the detail pane: the network is contacted only
 /// there.
-const PROFILE_TOOL: &str = "nostr_profile";
+pub(crate) const PROFILE_TOOL: &str = "nostr_profile";
 // The one fetch a labelled click offers: MEDIA_FETCH_IMAGE_TOOL on
 // MEDIA_SERVER, both imported above. The tool name is pinned against that
 // server's own generated list by `wire_tool_name_is_the_servers_own` in
@@ -199,12 +196,9 @@ pub struct NostrViewer {
     _publish_task: Option<Task<()>>,
     /// Whether raw protocol metadata (hex id/author/kind/source) is expanded in `detail()`.
     detail_meta_expanded: bool,
-    /// Compact Amethyst-style quick-zap strip state for the selected note (NIP-57 / NIP-61).
-    zap: Option<ZapDraftState>,
-    zap_amount_editor: Option<Entity<editor::Editor>>,
-    zap_comment_editor: Option<Entity<editor::Editor>>,
-    _zap_wallet_task: Option<Task<()>>,
-    _zap_task: Option<Task<()>>,
+    /// Self-contained NIP-57 Lightning zap & NIP-61 Cashu nutzap strip view.
+    zap_view: Option<Entity<NostrZapView>>,
+    _zap_subscription: Option<gpui::Subscription>,
     /// Event id currently sending a NIP-25 `kind: 7` reaction, plus last inline feedback.
     reaction_in_flight: Option<String>,
     reaction_feedback: Option<(String, bool, String)>,
@@ -420,7 +414,7 @@ fn content_of(tool: &str, outcome: Result<String, InvokeError>) -> Result<Value,
     }
 }
 
-fn invoke(
+pub(crate) fn invoke(
     server: &'static str,
     tool: &'static str,
     arguments: Value,
@@ -484,11 +478,8 @@ impl NostrViewer {
             _composer_subscription: None,
             _publish_task: None,
             detail_meta_expanded: false,
-            zap: None,
-            zap_amount_editor: None,
-            zap_comment_editor: None,
-            _zap_wallet_task: None,
-            _zap_task: None,
+            zap_view: None,
+            _zap_subscription: None,
             reaction_in_flight: None,
             reaction_feedback: None,
             _reaction_task: None,
@@ -1706,10 +1697,7 @@ impl NostrViewer {
         let inline_disliked = self
             .own_reactions
             .contains_key(&(row.event.id.clone(), "👎".to_string()));
-        let inline_zapping = self
-            .zap
-            .as_ref()
-            .is_some_and(|z| z.target_event_id == row.event.id);
+        let inline_zapping = self.is_zap_open_for(&row.event.id, cx);
         let inline_busy = self.reaction_in_flight.as_deref() == Some(row.event.id.as_str());
         let inline_like_count = self
             .reactions
@@ -2513,10 +2501,7 @@ impl NostrViewer {
                     let zap_event_id = event.id.clone();
                     let zap_author = event.author.clone();
                     let zap_label = reply_target.target_label.clone();
-                    let zap_open = self
-                        .zap
-                        .as_ref()
-                        .is_some_and(|z| z.target_event_id == event.id);
+                    let zap_open = self.is_zap_open_for(&event.id, cx);
                     let my_pubkey_hex = self.my_pubkey_hex(cx);
                     let is_own_event = my_pubkey_hex
                         .as_deref()
@@ -2668,8 +2653,8 @@ impl NostrViewer {
                         ))
                     })
                     .when(zap_open, |el| {
-                        if let Some(zap) = self.zap.clone() {
-                            el.child(self.render_zap_strip(&zap, cx))
+                        if let Some(zap_view) = self.zap_view.clone() {
+                            el.child(zap_view)
                         } else {
                             el
                         }
@@ -3487,23 +3472,47 @@ impl NostrViewer {
         editor
     }
 
-    fn ensure_zap_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.zap_amount_editor.is_none() {
-            let ed = cx.new(|cx| {
-                let mut ed = editor::Editor::single_line(window, cx);
-                ed.set_placeholder_text("Custom sats…", window, cx);
-                ed
-            });
-            self.zap_amount_editor = Some(ed);
+    fn is_zap_open_for(&self, event_id: &str, cx: &Context<Self>) -> bool {
+        self.zap_view
+            .as_ref()
+            .is_some_and(|view| view.read(cx).is_open_for(event_id))
+    }
+
+    fn ensure_zap_view(&mut self, cx: &mut Context<Self>) -> Entity<NostrZapView> {
+        if let Some(existing) = &self.zap_view {
+            return existing.clone();
         }
-        if self.zap_comment_editor.is_none() {
-            let ed = cx.new(|cx| {
-                let mut ed = editor::Editor::single_line(window, cx);
-                ed.set_placeholder_text("Optional zap comment…", window, cx);
-                ed
-            });
-            self.zap_comment_editor = Some(ed);
-        }
+        let view = cx.new(|_| NostrZapView::new());
+        let sub = cx.subscribe(&view, |this, _view, settled: &ZapSettled, cx| {
+            if settled.optimistic_bump {
+                let entry = this
+                    .zap_totals
+                    .entry(settled.target_event_id.clone())
+                    .or_insert((0, 0));
+                entry.0 = entry.0.saturating_add(1);
+                entry.1 = entry.1.saturating_add(settled.amount_sats);
+            }
+            this.refresh_reactions_for_active_view(cx);
+            cx.notify();
+        });
+        self.zap_view = Some(view.clone());
+        self._zap_subscription = Some(sub);
+        view
+    }
+
+    fn toggle_zap_strip(
+        &mut self,
+        event_id: String,
+        author: String,
+        label: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self.ensure_zap_view(cx);
+        view.update(cx, |view, cx| {
+            view.toggle(event_id, author, label, window, cx);
+        });
+        cx.notify();
     }
 
     /// Toggle the collapsible compose drawer; collapsing always preserves the draft.
@@ -3858,601 +3867,6 @@ impl NostrViewer {
             })
             .log_err();
         }));
-    }
-
-    fn toggle_zap_strip(
-        &mut self,
-        event_id: String,
-        author: String,
-        label: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .zap
-            .as_ref()
-            .is_some_and(|z| z.target_event_id == event_id)
-        {
-            if !self.zap.as_ref().is_some_and(ZapDraftState::is_busy) {
-                self.zap = None;
-                self.clear_zap_editors(window, cx);
-            }
-        } else {
-            self.zap = Some(ZapDraftState::new(event_id, author, label));
-            self.clear_zap_editors(window, cx);
-            self.fetch_zap_wallet_status(cx);
-        }
-        cx.notify();
-    }
-
-    fn clear_zap_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ed) = &self.zap_amount_editor {
-            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-        }
-        if let Some(ed) = &self.zap_comment_editor {
-            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-        }
-    }
-
-    fn fetch_zap_wallet_status(&mut self, cx: &mut Context<Self>) {
-        let task = match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
-            Ok(task) => task,
-            Err(err) => {
-                if let Some(z) = self.zap.as_mut() {
-                    z.wallet = WalletBadge::Unavailable(err);
-                }
-                return;
-            }
-        };
-        self._zap_wallet_task = Some(cx.spawn(async move |this, cx| {
-            let res = task.await;
-            this.update(cx, |this, cx| {
-                if let Some(z) = this.zap.as_mut() {
-                    z.wallet = match res {
-                        Ok(raw) => match parse_wallet_status(&raw) {
-                            Ok(summary) => WalletBadge::Ready(summary),
-                            Err(err) => WalletBadge::Unavailable(err),
-                        },
-                        Err(err) => {
-                            WalletBadge::Unavailable(sanitize_untrusted_text(&err.to_string()))
-                        }
-                    };
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
-    }
-
-    /// Execute a NIP-57 Lightning zap or NIP-61 Cashu nutzap.
-    fn execute_zap(&mut self, cx: &mut Context<Self>) {
-        let custom_amount_text = self
-            .zap_amount_editor
-            .as_ref()
-            .map(|ed| ed.read(cx).text(cx))
-            .unwrap_or_default();
-        let comment_text = self
-            .zap_comment_editor
-            .as_ref()
-            .map(|ed| ed.read(cx).text(cx).trim().to_string())
-            .unwrap_or_default();
-
-        let Some(zap) = self.zap.as_mut() else {
-            return;
-        };
-        if zap.is_busy() {
-            return;
-        }
-        if !custom_amount_text.trim().is_empty() {
-            match parse_custom_sats(&custom_amount_text) {
-                Ok(sats) => zap.amount_sats = sats,
-                Err(err) => {
-                    zap.status = ZapStatus::Failed(err);
-                    cx.notify();
-                    return;
-                }
-            }
-        }
-        let target_event_id = zap.target_event_id.clone();
-        let target_pubkey = zap.target_pubkey.clone();
-        let amount_sats = zap.amount_sats;
-        let rail_mode = zap.rail;
-        let cached_wallet = zap.wallet.clone();
-
-        if rail_mode == ZapRail::Nutzap {
-            let summary = match cached_wallet {
-                WalletBadge::Ready(summary) => summary,
-                WalletBadge::Unavailable(err) => {
-                    zap.status = ZapStatus::Failed(format!("Wallet unavailable: {err}"));
-                    cx.notify();
-                    return;
-                }
-                WalletBadge::Loading => {
-                    zap.status = ZapStatus::Failed(
-                        "Still loading wallet status; wait a moment and retry.".to_string(),
-                    );
-                    cx.notify();
-                    return;
-                }
-            };
-            let Some(mint_url) = summary.default_mint.clone() else {
-                zap.status = ZapStatus::Failed(
-                    "No allowlisted Cashu mint configured for NIP-61 nutzaps.".to_string(),
-                );
-                cx.notify();
-                return;
-            };
-            let allowed_mints = summary.allowed_mints;
-            let p2pk_pubkey = format!("02{}", target_pubkey.to_ascii_lowercase());
-            zap.status = ZapStatus::PayingInvoice;
-            cx.notify();
-
-            let idempotency_key = format!(
-                "nostr-nutzap-{}-{}",
-                target_event_id,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let mut ecash_args = json!({
-                "amount_sats": amount_sats,
-                "mint_url": mint_url,
-                "p2pk_pubkey": p2pk_pubkey,
-                "idempotency_key": idempotency_key,
-            });
-            if !comment_text.is_empty() {
-                ecash_args["memo"] = json!(comment_text);
-            }
-            let send_task = match invoke(WALLET_SERVER_ID, WALLET_SEND_ECASH_TOOL, ecash_args) {
-                Ok(t) => t,
-                Err(err) => {
-                    if let Some(z) = self.zap.as_mut() {
-                        z.status = ZapStatus::Failed(err);
-                    }
-                    cx.notify();
-                    return;
-                }
-            };
-            self._zap_task = Some(cx.spawn(async move |this, cx| {
-                let ecash_raw = match send_task.await {
-                    Ok(raw) => raw,
-                    Err(err) => {
-                        this.update(cx, |this, cx| {
-                            if let Some(z) = this.zap.as_mut() {
-                                z.status =
-                                    ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()));
-                            }
-                            cx.notify();
-                        })
-                        .log_err();
-                        return;
-                    }
-                };
-                let proofs_json: Vec<String> = serde_json::from_str::<Value>(&ecash_raw)
-                    .ok()
-                    .and_then(|v| {
-                        let root = v.get("content").unwrap_or(&v);
-                        root.get("proofs_json")
-                            .or_else(|| root.get("proofs"))
-                            .and_then(Value::as_array)
-                            .map(|arr| {
-                                arr.iter()
-                                    .map(|item| {
-                                        item.as_str()
-                                            .map(str::to_string)
-                                            .unwrap_or_else(|| item.to_string())
-                                    })
-                                    .collect()
-                            })
-                    })
-                    .unwrap_or_default();
-                if proofs_json.is_empty() {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(
-                                "wallet_send_ecash did not return P2PK-locked Cashu proofs."
-                                    .to_string(),
-                            );
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-                let mut nutzap_args = json!({
-                    "recipient": target_pubkey,
-                    "recipient_p2pk_pubkey": p2pk_pubkey,
-                    "mint_url": mint_url,
-                    "allowed_mints": allowed_mints,
-                    "proofs_json": proofs_json,
-                    "event_id": target_event_id,
-                });
-                if !comment_text.is_empty() {
-                    nutzap_args["comment"] = json!(comment_text);
-                }
-                let pub_task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_NUTZAP_TOOL, nutzap_args) {
-                    Ok(t) => t,
-                    Err(err) => {
-                        this.update(cx, |this, cx| {
-                            if let Some(z) = this.zap.as_mut() {
-                                z.status = ZapStatus::Failed(err);
-                            }
-                            cx.notify();
-                        })
-                        .log_err();
-                        return;
-                    }
-                };
-                let pub_res = pub_task.await;
-                this.update(cx, |this, cx| {
-                    if let Some(z) = this.zap.as_mut() {
-                        z.status = match pub_res {
-                            Ok(_) => ZapStatus::Settled(format!(
-                                "Nutzapped {amount_sats} sats via Cashu (NIP-61)"
-                            )),
-                            Err(err) => {
-                                ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()))
-                            }
-                        };
-                    }
-                    this.refresh_reactions_for_active_view(cx);
-                    cx.notify();
-                })
-                .log_err();
-            }));
-            return;
-        }
-
-        // NIP-57 Lightning zap flow.
-        zap.status = ZapStatus::ResolvingProfile;
-        cx.notify();
-
-        let profile_task = match invoke(
-            NOSTR_CLIENT_SERVER,
-            PROFILE_TOOL,
-            json!({ "authors": [target_pubkey] }),
-        ) {
-            Ok(task) => task,
-            Err(err) => {
-                if let Some(z) = self.zap.as_mut() {
-                    z.status = ZapStatus::Failed(err);
-                }
-                cx.notify();
-                return;
-            }
-        };
-
-        self._zap_task = Some(cx.spawn(async move |this, cx| {
-            // 1. Resolve recipient Lightning Address (`lud16`) from kind:0 profile.
-            let profile_raw = match profile_task.await {
-                Ok(raw) => raw,
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(format!(
-                                "Profile lookup failed: {}",
-                                sanitize_untrusted_text(&err.to_string())
-                            ));
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-            };
-            let lud16 = extract_lud16_from_profile_response(&profile_raw);
-
-            let Some(lud16) = lud16 else {
-                this.update(cx, |this, cx| {
-                    if let Some(z) = this.zap.as_mut() {
-                        z.status = ZapStatus::Failed(
-                            "Recipient profile has no Lightning Address (lud16). Switch to Cashu Nutzap (NIP-61) instead."
-                                .to_string(),
-                        );
-                    }
-                    cx.notify();
-                })
-                .log_err();
-                return;
-            };
-
-            // 2. Prepare NIP-57 zap request + verified BOLT11 invoice.
-            this.update(cx, |this, cx| {
-                if let Some(z) = this.zap.as_mut() {
-                    z.status = ZapStatus::PreparingInvoice;
-                }
-                cx.notify();
-            })
-            .log_err();
-            let mut prep_args = json!({
-                "recipient": target_pubkey,
-                "lud16": lud16,
-                "amount_sats": amount_sats,
-                "event_id": target_event_id,
-            });
-            if !comment_text.is_empty() {
-                prep_args["comment"] = json!(comment_text);
-            }
-            let prep_task = match invoke(NOSTR_CLIENT_SERVER, PREPARE_ZAP_TOOL, prep_args) {
-                Ok(t) => t,
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(err);
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-            };
-            let prep_raw = match prep_task.await {
-                Ok(raw) => raw,
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()));
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-            };
-            let Some(bolt11) = serde_json::from_str::<Value>(&prep_raw)
-                .ok()
-                .and_then(|v| v.get("bolt11").and_then(Value::as_str).map(str::to_string))
-            else {
-                this.update(cx, |this, cx| {
-                    if let Some(z) = this.zap.as_mut() {
-                        z.status = ZapStatus::Failed(
-                            "nostr_prepare_zap did not return a verified bolt11 invoice."
-                                .to_string(),
-                        );
-                    }
-                    cx.notify();
-                })
-                .log_err();
-                return;
-            };
-
-            // 3. Verify active wallet rail via `wallet_status` — never silently default.
-            let rail_result: Result<String, String> = match cached_wallet {
-                WalletBadge::Ready(summary) => Ok(summary.active_rail),
-                _ => match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
-                    Ok(status_task) => match status_task.await {
-                        Ok(raw) => parse_wallet_status(&raw).map(|s| s.active_rail),
-                        Err(err) => Err(sanitize_untrusted_text(&err.to_string())),
-                    },
-                    Err(err) => Err(err),
-                },
-            };
-            let rail = match rail_result {
-                Ok(rail) => rail,
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(format!("Wallet unavailable: {err}"));
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-            };
-
-            this.update(cx, |this, cx| {
-                if let Some(z) = this.zap.as_mut() {
-                    z.status = ZapStatus::PayingInvoice;
-                }
-                cx.notify();
-            })
-            .log_err();
-            let idempotency_key = format!(
-                "nostr-zap-{}-{}",
-                target_event_id,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let pay_task = match invoke(
-                WALLET_SERVER_ID,
-                WALLET_PAY_INVOICE_TOOL,
-                json!({
-                    "rail": rail,
-                    "bolt11": bolt11,
-                    "idempotency_key": idempotency_key,
-                }),
-            ) {
-                Ok(t) => t,
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        if let Some(z) = this.zap.as_mut() {
-                            z.status = ZapStatus::Failed(err);
-                        }
-                        cx.notify();
-                    })
-                    .log_err();
-                    return;
-                }
-            };
-            let pay_result = pay_task.await;
-            this.update(cx, |this, cx| {
-                let settled = pay_result.is_ok();
-                if let Some(z) = this.zap.as_mut() {
-                    z.status = match pay_result {
-                        Ok(_) => ZapStatus::Settled(format!(
-                            "Zapped {amount_sats} sats via {rail} (NIP-57)"
-                        )),
-                        Err(err) => ZapStatus::Failed(sanitize_untrusted_text(&err.to_string())),
-                    };
-                }
-                if settled {
-                    let entry = this
-                        .zap_totals
-                        .entry(target_event_id.clone())
-                        .or_insert((0, 0));
-                    entry.0 = entry.0.saturating_add(1);
-                    entry.1 = entry.1.saturating_add(amount_sats);
-                    this.refresh_reactions_for_active_view(cx);
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
-    }
-
-    fn render_zap_strip(&self, zap: &ZapDraftState, cx: &Context<Self>) -> AnyElement {
-        let busy = zap.is_busy();
-        let status_line: Option<(String, Color)> = match &zap.status {
-            ZapStatus::Ready => None,
-            ZapStatus::ResolvingProfile => Some((
-                "Resolving recipient Lightning Address…".into(),
-                Color::Muted,
-            )),
-            ZapStatus::PreparingInvoice => Some((
-                "Awaiting Zap approval & BOLT11 invoice…".into(),
-                Color::Muted,
-            )),
-            ZapStatus::PayingInvoice => {
-                Some(("Awaiting wallet spend approval…".into(), Color::Muted))
-            }
-            ZapStatus::Settled(msg) => Some((msg.clone(), Color::Success)),
-            ZapStatus::Failed(msg) => Some((msg.clone(), Color::Error)),
-        };
-        let (wallet_badge, wallet_color) = match &zap.wallet {
-            WalletBadge::Loading => ("Checking wallet status…".to_string(), Color::Muted),
-            WalletBadge::Ready(summary) => (summary.badge_text(), Color::Hint),
-            WalletBadge::Unavailable(err) => (format!("Wallet: {err}"), Color::Error),
-        };
-
-        v_flex()
-            .w_full()
-            .p_2()
-            .gap_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            .bg(cx.theme().colors().elevated_surface_background)
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .flex_wrap()
-                    .items_center()
-                    .child(
-                        Label::new(format!("Zap {}", zap.target_label))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Default),
-                    )
-                    .child(
-                        Label::new(wallet_badge)
-                            .size(LabelSize::XSmall)
-                            .color(wallet_color)
-                            .truncate(),
-                    )
-                    .child(
-                        h_flex()
-                            .ml_auto()
-                            .gap_1()
-                            .child(
-                                ui::Button::new("nostr-zap-rail-ln", "Lightning")
-                                    .label_size(LabelSize::XSmall)
-                                    .toggle_state(zap.rail == ZapRail::Lightning)
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(z) = this.zap.as_mut() {
-                                            z.rail = ZapRail::Lightning;
-                                            z.status = ZapStatus::Ready;
-                                        }
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                ui::Button::new("nostr-zap-rail-nutzap", "Cashu Nutzap")
-                                    .label_size(LabelSize::XSmall)
-                                    .toggle_state(zap.rail == ZapRail::Nutzap)
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(z) = this.zap.as_mut() {
-                                            z.rail = ZapRail::Nutzap;
-                                            z.status = ZapStatus::Ready;
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .flex_wrap()
-                    .items_center()
-                    .children(ZAP_PRESETS_SATS.iter().map(|&sats| {
-                        let selected = zap.amount_sats == sats;
-                        ui::Button::new(("nostr-zap-preset", sats as usize), format!("{sats}"))
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(selected)
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(z) = this.zap.as_mut() {
-                                    z.amount_sats = sats;
-                                    z.status = ZapStatus::Ready;
-                                }
-                                if let Some(ed) = &this.zap_amount_editor {
-                                    ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-                                }
-                                cx.notify();
-                            }))
-                    }))
-                    .when_some(self.zap_amount_editor.clone(), |row, ed| {
-                        row.child(
-                            div()
-                                .w(px(88.))
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
-                                .child(ed),
-                        )
-                    })
-                    .child(
-                        ui::Button::new(
-                            "nostr-zap-send",
-                            if busy {
-                                "Zapping…".to_string()
-                            } else if zap.rail == ZapRail::Nutzap {
-                                format!("Nutzap {} sats", zap.amount_sats)
-                            } else {
-                                format!("Zap {} sats", zap.amount_sats)
-                            },
-                        )
-                        .style(ui::ButtonStyle::Filled)
-                        .label_size(LabelSize::XSmall)
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.execute_zap(cx))),
-                    ),
-            )
-            .when_some(self.zap_comment_editor.clone(), |col, ed| {
-                col.child(
-                    div()
-                        .w_full()
-                        .px_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(ed),
-                )
-            })
-            .when_some(status_line, |el, (msg, color)| {
-                el.child(Label::new(msg).size(LabelSize::XSmall).color(color))
-            })
-            .into_any_element()
     }
 
     fn submit_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4974,9 +4388,6 @@ impl NostrViewer {
 
 impl Render for NostrViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.zap.is_some() {
-            self.ensure_zap_editors(window, cx);
-        }
         let compose_drawer = self.render_composer_drawer(window, cx);
         let publish_receipt = self
             .composer
@@ -5002,11 +4413,10 @@ impl Render for NostrViewer {
                 }
                 match event.keystroke.key.as_str() {
                     "escape" => {
-                        if this.zap.is_some()
-                            && !this.zap.as_ref().is_some_and(ZapDraftState::is_busy)
-                        {
-                            this.zap = None;
-                            this.clear_zap_editors(window, cx);
+                        let dismissed_zap = this.zap_view.as_ref().is_some_and(|view| {
+                            view.update(cx, |v, cx| v.dismiss_if_idle(window, cx))
+                        });
+                        if dismissed_zap {
                             cx.notify();
                             cx.stop_propagation();
                         } else if this.selected.is_some() {
@@ -5070,7 +4480,7 @@ impl Render for NostrViewer {
 /// Extract a recipient's Lightning Address (`lud16`) from a `nostr_profile`
 /// JSON response (`profiles[0].fields.lud16`), with fallbacks for direct or
 /// raw `kind: 0` content shapes.
-fn extract_lud16_from_profile_response(profile_raw: &str) -> Option<String> {
+pub(crate) fn extract_lud16_from_profile_response(profile_raw: &str) -> Option<String> {
     serde_json::from_str::<Value>(profile_raw)
         .ok()
         .and_then(|v| {
