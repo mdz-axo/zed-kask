@@ -255,6 +255,7 @@ impl NostrComposerView {
 
     /// Open and focus the collapsible compose drawer (`nostr_panel::Compose`).
     pub(crate) fn open_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.highlight_target = None;
         self.composer.open_compose();
         let editor = self.ensure_composer_editor(window, cx);
         editor.update(cx, |ed, cx| {
@@ -343,6 +344,7 @@ impl NostrComposerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.highlight_target = None;
         self.composer.open_reply(target);
         let editor = self.ensure_composer_editor(window, cx);
         editor.update(cx, |ed, cx| {
@@ -361,6 +363,7 @@ impl NostrComposerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.highlight_target = None;
         self.composer.open_quote(target);
         let editor = self.ensure_composer_editor(window, cx);
         editor.update(cx, |ed, cx| {
@@ -829,27 +832,29 @@ impl NostrComposerView {
                                         this.article_mode = true;
                                         cx.notify();
                                     })),
-                            )
-                            .when_some(steer_draft_available.clone(), |row, steer_text| {
-                                row.child(
-                                    ui::Button::new("nostr-compose-load-steer", "← Use Steer draft")
-                                        .label_size(LabelSize::XSmall)
-                                        .disabled(publishing)
-                                        .tooltip(ui::Tooltip::text(
-                                            "Load the latest Steer assistant response into this draft for your review and editing",
-                                        ))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            let clean = display_text(&steer_text).to_string();
-                                            this.composer.set_draft(clean.clone());
-                                            let ed = this.ensure_composer_editor(window, cx);
-                                            ed.update(cx, |ed, cx| {
-                                                ed.set_text(clean, window, cx);
-                                                window.focus(&ed.focus_handle(cx), cx);
-                                            });
-                                            cx.notify();
-                                        })),
-                                )
-                            }),
+                            ),
+                    )
+                })
+                .when_some(steer_draft_available, |this, steer_text| {
+                    this.child(
+                        h_flex().w_full().gap_1().items_center().child(
+                            ui::Button::new("nostr-compose-load-steer", "← Use Steer draft")
+                                .label_size(LabelSize::XSmall)
+                                .disabled(publishing)
+                                .tooltip(ui::Tooltip::text(
+                                    "Load the latest Steer assistant response into this draft for your review and editing",
+                                ))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let clean = display_text(&steer_text).to_string();
+                                    this.composer.set_draft(clean.clone());
+                                    let ed = this.ensure_composer_editor(window, cx);
+                                    ed.update(cx, |ed, cx| {
+                                        ed.set_text(clean, window, cx);
+                                        window.focus(&ed.focus_handle(cx), cx);
+                                    });
+                                    cx.notify();
+                                })),
+                        ),
                     )
                 })
                 .when_some(article_editors, |this, (title_ed, slug_ed)| {

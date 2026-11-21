@@ -921,13 +921,17 @@ impl NostrViewer {
                 dm.update(cx, |view, cx| view.sync_dms(cx));
             }
             ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
+                self.search_feed = None;
                 if !matches!(self.follows, Some(Follows::Authors(_))) {
                     self.load_follows(cx);
                 } else {
                     self.load_following_feed(cx);
                 }
             }
-            ViewerTab::Timeline | ViewerTab::Conversation => self.load_archive(cx),
+            ViewerTab::Timeline | ViewerTab::Conversation => {
+                self.search_feed = None;
+                self.load_archive(cx);
+            }
         }
     }
 
@@ -2020,10 +2024,22 @@ impl NostrViewer {
                             );
                             window_handle
                                 .update(cx, |_, window, cx| {
-                                    name_ed.update(cx, |e, cx| e.set_text(name_v, window, cx));
-                                    about_ed.update(cx, |e, cx| e.set_text(about_v, window, cx));
-                                    nip05_ed.update(cx, |e, cx| e.set_text(nip05_v, window, cx));
-                                    lud16_ed.update(cx, |e, cx| e.set_text(lud16_v, window, cx));
+                                    // Preserve any text the operator already typed while loading.
+                                    if name_ed.read(cx).text(cx).trim().is_empty() {
+                                        name_ed.update(cx, |e, cx| e.set_text(name_v, window, cx));
+                                    }
+                                    if about_ed.read(cx).text(cx).trim().is_empty() {
+                                        about_ed
+                                            .update(cx, |e, cx| e.set_text(about_v, window, cx));
+                                    }
+                                    if nip05_ed.read(cx).text(cx).trim().is_empty() {
+                                        nip05_ed
+                                            .update(cx, |e, cx| e.set_text(nip05_v, window, cx));
+                                    }
+                                    if lud16_ed.read(cx).text(cx).trim().is_empty() {
+                                        lud16_ed
+                                            .update(cx, |e, cx| e.set_text(lud16_v, window, cx));
+                                    }
                                 })
                                 .log_err();
                             this.profile_publish_status =
@@ -2352,18 +2368,24 @@ impl NostrViewer {
                 this.reaction_in_flight = None;
                 this.reaction_feedback = match result {
                     Ok(raw) => {
-                        let sats = serde_json::from_str::<Value>(&raw)
-                            .ok()
-                            .and_then(|v| {
-                                let root = v.get("content").unwrap_or(&v);
-                                root.get("amount_sats").and_then(Value::as_u64)
-                            })
-                            .unwrap_or(0);
-                        Some((
-                            event_id,
-                            true,
-                            format!("Redeemed {sats} sats from NIP-61 nutzap"),
-                        ))
+                        let parsed = serde_json::from_str::<Value>(&raw).ok();
+                        let sats = parsed.as_ref().and_then(|v| {
+                            let root = v.get("content").unwrap_or(v);
+                            root.get("amount_sats").and_then(Value::as_u64)
+                        });
+                        match sats {
+                            Some(sats) if sats > 0 => Some((
+                                event_id,
+                                true,
+                                format!("Redeemed {sats} sats from NIP-61 nutzap"),
+                            )),
+                            _ => Some((
+                                event_id,
+                                false,
+                                "Nutzap redemption returned no settled sats; check wallet_transactions."
+                                    .to_string(),
+                            )),
+                        }
                     }
                     Err(err) => Some((event_id, false, sanitize_untrusted_text(&err.to_string()))),
                 };
@@ -2672,6 +2694,7 @@ impl NostrViewer {
                     .color(if active { Color::Default } else { Color::Muted }),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
+                this.search_feed = None;
                 if this.timeline_filter != filter {
                     this.timeline_filter = filter;
                     this.selected = None;
@@ -2829,8 +2852,10 @@ impl NostrViewer {
                 row.event.served_by.join(", ")
             )
         };
-        let show_inline_actions =
-            row.event.kind == 1 || row.event.kind == 1111 || row.event.kind == 30023;
+        let show_inline_actions = row.event.kind == 1
+            || row.event.kind == 1111
+            || row.event.kind == 9_802
+            || row.event.kind == 30_023;
         let inline_event_id = row.event.id.clone();
         let inline_author = row.event.author.clone();
         let inline_reply_target = if show_inline_actions {
@@ -4541,8 +4566,17 @@ impl NostrViewer {
                                         .label_size(LabelSize::XSmall)
                                         .toggle_state(search_open || has_search_feed)
                                         .on_click(
-                                            cx.listener(|this, _, _, cx| {
+                                            cx.listener(|this, _, window, cx| {
+                                                use gpui::Focusable as _;
                                                 this.search_open = !this.search_open;
+                                                if this.search_open {
+                                                    let ed = this.ensure_search_editor(window, cx);
+                                                    ed.update(cx, |ed, cx| {
+                                                        window.focus(&ed.focus_handle(cx), cx);
+                                                    });
+                                                } else {
+                                                    this.search_feed = None;
+                                                }
                                                 cx.notify();
                                             }),
                                         ),
@@ -4551,6 +4585,7 @@ impl NostrViewer {
                                         ui::Button::new("nostr-timeline-refresh", "Refresh")
                                             .label_size(LabelSize::XSmall)
                                             .on_click(cx.listener(|this, _, _, cx| {
+                                                this.search_feed = None;
                                                 if this.timeline_filter == TimelineFilter::Following
                                                 {
                                                     if !matches!(

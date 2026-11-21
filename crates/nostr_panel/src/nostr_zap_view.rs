@@ -135,9 +135,46 @@ pub(crate) struct ZapSettled {
     pub(crate) optimistic_bump: bool,
 }
 
+/// Already-minted P2PK-locked Cashu proofs awaiting relay publication so a
+/// retry after `nostr_publish_nutzap` failure re-publishes the existing proofs
+/// instead of double-spending via `wallet_send_ecash`.
+#[derive(Debug, Clone)]
+struct PendingNutzapPublish {
+    target_event_id: String,
+    target_pubkey: String,
+    p2pk_pubkey: String,
+    mint_url: String,
+    allowed_mints: Vec<String>,
+    proofs_json: Vec<String>,
+    amount_sats: u64,
+    comment: String,
+}
+
+fn nutzap_relays_accepted(raw_json: &str) -> Result<usize, String> {
+    let value: Value = serde_json::from_str(raw_json)
+        .map_err(|e| format!("nostr_publish_nutzap returned invalid JSON: {e}"))?;
+    let root = value.get("content").unwrap_or(&value);
+    let accepted = root
+        .get("relays")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|r| {
+                    matches!(
+                        r.get("state").and_then(Value::as_str),
+                        Some("accepted" | "ok" | "sent")
+                    ) || r.get("accepted").and_then(Value::as_bool) == Some(true)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    Ok(accepted)
+}
+
 /// Self-contained GPUI view for the Amethyst-style quick-zap strip.
 pub(crate) struct NostrZapView {
     zap: Option<ZapDraftState>,
+    pending_nutzap: Option<PendingNutzapPublish>,
     zap_amount_editor: Option<Entity<editor::Editor>>,
     zap_comment_editor: Option<Entity<editor::Editor>>,
     _zap_wallet_task: Option<Task<()>>,
@@ -150,6 +187,7 @@ impl NostrZapView {
     pub(crate) fn new() -> Self {
         Self {
             zap: None,
+            pending_nutzap: None,
             zap_amount_editor: None,
             zap_comment_editor: None,
             _zap_wallet_task: None,
@@ -293,6 +331,76 @@ impl NostrZapView {
         let cached_wallet = zap.wallet.clone();
 
         if rail_mode == ZapRail::Nutzap {
+            // If proofs were already debited for this target and relay publish
+            // failed earlier, re-publish those exact proofs instead of
+            // calling `wallet_send_ecash` again (prevents double-spend).
+            if let Some(pending) = self
+                .pending_nutzap
+                .clone()
+                .filter(|p| p.target_event_id == target_event_id)
+            {
+                zap.status = ZapStatus::PayingInvoice;
+                cx.notify();
+                let mut nutzap_args = json!({
+                    "recipient": pending.target_pubkey,
+                    "recipient_p2pk_pubkey": pending.p2pk_pubkey,
+                    "mint_url": pending.mint_url,
+                    "allowed_mints": pending.allowed_mints,
+                    "proofs_json": pending.proofs_json,
+                    "event_id": pending.target_event_id,
+                });
+                if !pending.comment.is_empty() {
+                    nutzap_args["comment"] = json!(pending.comment);
+                }
+                let pub_task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_NUTZAP_TOOL, nutzap_args) {
+                    Ok(t) => t,
+                    Err(err) => {
+                        if let Some(z) = self.zap.as_mut() {
+                            z.status = ZapStatus::Failed(err);
+                        }
+                        cx.notify();
+                        return;
+                    }
+                };
+                self._zap_task = Some(cx.spawn(async move |this, cx| {
+                    let pub_res = pub_task.await;
+                    this.update(cx, |this, cx| {
+                        let settled = match &pub_res {
+                            Ok(raw) => nutzap_relays_accepted(raw).unwrap_or(0) > 0,
+                            Err(_) => false,
+                        };
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = match pub_res {
+                                Ok(ref raw) => match nutzap_relays_accepted(raw) {
+                                    Ok(n) if n > 0 => ZapStatus::Settled(format!(
+                                        "Nutzapped {} sats via Cashu (NIP-61 · {n} relay(s))",
+                                        pending.amount_sats
+                                    )),
+                                    Ok(_) => ZapStatus::Failed(
+                                        "Proofs already created, but 0 relays accepted kind:9321; click Nutzap to retry publishing without re-spending."
+                                            .to_string(),
+                                    ),
+                                    Err(err) => ZapStatus::Failed(err),
+                                },
+                                Err(err) => {
+                                    ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()))
+                                }
+                            };
+                        }
+                        if settled {
+                            this.pending_nutzap = None;
+                            cx.emit(ZapSettled {
+                                target_event_id: pending.target_event_id.clone(),
+                                amount_sats: pending.amount_sats,
+                                optimistic_bump: false,
+                            });
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                }));
+                return;
+            }
             let summary = match cached_wallet {
                 WalletBadge::Ready(summary) => summary,
                 WalletBadge::Unavailable(err) => {
@@ -449,6 +557,20 @@ impl NostrZapView {
                     .log_err();
                     return;
                 }
+                let pending_record = PendingNutzapPublish {
+                    target_event_id: target_event_id.clone(),
+                    target_pubkey: target_pubkey.clone(),
+                    p2pk_pubkey: p2pk_pubkey.clone(),
+                    mint_url: mint_url.clone(),
+                    allowed_mints: allowed_mints.clone(),
+                    proofs_json: proofs_json.clone(),
+                    amount_sats,
+                    comment: comment_text.clone(),
+                };
+                this.update(cx, |this, _| {
+                    this.pending_nutzap = Some(pending_record.clone());
+                })
+                .log_err();
                 let mut nutzap_args = json!({
                     "recipient": target_pubkey,
                     "recipient_p2pk_pubkey": p2pk_pubkey,
@@ -475,18 +597,29 @@ impl NostrZapView {
                 };
                 let pub_res = pub_task.await;
                 this.update(cx, |this, cx| {
-                    let settled = pub_res.is_ok();
+                    let settled = match &pub_res {
+                        Ok(raw) => nutzap_relays_accepted(raw).unwrap_or(0) > 0,
+                        Err(_) => false,
+                    };
                     if let Some(z) = this.zap.as_mut() {
                         z.status = match pub_res {
-                            Ok(_) => ZapStatus::Settled(format!(
-                                "Nutzapped {amount_sats} sats via Cashu (NIP-61)"
-                            )),
+                            Ok(ref raw) => match nutzap_relays_accepted(raw) {
+                                Ok(n) if n > 0 => ZapStatus::Settled(format!(
+                                    "Nutzapped {amount_sats} sats via Cashu (NIP-61 · {n} relay(s))"
+                                )),
+                                Ok(_) => ZapStatus::Failed(
+                                    "Proofs created, but 0 relays accepted kind:9321; click Nutzap to retry publishing without re-spending."
+                                        .to_string(),
+                                ),
+                                Err(err) => ZapStatus::Failed(err),
+                            },
                             Err(err) => {
                                 ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()))
                             }
                         };
                     }
                     if settled {
+                        this.pending_nutzap = None;
                         cx.emit(ZapSettled {
                             target_event_id: target_event_id.clone(),
                             amount_sats,
@@ -898,10 +1031,8 @@ mod tests {
         assert!(parse_nutzap_info_from_events(r#"{"events":[]}"#, &allowed).is_err());
 
         // Missing pubkey tag -> refused
-        let no_pk = format!(
-            r#"{{"events":[{{"kind":10019,"created_at":10,"tags":[["mint","https://mint.example.com/"]]}}]}}"#
-        );
-        assert!(parse_nutzap_info_from_events(&no_pk, &allowed).is_err());
+        let no_pk = r#"{"events":[{"kind":10019,"created_at":10,"tags":[["mint","https://mint.example.com/"]]}]}"#;
+        assert!(parse_nutzap_info_from_events(no_pk, &allowed).is_err());
 
         // Non-overlapping mint -> refused
         let wrong_mint = format!(

@@ -293,7 +293,9 @@ fn is_valid_handle_address(value: &str) -> bool {
         && !domain.is_empty()
         && domain.contains('.')
         && !value.chars().any(char::is_whitespace)
+        && !local.contains('/')
         && !domain.contains('/')
+        && !domain.contains('@')
 }
 
 /// Sign a NIP-01 `kind: 0` replaceable profile metadata event.
@@ -415,7 +417,12 @@ pub fn sign_highlight(
                 reason: "source_author_hex must be 64 lowercase hex characters",
             });
         }
-        tags.push(vec!["p".to_string(), author.to_string()]);
+        tags.push(vec![
+            "p".to_string(),
+            author.to_string(),
+            String::new(),
+            "author".to_string(),
+        ]);
     }
     if let Some(url) = draft
         .source_url
@@ -804,8 +811,14 @@ pub fn sign_relay_list(
     for raw in relay_urls {
         let trimmed = raw.trim();
         let (url, marker) = match trimmed.rsplit_once('|') {
-            Some((u, m @ ("read" | "write"))) => (u.trim(), Some(m)),
-            _ => (trimmed, None),
+            Some((u, "read")) => (u.trim(), Some("read")),
+            Some((u, "write")) => (u.trim(), Some("write")),
+            Some(_) => {
+                return Err(SignError::InvalidList {
+                    reason: "kind 10002 relay marker after '|' must be 'read' or 'write'",
+                });
+            }
+            None => (trimmed, None),
         };
         if !url.starts_with("wss://") || url.chars().any(char::is_whitespace) || url.len() > 512 {
             return Err(SignError::InvalidList {
@@ -823,6 +836,7 @@ pub fn sign_relay_list(
     sign_verified_parts(key, RELAY_LIST_KIND, created_at, tags, "")
 }
 
+/// Sign a NIP-17 `kind: 10050` DM inbox relay list event.
 pub fn sign_dm_relays(
     key: &SecretKey,
     created_at: u64,
@@ -1620,7 +1634,12 @@ mod tests {
         assert_eq!(ev.kind(), HIGHLIGHT_KIND);
         Event::from_json(&ev.to_json()).expect("9802 verifies");
         assert!(ev.tags().contains(&vec!["e".to_string(), ev_id]));
-        assert!(ev.tags().contains(&vec!["p".to_string(), author]));
+        assert!(ev.tags().contains(&vec![
+            "p".to_string(),
+            author,
+            String::new(),
+            "author".to_string(),
+        ]));
         assert!(ev.tags().contains(&vec![
             "comment".to_string(),
             "Core cybernetics axiom".to_string()
@@ -1664,6 +1683,10 @@ mod tests {
         );
         assert!(matches!(
             sign_relay_list(&key, 1_700_000_000, &["ws://insecure.local".into()]),
+            Err(SignError::InvalidList { .. })
+        ));
+        assert!(matches!(
+            sign_relay_list(&key, 1_700_000_000, &["wss://nos.lol|bogus".into()]),
             Err(SignError::InvalidList { .. })
         ));
     }

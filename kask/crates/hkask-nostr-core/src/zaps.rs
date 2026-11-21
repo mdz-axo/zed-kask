@@ -183,7 +183,13 @@ pub fn parse_nutzap_info(event: &Event) -> Result<ParsedNutzapInfo, ZapParseErro
         });
     }
     let raw_pk = first_tag_value(event, "pubkey").ok_or(ZapParseError::MissingTag("pubkey"))?;
-    let p2pk_pubkey = validate_nip61_p2pk_pubkey(raw_pk)?;
+    let trimmed_pk = raw_pk.trim().to_ascii_lowercase();
+    let p2pk_pubkey = if trimmed_pk.len() == 64 && trimmed_pk.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        format!("02{trimmed_pk}")
+    } else {
+        validate_nip61_p2pk_pubkey(&trimmed_pk)?
+    };
     let mints: Vec<String> = event
         .tags()
         .iter()

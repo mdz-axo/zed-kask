@@ -155,6 +155,12 @@ impl NostrDmView {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(threads) => {
+                        if this.seen_counts.is_empty() {
+                            for t in &threads {
+                                this.seen_counts
+                                    .insert(t.peer_pubkey_hex.clone(), t.message_count);
+                            }
+                        }
                         this.threads = threads;
                         if this.selected_peer.is_none()
                             && let Some(first) = this.threads.first()
@@ -478,7 +484,7 @@ impl Render for NostrDmView {
                                     .seen_counts
                                     .get(&thread.peer_pubkey_hex)
                                     .copied()
-                                    .unwrap_or(thread.message_count);
+                                    .unwrap_or(0);
                                 let unread = thread.message_count.saturating_sub(seen);
                                 let base = format_peer_label(
                                     &thread.peer_pubkey_hex,
@@ -505,14 +511,23 @@ impl Render for NostrDmView {
                             .iter()
                             .skip(MAX_VISIBLE_DM_PEERS)
                             .map(|t| {
-                                (
-                                    t.peer_pubkey_hex.clone(),
-                                    format_peer_label(
-                                        &t.peer_pubkey_hex,
-                                        &self.peer_names,
-                                        Some(t.message_count),
-                                    ),
-                                )
+                                let seen = self
+                                    .seen_counts
+                                    .get(&t.peer_pubkey_hex)
+                                    .copied()
+                                    .unwrap_or(0);
+                                let unread = t.message_count.saturating_sub(seen);
+                                let base = format_peer_label(
+                                    &t.peer_pubkey_hex,
+                                    &self.peer_names,
+                                    Some(t.message_count),
+                                );
+                                let label = if unread > 0 {
+                                    format!("• {base}")
+                                } else {
+                                    base
+                                };
+                                (t.peer_pubkey_hex.clone(), label)
                             })
                             .collect();
                         let dm_view = cx.weak_entity();

@@ -194,17 +194,30 @@ pub struct PublishProfileRequest {
 }
 
 /// Extract and validate NIP-65 write relays (`["r", url]` or `["r", url, "write"]`)
-/// from fetched `kind: 10002` events, filtering through `policy` and capping at `max_relays`.
+/// from the newest `kind: 10002` event per author, filtering through `policy`
+/// and capping at `max_relays`.
 fn extract_validated_outbox_relays(
     events: &[(Event, Vec<String>)],
     policy: AddressPolicy,
     max_relays: usize,
 ) -> Vec<RelayUrl> {
-    let mut out = Vec::new();
+    // Keep only the newest kind:10002 per author so superseded relay lists are ignored.
+    let mut newest_by_author: BTreeMap<PublicKey, &Event> = BTreeMap::new();
     for (event, _) in events {
         if event.kind != Kind::RelayList {
             continue;
         }
+        newest_by_author
+            .entry(event.pubkey)
+            .and_modify(|existing| {
+                if event.created_at > existing.created_at {
+                    *existing = event;
+                }
+            })
+            .or_insert(event);
+    }
+    let mut out = Vec::new();
+    for event in newest_by_author.values() {
         for tag in event.tags.iter() {
             let slice = tag.as_slice();
             if slice.first().map(String::as_str) != Some("r") {
@@ -2610,10 +2623,10 @@ impl NostrClientServer {
                 }
             };
             let session = self.open_session().await?;
-            let targets = session.target_addresses();
+            let targets = session.connected_target_addresses();
             if targets.is_empty() {
                 return Err(McpToolError::unavailable(
-                    "no local relay or usable seed relay is reachable to publish the profile",
+                    "no local relay or usable seed relay is connected to publish the profile",
                 ));
             }
             let now_secs = std::time::SystemTime::now()
@@ -2708,10 +2721,10 @@ impl NostrClientServer {
                 }
             };
             let session = self.open_session().await?;
-            let targets = session.target_addresses();
+            let targets = session.connected_target_addresses();
             if targets.is_empty() {
                 return Err(McpToolError::unavailable(
-                    "no local relay or usable seed relay is reachable to publish the highlight",
+                    "no local relay or usable seed relay is connected to publish the highlight",
                 ));
             }
             let now_secs = std::time::SystemTime::now()
