@@ -17,8 +17,9 @@ use ui::{Label, LabelSize, prelude::*};
 use util::ResultExt as _;
 
 use crate::nostr_composer::{
-    CHAR_WARNING_THRESHOLD, ComposerState, PUBLISH_ARTICLE_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL,
-    PublishOutcome, QuoteContext, ReplyContext, slugify_article_title,
+    CHAR_WARNING_THRESHOLD, ComposerState, MAX_ARTICLE_CHARS, PUBLISH_ARTICLE_TOOL,
+    PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, QuoteContext, ReplyContext,
+    slugify_article_title,
 };
 use crate::nostr_event_model::host_of;
 use crate::nostr_viewer::{invoke, short_hex};
@@ -216,6 +217,15 @@ impl NostrComposerView {
         }
     }
 
+    fn clear_article_editors(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ed) = &self.article_title_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
+        if let Some(ed) = &self.article_slug_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
+    }
+
     fn discard_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.composer.is_publishing() {
             return;
@@ -224,6 +234,7 @@ impl NostrComposerView {
         if let Some(editor) = &self.composer_editor {
             editor.update(cx, |ed, cx| ed.set_text("", window, cx));
         }
+        self.clear_article_editors(window, cx);
         cx.notify();
     }
 
@@ -275,7 +286,15 @@ impl NostrComposerView {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let payload = match self.composer.begin_publish(now_secs) {
+        let is_article_mode = self.article_mode
+            && self.composer.reply_target.is_none()
+            && self.composer.quote_target.is_none();
+        let max_chars = if is_article_mode {
+            MAX_ARTICLE_CHARS
+        } else {
+            MAX_CONTENT_CHARS
+        };
+        let payload = match self.composer.begin_publish_with_limit(now_secs, max_chars) {
             Ok(payload) => payload,
             Err(_) => {
                 cx.notify();
@@ -362,6 +381,8 @@ impl NostrComposerView {
         };
 
         let editor_handle = self.composer_editor.clone();
+        let title_handle = self.article_title_editor.clone();
+        let slug_handle = self.article_slug_editor.clone();
         let window_handle = window.window_handle();
         self._publish_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -370,13 +391,21 @@ impl NostrComposerView {
                     Ok(raw_json) => {
                         let any_accepted = this.composer.finish_publish_ok(&raw_json);
                         if any_accepted {
-                            if let Some(ed) = &editor_handle {
-                                window_handle
-                                    .update(cx, |_, window, cx| {
+                            window_handle
+                                .update(cx, |_, window, cx| {
+                                    if let Some(ed) = &editor_handle {
                                         ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-                                    })
-                                    .log_err();
-                            }
+                                    }
+                                    if is_article {
+                                        if let Some(ed) = &title_handle {
+                                            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                        }
+                                        if let Some(ed) = &slug_handle {
+                                            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                        }
+                                    }
+                                })
+                                .log_err();
                             cx.emit(NotePublished);
                         }
                     }
@@ -515,11 +544,21 @@ impl NostrComposerView {
             None
         };
         let chars = self.composer.char_count();
+        let max_chars = if is_article {
+            MAX_ARTICLE_CHARS
+        } else {
+            MAX_CONTENT_CHARS
+        };
+        let warn_threshold = if is_article {
+            MAX_ARTICLE_CHARS.saturating_sub(2_000)
+        } else {
+            CHAR_WARNING_THRESHOLD
+        };
         let publishing = self.composer.is_publishing();
-        let can_publish = !publishing && self.composer.has_draft() && chars <= MAX_CONTENT_CHARS;
-        let counter_color = if chars > MAX_CONTENT_CHARS {
+        let can_publish = !publishing && self.composer.has_draft() && chars <= max_chars;
+        let counter_color = if chars > max_chars {
             Color::Error
-        } else if chars >= CHAR_WARNING_THRESHOLD {
+        } else if chars >= warn_threshold {
             Color::Warning
         } else {
             Color::Muted
@@ -538,7 +577,7 @@ impl NostrComposerView {
         let status_text = if publishing {
             "Awaiting approval / publishing…".to_string()
         } else {
-            format!("{chars}/{MAX_CONTENT_CHARS} · {npub_short} · {relay_count} relays")
+            format!("{chars}/{max_chars} · {npub_short} · {relay_count} relays")
         };
         let media_paths = self.composer.media_paths.clone();
         let error = self.composer.error.clone();

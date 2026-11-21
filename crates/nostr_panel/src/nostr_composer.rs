@@ -85,6 +85,9 @@ pub(crate) const QUICK_REACTIONS: &[(&str, &str)] = &[
     ("❤", "❤"),
 ];
 
+/// Maximum Markdown characters in one NIP-23 `kind: 30023` long-form article.
+pub(crate) const MAX_ARTICLE_CHARS: usize = 64_000;
+
 /// Character count at which the live counter switches to warning emphasis.
 pub(crate) const CHAR_WARNING_THRESHOLD: usize = 3_800;
 
@@ -493,23 +496,33 @@ pub(crate) fn sanitize_untrusted_text(text: &str) -> String {
         .collect()
 }
 
+/// Validate a note or article draft against `max_chars`, allowing empty text
+/// when at least one Blossom media attachment is attached.
+pub(crate) fn validate_draft_with_limit(
+    text: &str,
+    has_media: bool,
+    max_chars: usize,
+) -> Result<&str, DraftValidationError> {
+    if text.trim().is_empty() && !has_media {
+        return Err(DraftValidationError::Empty);
+    }
+    let chars = text.chars().count();
+    if chars > max_chars {
+        return Err(DraftValidationError::TooLong {
+            chars,
+            max: max_chars,
+        });
+    }
+    Ok(text)
+}
+
 /// Validate a note draft, allowing empty text when at least one Blossom media
 /// attachment is attached (top-level `kind: 1` notes only).
 pub(crate) fn validate_draft_with_media(
     text: &str,
     has_media: bool,
 ) -> Result<&str, DraftValidationError> {
-    if text.trim().is_empty() && !has_media {
-        return Err(DraftValidationError::Empty);
-    }
-    let chars = text.chars().count();
-    if chars > MAX_CONTENT_CHARS {
-        return Err(DraftValidationError::TooLong {
-            chars,
-            max: MAX_CONTENT_CHARS,
-        });
-    }
-    Ok(text)
+    validate_draft_with_limit(text, has_media, MAX_CONTENT_CHARS)
 }
 
 /// Parse `nostr_publish_note`'s JSON response into a typed `PublishOutcome`.
@@ -704,13 +717,24 @@ impl ComposerState {
         }
     }
 
-    /// Validate the current draft and enter `Publishing`.
+    /// Validate the current draft against `MAX_CONTENT_CHARS` and enter `Publishing`.
+    #[cfg(test)]
     pub(crate) fn begin_publish(
         &mut self,
         now_unix_secs: u64,
     ) -> Result<PublishPayload, DraftValidationError> {
+        self.begin_publish_with_limit(now_unix_secs, MAX_CONTENT_CHARS)
+    }
+
+    /// Validate the current draft against `max_chars` (4,000 for notes, 64,000
+    /// for NIP-23 articles) and enter `Publishing`.
+    pub(crate) fn begin_publish_with_limit(
+        &mut self,
+        now_unix_secs: u64,
+        max_chars: usize,
+    ) -> Result<PublishPayload, DraftValidationError> {
         let has_media = self.reply_target.is_none() && !self.media_paths.is_empty();
-        let content = match validate_draft_with_media(&self.draft, has_media) {
+        let content = match validate_draft_with_limit(&self.draft, has_media, max_chars) {
             Ok(valid) => valid.to_string(),
             Err(err) => {
                 self.error = Some(err.message());
