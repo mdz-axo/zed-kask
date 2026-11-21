@@ -89,7 +89,7 @@ use serde_json::{Value, json};
 use settings::Settings as _;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::TimestampFormat;
-use ui::{Label, LabelSize, prelude::*};
+use ui::{Label, LabelSize, WithScrollbar as _, prelude::*};
 use util::ResultExt as _;
 
 /// The tools the viewer dispatches itself. Pinned against the servers'
@@ -97,6 +97,7 @@ use util::ResultExt as _;
 const ARCHIVE_TOOL: &str = "nostr_relay_query";
 const STATUS_TOOL: &str = "nostr_relay_status";
 const LOG_TOOL: &str = "nostr_relay_log";
+const SYNC_TOOL: &str = "nostr_relay_sync";
 const THREAD_TOOL: &str = "nostr_thread";
 const FETCH_TOOL: &str = "nostr_fetch_events";
 const NOTIFICATIONS_TOOL: &str = "nostr_notifications";
@@ -1483,6 +1484,9 @@ pub struct NostrViewer {
     /// Back can return to them.
     conversation_back: Vec<String>,
     timeline_scroll_handle: ScrollHandle,
+    notifications_scroll_handle: ScrollHandle,
+    conversation_scroll_handle: ScrollHandle,
+    relay_scroll_handle: ScrollHandle,
     detail_scroll_handle: ScrollHandle,
     composer: ComposerState,
     composer_editor: Option<Entity<editor::Editor>>,
@@ -1775,6 +1779,9 @@ impl NostrViewer {
             profile_lookups: BTreeMap::new(),
             conversation_back: Vec::new(),
             timeline_scroll_handle: ScrollHandle::new(),
+            notifications_scroll_handle: ScrollHandle::new(),
+            conversation_scroll_handle: ScrollHandle::new(),
+            relay_scroll_handle: ScrollHandle::new(),
             detail_scroll_handle: ScrollHandle::new(),
             composer: ComposerState::new(),
             composer_editor: None,
@@ -3326,6 +3333,7 @@ impl NostrViewer {
                         this.ensure_article_markdown(&id, content, cx);
                     }
                     this.selected = Some(id.clone());
+                    this.detail_meta_expanded = false;
                     this.detail_scroll_handle
                         .set_offset(gpui::point(px(0.), px(0.)));
                     cx.notify();
@@ -3477,7 +3485,14 @@ impl NostrViewer {
             .into_any_element()
     }
 
-    fn rows(&self, rows: &[Row], indent: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn rows(
+        &self,
+        rows: &[Row],
+        indent: bool,
+        scroll_handle: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let names = self.names_of(rows);
         let offset = local_offset();
         let now = OffsetDateTime::now_utc();
@@ -3489,8 +3504,16 @@ impl NostrViewer {
             .min_h_0()
             .flex_1()
             .overflow_y_scroll()
+            .track_scroll(scroll_handle)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .tracked_scroll_handle(scroll_handle),
+                window,
+                cx,
+            )
             .gap_0p5()
             .p_1()
+            .pr_3()
             .children(
                 rows.iter()
                     .enumerate()
@@ -3598,7 +3621,7 @@ impl NostrViewer {
         row: &Row,
         names: &BTreeMap<String, AuthorProfile>,
         window: &mut Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let event = &row.event;
         let source = if event.served_by.is_empty() {
@@ -3640,9 +3663,16 @@ impl NostrViewer {
             .flex_shrink_0()
             .overflow_y_scroll()
             .track_scroll(&self.detail_scroll_handle)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .tracked_scroll_handle(&self.detail_scroll_handle),
+                window,
+                cx,
+            )
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .p_2()
+            .pr_3()
             .gap_1()
             .child(
                 h_flex()
@@ -3668,6 +3698,42 @@ impl NostrViewer {
                             .color(Color::Default)
                             .truncate(),
                         ),
+                    )
+                    .child(
+                        ui::Button::new("nostr-detail-copy-text", "Copy text")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text("Copy event content to clipboard"))
+                            .on_click(cx.listener({
+                                let content = event.content.clone();
+                                let id = event.id.clone();
+                                move |this, _, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        content.clone(),
+                                    ));
+                                    this.reaction_feedback =
+                                        Some((id.clone(), true, "Copied text to clipboard".into()));
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(
+                        ui::Button::new("nostr-detail-copy-id", "Copy ID")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text("Copy event hex ID to clipboard"))
+                            .on_click(cx.listener({
+                                let id = event.id.clone();
+                                move |this, _, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        id.clone(),
+                                    ));
+                                    this.reaction_feedback = Some((
+                                        id.clone(),
+                                        true,
+                                        "Copied event ID to clipboard".into(),
+                                    ));
+                                    cx.notify();
+                                }
+                            })),
                     )
                     .child(
                         ui::Button::new(
@@ -4097,7 +4163,7 @@ impl NostrViewer {
             })
     }
 
-    fn render_timeline(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
+    fn render_timeline(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(feed) = self.active_timeline_feed() else {
             return v_flex()
                 .size_full()
@@ -4183,6 +4249,18 @@ impl NostrViewer {
                                                 this.toggle_compose(window, cx);
                                             }),
                                         ),
+                                    )
+                                    .child(
+                                        ui::Button::new("nostr-timeline-top", "Top")
+                                            .label_size(LabelSize::XSmall)
+                                            .tooltip(ui::Tooltip::text(
+                                                "Scroll timeline back to top",
+                                            ))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.timeline_scroll_handle
+                                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                                cx.notify();
+                                            })),
                                     )
                                     .child(self.filter_button(
                                         "nostr-filter-reading",
@@ -4302,8 +4380,15 @@ impl NostrViewer {
                     .flex_1()
                     .overflow_y_scroll()
                     .track_scroll(&self.timeline_scroll_handle)
+                    .custom_scrollbars(
+                        ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                            .tracked_scroll_handle(&self.timeline_scroll_handle),
+                        window,
+                        cx,
+                    )
                     .gap_0p5()
                     .p_1()
+                    .pr_3()
                     .children(line_elements)
                     .into_any_element()
             })
@@ -4314,7 +4399,7 @@ impl NostrViewer {
             .into_any_element()
     }
 
-    fn render_notifications(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
+    fn render_notifications(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let request = Self::request_line(
             &self.notifications_request,
             "Loading notifications from relays…",
@@ -4343,7 +4428,7 @@ impl NostrViewer {
             .overflow_hidden()
             .children(request)
             .child(
-                div()
+                v_flex()
                     .w_full()
                     .flex_1()
                     .min_h_0()
@@ -4356,7 +4441,14 @@ impl NostrViewer {
                         )
                         .into_any_element()
                     } else {
-                        self.rows(&feed.rows, false, cx).into_any_element()
+                        self.rows(
+                            &feed.rows,
+                            false,
+                            &self.notifications_scroll_handle,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
             )
             .when_some(selected_row, |el, row| {
@@ -4365,7 +4457,7 @@ impl NostrViewer {
             .into_any_element()
     }
 
-    fn render_conversation(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
+    fn render_conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let request = Self::request_line(
             &self.thread_request,
             "Asking the local relay and the seed relays…",
@@ -4433,7 +4525,13 @@ impl NostrViewer {
                     .child(Self::remarks(&conversation.remarks))
                     .children(request),
             )
-            .child(self.rows(&conversation.rows, true, cx))
+            .child(self.rows(
+                &conversation.rows,
+                true,
+                &self.conversation_scroll_handle,
+                window,
+                cx,
+            ))
             .children(
                 self.selected_row()
                     .map(|row| self.detail(row, &names, window, cx)),
@@ -4441,7 +4539,36 @@ impl NostrViewer {
             .into_any_element()
     }
 
-    fn render_relay(&self, _cx: &Context<Self>) -> AnyElement {
+    fn sync_local_relay(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.relay_request.begin();
+        cx.notify();
+        let task = match invoke(NOSTR_RELAY_SERVER, SYNC_TOOL, json!({})) {
+            Ok(task) => task,
+            Err(error) => {
+                self.relay_request.finish(epoch, Some(error));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(SYNC_TOOL, task.await);
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.relay_request.finish(epoch, None);
+                    this.load_relay(cx);
+                    this.load_archive(cx);
+                }
+                Err(err) => {
+                    this.relay_request.finish(epoch, Some(err));
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn render_relay(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let request = Self::request_line(&self.relay_request, "Reading the local relay…");
         let Some(reading) = &self.relay else {
             return v_flex()
@@ -4466,8 +4593,31 @@ impl NostrViewer {
             .min_w_0()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.relay_scroll_handle)
+            .custom_scrollbars(
+                ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                    .tracked_scroll_handle(&self.relay_scroll_handle),
+                window,
+                cx,
+            )
             .p_2()
+            .pr_3()
             .gap_1()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        ui::Button::new("nostr-relay-sync", "Sync local relay")
+                            .style(ui::ButtonStyle::Filled)
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text(
+                                "Contacts configured sync relays to pull allowlisted authors' public events into the local archive",
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| this.sync_local_relay(cx))),
+                    ),
+            )
             .children(request)
             .child(Self::line(
                 display_text(&listener),
@@ -6280,6 +6430,13 @@ impl NostrViewer {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.dm_scroll_handle)
+                    .custom_scrollbars(
+                        ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
+                            .tracked_scroll_handle(&self.dm_scroll_handle),
+                        window,
+                        cx,
+                    )
+                    .pr_3()
                     .gap_1()
                     .when(self.dm_messages.is_empty(), |el| {
                         el.child(Self::line(
@@ -6352,6 +6509,41 @@ impl NostrViewer {
             )
             .into_any_element()
     }
+    fn step_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let rows: Vec<String> = match self.tab {
+            ViewerTab::Timeline => self
+                .active_timeline_feed()
+                .map(|f| f.rows.iter().map(|r| r.event.id.clone()).collect())
+                .unwrap_or_default(),
+            ViewerTab::Notifications => self
+                .notifications_feed
+                .as_ref()
+                .map(|f| f.rows.iter().map(|r| r.event.id.clone()).collect())
+                .unwrap_or_default(),
+            ViewerTab::Conversation => self
+                .conversation
+                .as_ref()
+                .map(|c| c.rows.iter().map(|r| r.event.id.clone()).collect())
+                .unwrap_or_default(),
+            ViewerTab::Relay | ViewerTab::Messages => return,
+        };
+        if rows.is_empty() {
+            return;
+        }
+        let next_ix = match self
+            .selected
+            .as_ref()
+            .and_then(|id| rows.iter().position(|r| r == id))
+        {
+            Some(cur) => (cur as isize + delta).clamp(0, rows.len() as isize - 1) as usize,
+            None => 0,
+        };
+        self.selected = Some(rows[next_ix].clone());
+        self.detail_meta_expanded = false;
+        self.detail_scroll_handle
+            .set_offset(gpui::point(px(0.), px(0.)));
+        cx.notify();
+    }
 }
 
 impl Render for NostrViewer {
@@ -6379,7 +6571,7 @@ impl Render for NostrViewer {
             ViewerTab::Timeline => self.render_timeline(window, cx),
             ViewerTab::Notifications => self.render_notifications(window, cx),
             ViewerTab::Conversation => self.render_conversation(window, cx),
-            ViewerTab::Relay => self.render_relay(cx),
+            ViewerTab::Relay => self.render_relay(window, cx),
             ViewerTab::Messages => self.render_messages(window, cx),
         };
         v_flex()
@@ -6387,6 +6579,37 @@ impl Render for NostrViewer {
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if this.composer.is_open() {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "escape" => {
+                        if this.zap.is_some()
+                            && !this.zap.as_ref().is_some_and(ZapDraftState::is_busy)
+                        {
+                            this.zap = None;
+                            this.clear_zap_editors(window, cx);
+                            cx.notify();
+                            cx.stop_propagation();
+                        } else if this.selected.is_some() {
+                            this.selected = None;
+                            this.detail_meta_expanded = false;
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }
+                    "down" => {
+                        this.step_selection(1, cx);
+                        cx.stop_propagation();
+                    }
+                    "up" => {
+                        this.step_selection(-1, cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
             .child(
                 h_flex()
                     .h_8()
@@ -6533,7 +6756,7 @@ mod tests {
     /// in hkask-mcp-media — the same chain, one link shorter.
     #[test]
     fn dispatched_tools_are_the_servers_own() {
-        for tool in [ARCHIVE_TOOL, STATUS_TOOL, LOG_TOOL] {
+        for tool in [ARCHIVE_TOOL, STATUS_TOOL, LOG_TOOL, SYNC_TOOL] {
             assert!(RELAY_TOOL_NAMES.contains(&tool), "{tool}");
         }
         assert!(CLIENT_TOOL_NAMES.contains(&THREAD_TOOL));
