@@ -66,6 +66,7 @@ use crate::nostr_composer::{
     ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus, parse_custom_sats, parse_wallet_status,
     sanitize_untrusted_text,
 };
+use crate::nostr_dm_view::NostrDmView;
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
 use gpui::{
@@ -82,7 +83,7 @@ use hkask_types::nostr_wire::{
 use hkask_types::wallet_wire::WALLET_SERVER_ID;
 use image::Frame;
 use kask_bridge::KaskSettings;
-use kask_bridge::nostr_dm::{self, DmMessage, DmThreadSummary};
+use kask_bridge::nostr_dm;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1505,17 +1506,8 @@ pub struct NostrViewer {
     reaction_in_flight: Option<String>,
     reaction_feedback: Option<(String, bool, String)>,
     _reaction_task: Option<Task<()>>,
-    /// Editor-only NIP-17 encrypted DMs (SQLCipher-backed, never in Steer/MCP).
-    dm_threads: Vec<DmThreadSummary>,
-    dm_selected_peer: Option<String>,
-    dm_messages: Vec<DmMessage>,
-    dm_status: Option<(bool, String)>,
-    dm_busy: bool,
-    dm_loaded_local: bool,
-    dm_recipient_editor: Option<Entity<editor::Editor>>,
-    dm_input_editor: Option<Entity<editor::Editor>>,
-    dm_scroll_handle: ScrollHandle,
-    _dm_task: Option<Task<()>>,
+    /// Editor-only NIP-17 encrypted DMs view (SQLCipher-backed, never in Steer/MCP).
+    dm_view: Option<Entity<NostrDmView>>,
 }
 
 // ── Reading tool results ────────────────────────────────────────────
@@ -1523,7 +1515,7 @@ pub struct NostrViewer {
 /// Text a third party wrote, made safe to draw: control characters other
 /// than line breaks and tabs are shown as U+FFFD, so a note cannot hide or
 /// reorder what is on screen.
-fn display_text(text: &str) -> SharedString {
+pub(crate) fn display_text(text: &str) -> SharedString {
     let shown: String = text
         .chars()
         .map(|character| match character {
@@ -1540,7 +1532,7 @@ fn display_text(text: &str) -> SharedString {
 }
 
 /// The first and last characters of a hex id or key.
-fn short_hex(hex: &str) -> String {
+pub(crate) fn short_hex(hex: &str) -> String {
     if hex.len() <= 16 || !hex.is_ascii() {
         return hex.to_string();
     }
@@ -1579,7 +1571,7 @@ fn avatar(author: &str) -> impl IntoElement + use<> {
 
 /// A Unix time as UTC text. An event's time is what its author claimed;
 /// the exact UTC reading and the raw seconds stay in the detail pane.
-fn utc_text(seconds: u64) -> String {
+pub(crate) fn utc_text(seconds: u64) -> String {
     let Some(timestamp) = i64::try_from(seconds)
         .ok()
         .and_then(|seconds| OffsetDateTime::from_unix_timestamp(seconds).ok())
@@ -1797,16 +1789,7 @@ impl NostrViewer {
             reaction_in_flight: None,
             reaction_feedback: None,
             _reaction_task: None,
-            dm_threads: Vec::new(),
-            dm_selected_peer: None,
-            dm_messages: Vec::new(),
-            dm_status: None,
-            dm_busy: false,
-            dm_loaded_local: false,
-            dm_recipient_editor: None,
-            dm_input_editor: None,
-            dm_scroll_handle: ScrollHandle::new(),
-            _dm_task: None,
+            dm_view: None,
         }
     }
 
@@ -1837,7 +1820,10 @@ impl NostrViewer {
         match self.tab {
             ViewerTab::Relay => self.load_relay(cx),
             ViewerTab::Notifications => self.load_notifications(cx),
-            ViewerTab::Messages => self.sync_dms(cx),
+            ViewerTab::Messages => {
+                let dm = self.ensure_dm_view(cx);
+                dm.update(cx, |view, cx| view.sync_dms(cx));
+            }
             ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
                 if !matches!(self.follows, Some(Follows::Authors(_))) {
                     self.load_follows(cx);
@@ -3687,19 +3673,48 @@ impl NostrViewer {
                         let viewer = cx.weak_entity();
                         let copy_content = event.content.clone();
                         let copy_id = event.id.clone();
+                        let dm_author_hex = event.author.clone();
+                        let dm_author_name = name.map(str::to_string);
+                        let is_self_author = self
+                            .my_pubkey_hex(cx)
+                            .as_deref()
+                            .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
                         let meta_expanded = self.detail_meta_expanded;
                         PopoverMenu::new("nostr-detail-more-menu")
                             .trigger_with_tooltip(
                                 ui::IconButton::new("nostr-detail-more", ui::IconName::Ellipsis)
                                     .icon_size(ui::IconSize::Small),
-                                ui::Tooltip::text("More event actions (copy text, copy ID, details)"),
+                                ui::Tooltip::text("More event actions (message author, copy, details)"),
                             )
                             .anchor(gpui::Anchor::TopRight)
                             .menu(move |window, cx| {
                                 let viewer = viewer.clone();
                                 let copy_content = copy_content.clone();
                                 let copy_id = copy_id.clone();
-                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                let dm_author_hex = dm_author_hex.clone();
+                                let dm_author_name = dm_author_name.clone();
+                                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    if !is_self_author {
+                                        menu = menu
+                                            .entry("Message author (NIP-17 DM)", None, {
+                                                let viewer = viewer.clone();
+                                                let dm_author_hex = dm_author_hex.clone();
+                                                let dm_author_name = dm_author_name.clone();
+                                                move |window, cx| {
+                                                    viewer
+                                                        .update(cx, |this, cx| {
+                                                            this.open_dm_with_author(
+                                                                dm_author_hex.clone(),
+                                                                dm_author_name.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                }
+                                            })
+                                            .separator();
+                                    }
                                     menu.entry("Copy text", None, {
                                         let viewer = viewer.clone();
                                         let copy_content = copy_content.clone();
@@ -6161,351 +6176,61 @@ impl NostrViewer {
                 .into_any_element(),
         )
     }
-    fn ensure_dm_editors(
+    fn collect_known_author_names(&self) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for rows in [
+            self.feed.as_ref().map(|f| f.rows.as_slice()),
+            self.following_feed.as_ref().map(|f| f.rows.as_slice()),
+            self.notifications_feed.as_ref().map(|f| f.rows.as_slice()),
+            self.conversation.as_ref().map(|c| c.rows.as_slice()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for (pubkey, profile) in self.names_of(rows) {
+                if let Some(name) = profile.name {
+                    out.insert(pubkey, name);
+                }
+            }
+        }
+        for (pubkey, name) in &self.profile_lookups {
+            if let Some(name) = name {
+                out.entry(pubkey.clone()).or_insert_with(|| name.clone());
+            }
+        }
+        out
+    }
+
+    fn ensure_dm_view(&mut self, cx: &mut Context<Self>) -> Entity<NostrDmView> {
+        let names = self.collect_known_author_names();
+        let dm_view = if let Some(existing) = &self.dm_view {
+            existing.clone()
+        } else {
+            let entity = cx.new(|_| NostrDmView::new());
+            self.dm_view = Some(entity.clone());
+            entity
+        };
+        dm_view.update(cx, |view, _| view.update_known_names(names));
+        dm_view
+    }
+
+    fn open_dm_with_author(
         &mut self,
+        author_hex: String,
+        author_name: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
-        let recipient = if let Some(existing) = &self.dm_recipient_editor {
-            existing.clone()
-        } else {
-            let ed = cx.new(|cx| {
-                let mut e = editor::Editor::single_line(window, cx);
-                e.set_placeholder_text("Recipient npub1… or 64-char hex", window, cx);
-                e
-            });
-            self.dm_recipient_editor = Some(ed.clone());
-            ed
-        };
-        let input = if let Some(existing) = &self.dm_input_editor {
-            existing.clone()
-        } else {
-            let ed = cx.new(|cx| {
-                let mut e = editor::Editor::multi_line(window, cx);
-                e.disable_scrollbars_and_minimap(window, cx);
-                e.set_show_gutter(false, cx);
-                e.set_show_line_numbers(false, cx);
-                e.set_show_git_diff_gutter(false, cx);
-                e.set_show_code_actions(false, cx);
-                e.set_show_runnables(false, cx);
-                e.set_show_bookmarks(false, cx);
-                e.set_show_breakpoints(false, cx);
-                e.set_show_wrap_guides(false, cx);
-                e.set_placeholder_text("Write an encrypted NIP-17 DM…", window, cx);
-                e
-            });
-            self.dm_input_editor = Some(ed.clone());
-            ed
-        };
-        (recipient, input)
-    }
-
-    fn load_local_dm_threads(&mut self, cx: &mut Context<Self>) {
-        if self.dm_loaded_local || self.dm_busy {
-            return;
-        }
-        self.dm_loaded_local = true;
-        self._dm_task = Some(cx.spawn(async move |this, cx| {
-            let result = nostr_dm::load_local_threads().await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(threads) => {
-                        this.dm_threads = threads;
-                        if this.dm_selected_peer.is_none() {
-                            if let Some(first) = this.dm_threads.first() {
-                                let peer = first.peer_pubkey_hex.clone();
-                                this.select_dm_peer(peer, cx);
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        this.dm_status = Some((false, err));
-                    }
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
-    }
-
-    fn select_dm_peer(&mut self, peer_hex: String, cx: &mut Context<Self>) {
-        self.dm_selected_peer = Some(peer_hex.clone());
-        self._dm_task = Some(cx.spawn(async move |this, cx| {
-            let result = nostr_dm::load_local_messages(peer_hex).await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(messages) => this.dm_messages = messages,
-                    Err(err) => this.dm_status = Some((false, err)),
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
-    }
-
-    fn sync_dms(&mut self, cx: &mut Context<Self>) {
-        if self.dm_busy {
-            return;
-        }
-        self.dm_busy = true;
-        self.dm_status = Some((true, "Syncing NIP-17 gift wraps from seed relays…".into()));
+    ) {
+        self.tab = ViewerTab::Messages;
+        let dm_view = self.ensure_dm_view(cx);
+        dm_view.update(cx, |view, cx| {
+            view.open_peer(author_hex, author_name, window, cx);
+        });
         cx.notify();
-        self._dm_task = Some(cx.spawn(async move |this, cx| {
-            let result = nostr_dm::sync_dms(cx).await;
-            this.update(cx, |this, cx| {
-                this.dm_busy = false;
-                match result {
-                    Ok(report) => {
-                        let summary = format!(
-                            "Synced {} wrap(s), {} new DM(s) (NIP-17)",
-                            report.fetched_wraps, report.newly_stored
-                        );
-                        this.dm_threads = report.threads;
-                        this.dm_status = Some((true, summary));
-                        if let Some(peer) = this.dm_selected_peer.clone() {
-                            this.select_dm_peer(peer, cx);
-                        } else if let Some(first) = this.dm_threads.first() {
-                            this.select_dm_peer(first.peer_pubkey_hex.clone(), cx);
-                        }
-                    }
-                    Err(err) => {
-                        this.dm_status = Some((false, err));
-                    }
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
     }
 
-    fn send_dm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dm_busy {
-            return;
-        }
-        let (recipient_ed, input_ed) = self.ensure_dm_editors(window, cx);
-        let recipient_raw = self
-            .dm_selected_peer
-            .clone()
-            .unwrap_or_else(|| recipient_ed.read(cx).text(cx));
-        let content = input_ed.read(cx).text(cx);
-        self.dm_busy = true;
-        self.dm_status = Some((true, "Awaiting DM approval & NIP-59 gift wrap…".into()));
-        cx.notify();
-
-        let window_handle = window.window_handle();
-        let input_handle = input_ed;
-        self._dm_task = Some(cx.spawn(async move |this, cx| {
-            let result = nostr_dm::send_dm(recipient_raw, content, cx).await;
-            this.update(cx, |this, cx| {
-                this.dm_busy = false;
-                match result {
-                    Ok(report) => {
-                        let peer = report.message.peer_pubkey_hex.clone();
-                        this.dm_selected_peer = Some(peer);
-                        this.dm_messages.push(report.message);
-                        this.dm_status = Some((
-                            true,
-                            format!(
-                                "Sent encrypted DM (NIP-17 · {} relay(s) accepted)",
-                                report.relays_accepted
-                            ),
-                        ));
-                        window_handle
-                            .update(cx, |_, window, cx| {
-                                input_handle.update(cx, |ed, cx| ed.set_text("", window, cx));
-                            })
-                            .log_err();
-                        this.dm_loaded_local = false;
-                        this.load_local_dm_threads(cx);
-                    }
-                    Err(err) => {
-                        this.dm_status = Some((false, err));
-                    }
-                }
-                cx.notify();
-            })
-            .log_err();
-        }));
-    }
-
-    fn render_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.load_local_dm_threads(cx);
-        let (recipient_ed, input_ed) = self.ensure_dm_editors(window, cx);
-        let busy = self.dm_busy;
-        let selected_peer = self.dm_selected_peer.clone();
-        let status = self.dm_status.clone();
-
-        v_flex()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .overflow_hidden()
-            .p_2()
-            .gap_2()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .min_w_0()
-                    .items_center()
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Label::new("NIP-17 · NIP-44 + NIP-59 · SQLCipher (editor-only)")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .truncate(),
-                        ),
-                    )
-                    .child(
-                        div().flex_shrink_0().child(
-                            ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync DMs" })
-                                .label_size(LabelSize::XSmall)
-                                .disabled(busy)
-                                .tooltip(ui::Tooltip::text(
-                                    "Fetch & unwrap NIP-17 kind:1059 gift wraps from seed relays (https://nostr-nips.com/nip-17)",
-                                ))
-                                .on_click(cx.listener(|this, _, _, cx| this.sync_dms(cx))),
-                        ),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .flex_wrap()
-                    .child(
-                        ui::Button::new("nostr-dm-new", "+ New DM")
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(selected_peer.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.dm_selected_peer = None;
-                                this.dm_messages.clear();
-                                cx.notify();
-                            })),
-                    )
-                    .children(self.dm_threads.iter().enumerate().map(|(ix, thread)| {
-                        let peer_hex = thread.peer_pubkey_hex.clone();
-                        let active = selected_peer.as_deref() == Some(peer_hex.as_str());
-                        let label = format!(
-                            "{} ({})",
-                            short_hex(&thread.peer_pubkey_hex),
-                            thread.message_count
-                        );
-                        ui::Button::new(("nostr-dm-peer", ix), label)
-                            .label_size(LabelSize::XSmall)
-                            .toggle_state(active)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_dm_peer(peer_hex.clone(), cx);
-                            }))
-                    })),
-            )
-            .when(selected_peer.is_none(), |el| {
-                el.child(
-                    div()
-                        .w_full()
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(recipient_ed),
-                )
-            })
-            .when_some(status, |el, (ok, msg)| {
-                el.child(
-                    Label::new(display_text(&msg))
-                        .size(LabelSize::XSmall)
-                        .color(if ok { Color::Muted } else { Color::Error }),
-                )
-            })
-            .child(
-                v_flex()
-                    .id("nostr-dm-messages-list")
-                    .w_full()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.dm_scroll_handle)
-                    .custom_scrollbars(
-                        ui::Scrollbars::always_visible(ui::ScrollAxes::Vertical)
-                            .tracked_scroll_handle(&self.dm_scroll_handle),
-                        window,
-                        cx,
-                    )
-                    .pr_3()
-                    .gap_1()
-                    .when(self.dm_messages.is_empty(), |el| {
-                        el.child(Self::line(
-                            "No decrypted NIP-17 messages in this thread yet. Click Sync DMs or send a message below.",
-                            Color::Muted,
-                        ))
-                    })
-                    .children(self.dm_messages.iter().map(|msg| {
-                        let who = if msg.outgoing { "You" } else { "Peer" };
-                        v_flex()
-                            .w_full()
-                            .p_1()
-                            .rounded_sm()
-                            .bg(cx.theme().colors().surface_background)
-                            .child(Self::line(
-                                format!("{who} · {}", utc_text(msg.created_at)),
-                                Color::Hint,
-                            ))
-                            .child(Self::line(display_text(&msg.content), Color::Default))
-                    })),
-            )
-            .child(
-                v_flex()
-                    .w_full()
-                    .gap_1()
-                    .flex_shrink_0()
-                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter"
-                            && (event.keystroke.modifiers.secondary(cx)
-                                || event.keystroke.modifiers.control)
-                        {
-                            this.send_dm(window, cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .child(
-                        div()
-                            .w_full()
-                            .min_h(px(48.))
-                            .max_h(px(96.))
-                            .overflow_hidden()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().editor_background)
-                            .child(input_ed),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_end()
-                            .child(
-                                ui::Button::new(
-                                    "nostr-dm-send",
-                                    if busy { "Sending…" } else { "Send DM" },
-                                )
-                                .style(ui::ButtonStyle::Filled)
-                                .label_size(LabelSize::XSmall)
-                                .disabled(busy)
-                                .tooltip(ui::Tooltip::text(
-                                    "Send NIP-17 encrypted DM (Ctrl/Cmd+Enter). Always prompts for approval.",
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.send_dm(window, cx);
-                                })),
-                            ),
-                    ),
-            )
-            .into_any_element()
+    fn render_messages(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.ensure_dm_view(cx).into_any_element()
     }
     fn step_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let rows: Vec<String> = match self.tab {
