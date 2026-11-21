@@ -21,6 +21,7 @@
 
 mod blurhash;
 pub(crate) mod nostr_composer;
+pub(crate) mod nostr_composer_view;
 pub(crate) mod nostr_dm_view;
 pub(crate) mod nostr_event_model;
 pub(crate) mod nostr_zap_view;
