@@ -16,7 +16,7 @@ use serde_json::Value;
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::blurhash;
-use crate::nostr_viewer::short_hex;
+use crate::nostr_viewer::{display_text, short_hex};
 
 /// Events asked for when the archive is loaded: the tool's own maximum.
 pub(crate) const ARCHIVE_PAGE: usize = 100;
@@ -1430,7 +1430,9 @@ pub(crate) fn extract_nostr_refs(content: &str) -> Vec<NostrReference> {
 /// Build an untrusted-data-framed co-research prompt for inserting a selected
 /// Nostr event into the Steer conversation pane (never auto-sent).
 pub(crate) fn format_steer_research_prompt(event: &WireEvent, author_label: &str) -> String {
-    let excerpt: String = event.content.chars().take(280).collect();
+    let safe_author = display_text(author_label);
+    let safe_excerpt_raw: String = event.content.chars().take(280).collect();
+    let safe_excerpt = display_text(&safe_excerpt_raw.replace('\n', " "));
     let ellipsis = if event.content.chars().count() > 280 {
         "…"
     } else {
@@ -1443,10 +1445,10 @@ pub(crate) fn format_steer_research_prompt(event: &WireEvent, author_label: &str
          - kind: {}\n\
          - excerpt: \"{}{}\"\n",
         event.id,
-        author_label,
+        safe_author,
         short_hex(&event.author),
         event.kind,
-        excerpt.replace('\n', " "),
+        safe_excerpt,
         ellipsis,
     )
 }
@@ -1512,5 +1514,25 @@ mod tests {
         assert_eq!(all[1].url, "https://cdn.example/two.mp4");
         assert_eq!(all[1].kind, MediaAttachmentKind::Video);
         assert_eq!(all[2].url, "https://cdn.example/three.png");
+    }
+
+    #[test]
+    fn format_steer_research_prompt_sanitizes_bidi_and_control_chars() {
+        let ev = WireEvent {
+            id: "a".repeat(64),
+            author: "b".repeat(64),
+            kind: 1,
+            created_at: 100,
+            content: "Hello \u{202E}evil\u{0007}\nline2".to_string(),
+            content_truncated: false,
+            tags: Vec::new(),
+            tags_truncated: false,
+            served_by: Vec::new(),
+        };
+        let prompt = format_steer_research_prompt(&ev, "Al\u{202E}ice");
+        assert!(!prompt.contains('\u{202E}'));
+        assert!(!prompt.contains('\u{0007}'));
+        assert!(prompt.contains("Hello \u{FFFD}evil\u{FFFD} line2"));
+        assert!(prompt.contains("Al\u{FFFD}ice"));
     }
 }

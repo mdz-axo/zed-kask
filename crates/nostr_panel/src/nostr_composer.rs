@@ -130,6 +130,7 @@ pub(crate) struct PublishPayload {
 pub(crate) struct LastSubmittedPayload {
     pub(crate) content: String,
     pub(crate) reply_target: Option<ReplyContext>,
+    pub(crate) quote_target: Option<QuoteContext>,
     pub(crate) media_paths: Vec<String>,
 }
 
@@ -697,6 +698,7 @@ impl ComposerState {
         self.last_submitted = Some(LastSubmittedPayload {
             content: content.clone(),
             reply_target: self.reply_target.clone(),
+            quote_target: self.quote_target.clone(),
             media_paths: media_paths.clone(),
         });
         self.error = None;
@@ -729,6 +731,7 @@ impl ComposerState {
         };
         self.draft = last.content;
         self.reply_target = last.reply_target;
+        self.quote_target = last.quote_target;
         self.media_paths = last.media_paths;
         self.error = None;
         self.phase = ComposerPhase::Drafting;
