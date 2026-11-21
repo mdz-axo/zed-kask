@@ -163,6 +163,15 @@ pub struct PublishNoteRequest {
     /// `NIP-92` `imeta` tags on the published kind 1 note.
     #[serde(default)]
     pub media_paths: Option<Vec<String>>,
+    /// Optional NIP-10 quoted event id (`note`, `nevent`, or 64-character hex).
+    /// When set, `quote_pubkey` must also be provided; emits `["q", id, "", pubkey]`
+    /// and `["p", pubkey]` tags on the published `kind: 1` note.
+    #[serde(default)]
+    pub quote_event_id: Option<String>,
+    /// Optional author public key (`npub`, `nprofile`, or 64-character hex) of
+    /// the quoted event (required when `quote_event_id` is set).
+    #[serde(default)]
+    pub quote_pubkey: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -1036,12 +1045,33 @@ impl NostrClientServer {
                 }
             };
 
+            let quote_wire = match (&request.quote_event_id, &request.quote_pubkey) {
+                (None, None) => None,
+                (Some(raw_id), Some(raw_pk)) => {
+                    let event_id = identifiers::parse_event_id(raw_id)
+                        .map_err(|error| refused("quote_event_id", error))?;
+                    let pubkey = identifiers::parse_public_key(raw_pk)
+                        .map_err(|error| refused("quote_pubkey", error))?;
+                    Some(hkask_types::nostr_wire::NostrQuoteWire {
+                        event_id_hex: event_id.to_hex(),
+                        author_pubkey_hex: pubkey.to_hex(),
+                        relay_hint: None,
+                    })
+                }
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "quote_event_id and quote_pubkey must both be provided together",
+                    ));
+                }
+            };
+
             let signed = client
-                .sign_nostr_note_with_imeta(
+                .sign_nostr_note_with_imeta_and_quote(
                     &final_content,
                     request.created_at,
                     &targets,
                     &imeta_attachments,
+                    quote_wire.as_ref(),
                 )
                 .await
                 .map_err(|error| {

@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use crate::nostr_composer::{
     PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL,
-    QUICK_REACTIONS, ReplyContext, sanitize_untrusted_text,
+    QUICK_REACTIONS, QuoteContext, ReplyContext, sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -2367,6 +2367,13 @@ impl NostrViewer {
                             event,
                             name.unwrap_or("unknown"),
                         );
+                        let quote_target = QuoteContext {
+                            event_id: event.id.clone(),
+                            target_pubkey: event.author.clone(),
+                            target_label: name
+                                .map(|n| format!("@{}", display_text(n)))
+                                .unwrap_or_else(|| short_hex(&event.author)),
+                        };
                         let is_self_author = self
                             .my_pubkey_hex(cx)
                             .as_deref()
@@ -2386,8 +2393,25 @@ impl NostrViewer {
                                 let dm_author_hex = dm_author_hex.clone();
                                 let dm_author_name = dm_author_name.clone();
                                 let steer_prompt = steer_prompt.clone();
+                                let quote_target = quote_target.clone();
                                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-                                    menu = menu.entry("Research in Steer", None, {
+                                    menu = menu
+                                        .entry("Quote note (NIP-10)", None, {
+                                            let viewer = viewer.clone();
+                                            let quote_target = quote_target.clone();
+                                            move |window, cx| {
+                                                viewer
+                                                    .update(cx, |this, cx| {
+                                                        this.open_quote_compose(
+                                                            quote_target.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .log_err();
+                                            }
+                                        })
+                                        .entry("Research in Steer", None, {
                                         let viewer = viewer.clone();
                                         let steer_prompt = steer_prompt.clone();
                                         move |_, cx| {
@@ -3535,6 +3559,17 @@ impl NostrViewer {
     ) {
         let view = self.ensure_composer_view(cx);
         view.update(cx, |view, cx| view.open_reply(target, window, cx));
+        cx.notify();
+    }
+
+    fn open_quote_compose(
+        &mut self,
+        target: QuoteContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = self.ensure_composer_view(cx);
+        view.update(cx, |view, cx| view.open_quote(target, window, cx));
         cx.notify();
     }
 

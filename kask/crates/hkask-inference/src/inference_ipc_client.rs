@@ -684,6 +684,20 @@ impl InferenceIpcClient {
         relays: &[String],
         imeta: &[hkask_types::nostr_wire::NostrMediaAttachment],
     ) -> Result<serde_json::Value, InferenceError> {
+        self.sign_nostr_note_with_imeta_and_quote(content, created_at, relays, imeta, None)
+            .await
+    }
+
+    /// Ask the editor to sign one kind 1 Nostr note with optional NIP-92
+    /// `imeta` attachments and optional NIP-10 quote target (`q` + `p` tags).
+    pub async fn sign_nostr_note_with_imeta_and_quote(
+        &self,
+        content: &str,
+        created_at: u64,
+        relays: &[String],
+        imeta: &[hkask_types::nostr_wire::NostrMediaAttachment],
+        quote: Option<&hkask_types::nostr_wire::NostrQuoteWire>,
+    ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrNote;
         let params = InferenceParams {
             tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
@@ -691,6 +705,7 @@ impl InferenceIpcClient {
             nostr_created_at: Some(created_at),
             nostr_relays: Some(relays.to_vec()),
             nostr_imeta: imeta.to_vec(),
+            nostr_quote: quote.cloned(),
             ..Default::default()
         };
         let response = self.ipc_roundtrip(&method, params).await?;

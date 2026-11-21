@@ -309,6 +309,7 @@ async fn the_publish_tool_refuses_bad_notes_and_no_targets_by_name() {
             content: String::new(),
             created_at: 100,
             media_paths: None,
+            ..Default::default()
         }))
         .await
         .expect_err("an empty note is refused");
@@ -320,6 +321,7 @@ async fn the_publish_tool_refuses_bad_notes_and_no_targets_by_name() {
             content: "x".repeat(4_001),
             created_at: 100,
             media_paths: None,
+            ..Default::default()
         }))
         .await
         .expect_err("4001 characters is over the maximum");
@@ -334,6 +336,7 @@ async fn the_publish_tool_refuses_bad_notes_and_no_targets_by_name() {
             content: "a note".to_string(),
             created_at: 100,
             media_paths: None,
+            ..Default::default()
         }))
         .await
         .expect_err("no relay to publish to");
@@ -387,6 +390,7 @@ async fn the_publish_tool_refuses_unreachable_targets_before_signing() {
             content: "hello".to_string(),
             created_at: 100,
             media_paths: None,
+            ..Default::default()
         }))
         .await
         .expect_err("must fail before signing when zero relays connected");
@@ -416,6 +420,7 @@ async fn media_publish_validates_files_and_blossom_servers_before_signing() {
             content: String::new(),
             created_at: 100,
             media_paths: Some(vec![missing.display().to_string()]),
+            ..Default::default()
         }))
         .await
         .expect_err("missing media file must return not_found");
@@ -431,6 +436,7 @@ async fn media_publish_validates_files_and_blossom_servers_before_signing() {
             content: "Test clip".to_string(),
             created_at: 100,
             media_paths: Some(vec![mp4_path.display().to_string()]),
+            ..Default::default()
         }))
         .await
         .expect_err("missing Blossom server must fail precondition");

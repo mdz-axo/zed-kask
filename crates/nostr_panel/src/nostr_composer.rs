@@ -431,12 +431,22 @@ impl ZapDraftState {
     }
 }
 
+/// Target context when the compose drawer is quoting an existing event
+/// (`NIP-10` `q` + `p` tags on a `kind: 1` note).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuoteContext {
+    pub(crate) event_id: String,
+    pub(crate) target_pubkey: String,
+    pub(crate) target_label: String,
+}
+
 /// Pure state machine for the collapsible Nostr compose drawer.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ComposerState {
     pub(crate) phase: ComposerPhase,
     pub(crate) draft: String,
     pub(crate) reply_target: Option<ReplyContext>,
+    pub(crate) quote_target: Option<QuoteContext>,
     pub(crate) media_paths: Vec<String>,
     pub(crate) error: Option<String>,
     pub(crate) last_outcome: Option<PublishOutcome>,
@@ -617,15 +627,28 @@ impl ComposerState {
             return;
         }
         self.reply_target = Some(target);
+        self.quote_target = None;
         self.media_paths.clear();
         self.phase = ComposerPhase::Drafting;
         self.error = None;
     }
 
-    /// Clear the active reply target (reverts to a top-level `kind: 1` note).
+    /// Open the drawer targeting a specific event for a NIP-10 quote note (`q` tag).
+    pub(crate) fn open_quote(&mut self, target: QuoteContext) {
+        if self.is_publishing() {
+            return;
+        }
+        self.quote_target = Some(target);
+        self.reply_target = None;
+        self.phase = ComposerPhase::Drafting;
+        self.error = None;
+    }
+
+    /// Clear the active reply or quote target (reverts to a top-level `kind: 1` note).
     pub(crate) fn clear_reply_target(&mut self) {
         if !self.is_publishing() {
             self.reply_target = None;
+            self.quote_target = None;
         }
     }
 
@@ -636,6 +659,7 @@ impl ComposerState {
         }
         self.draft.clear();
         self.reply_target = None;
+        self.quote_target = None;
         self.media_paths.clear();
         self.error = None;
         self.last_outcome = None;
@@ -720,6 +744,7 @@ impl ComposerState {
                 if any_accepted {
                     self.draft.clear();
                     self.reply_target = None;
+                    self.quote_target = None;
                     self.media_paths.clear();
                     self.error = None;
                     self.phase = ComposerPhase::Idle;

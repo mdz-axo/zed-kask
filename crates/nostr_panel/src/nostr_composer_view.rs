@@ -18,7 +18,7 @@ use util::ResultExt as _;
 
 use crate::nostr_composer::{
     CHAR_WARNING_THRESHOLD, ComposerState, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome,
-    ReplyContext,
+    QuoteContext, ReplyContext,
 };
 use crate::nostr_event_model::host_of;
 use crate::nostr_viewer::{invoke, short_hex};
@@ -209,6 +209,24 @@ impl NostrComposerView {
         cx.notify();
     }
 
+    /// Open the compose drawer pre-bound to a NIP-10 quote target (`q` tag).
+    pub(crate) fn open_quote(
+        &mut self,
+        target: QuoteContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.open_quote(target);
+        let editor = self.ensure_composer_editor(window, cx);
+        editor.update(cx, |ed, cx| {
+            if ed.text(cx) != self.composer.draft {
+                ed.set_text(self.composer.draft.clone(), window, cx);
+            }
+            window.focus(&ed.focus_handle(cx), cx);
+        });
+        cx.notify();
+    }
+
     fn submit_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.composer.is_publishing() {
             return;
@@ -229,6 +247,7 @@ impl NostrComposerView {
             }
         };
         let reply_target = self.composer.reply_target.clone();
+        let quote_target = self.composer.quote_target.clone();
         cx.notify();
 
         let (tool, args) = match reply_target {
@@ -250,6 +269,10 @@ impl NostrComposerView {
                 });
                 if !payload.media_paths.is_empty() {
                     note_args["media_paths"] = json!(payload.media_paths);
+                }
+                if let Some(quote) = quote_target {
+                    note_args["quote_event_id"] = json!(quote.event_id);
+                    note_args["quote_pubkey"] = json!(quote.target_pubkey);
                 }
                 (PUBLISH_TOOL, note_args)
             }
@@ -436,13 +459,23 @@ impl NostrComposerView {
         };
         let media_paths = self.composer.media_paths.clone();
         let error = self.composer.error.clone();
-        let reply_banner = self.composer.reply_target.as_ref().map(|target| {
-            format!(
-                "Replying to {} ({})",
-                target.target_label,
-                target.nip_label()
-            )
-        });
+        let reply_banner = self
+            .composer
+            .reply_target
+            .as_ref()
+            .map(|target| {
+                format!(
+                    "Replying to {} ({})",
+                    target.target_label,
+                    target.nip_label()
+                )
+            })
+            .or_else(|| {
+                self.composer
+                    .quote_target
+                    .as_ref()
+                    .map(|q| format!("Quoting {} (NIP-10)", q.target_label))
+            });
 
         Some(
             v_flex()

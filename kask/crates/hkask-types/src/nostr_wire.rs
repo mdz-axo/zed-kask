@@ -121,6 +121,15 @@ pub struct NostrMediaAttachment {
     pub fallback_urls: Vec<String>,
 }
 
+/// Optional NIP-10 quote target carried on `SignNostrNote` (`q` + `p` tags).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrQuoteWire {
+    pub event_id_hex: String,
+    pub author_pubkey_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_hint: Option<String>,
+}
+
 /// Wire payload for requesting an editor-signed NIP-57 `kind: 9734` zap request
 /// (D110 Phase 4). Gated by `host/sign_nostr_zap` and never `autopublish`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

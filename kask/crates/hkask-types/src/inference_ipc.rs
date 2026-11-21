@@ -304,6 +304,9 @@ pub struct InferenceParams {
     /// Optional NIP-92 `imeta` media attachments for `SignNostrNote`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nostr_imeta: Vec<crate::nostr_wire::NostrMediaAttachment>,
+    /// Optional NIP-10 quote target (`q` + `p` tags) for `SignNostrNote`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_quote: Option<crate::nostr_wire::NostrQuoteWire>,
     /// Expiration Unix timestamp for `SignBlossomUpload` (`BUD-11` `expiration` tag).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blossom_expiration: Option<u64>,

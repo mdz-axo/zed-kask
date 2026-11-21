@@ -226,6 +226,60 @@ pub fn sign_event(
     sign_verified_parts(key, NOTE_KIND, created_at, Vec::new(), content)
 }
 
+/// Target metadata for a NIP-10 quote note (`["q", event_id, relay_hint, pubkey]` + `["p", pubkey]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteTarget {
+    pub event_id_hex: String,
+    pub author_pubkey_hex: String,
+    pub relay_hint: Option<String>,
+}
+
+/// Sign one kind 1 note with zero or more validated NIP-92 `imeta` media tags
+/// and an optional NIP-10 quote target (`q` + `p` tags).
+pub fn sign_note_with_imeta_and_quote(
+    key: &SecretKey,
+    created_at: u64,
+    content: &str,
+    attachments: &[ImetaAttachment],
+    quote: Option<&QuoteTarget>,
+) -> Result<Event, SignError> {
+    if attachments.len() > MAX_IMETA_ATTACHMENTS {
+        return Err(SignError::InvalidAttachment {
+            reason: "at most 4 media attachments may be signed onto one note",
+        });
+    }
+    let mut tags = Vec::with_capacity(attachments.len() + if quote.is_some() { 2 } else { 0 });
+    for attachment in attachments {
+        tags.push(build_imeta_tag(attachment)?);
+    }
+    if let Some(quote) = quote {
+        if !is_lower_sha256_hex(&quote.event_id_hex) {
+            return Err(SignError::InvalidReply {
+                reason: "quote event_id_hex must be 64 lowercase hex characters",
+            });
+        }
+        if !is_lower_sha256_hex(&quote.author_pubkey_hex) {
+            return Err(SignError::InvalidReply {
+                reason: "quote author_pubkey_hex must be 64 lowercase hex characters",
+            });
+        }
+        let relay_hint = quote.relay_hint.as_deref().unwrap_or("").trim();
+        if !relay_hint.is_empty() && !relay_hint.starts_with("wss://") {
+            return Err(SignError::InvalidReply {
+                reason: "quote relay_hint must be empty or start with wss://",
+            });
+        }
+        tags.push(vec![
+            "q".to_string(),
+            quote.event_id_hex.clone(),
+            relay_hint.to_string(),
+            quote.author_pubkey_hex.clone(),
+        ]);
+        tags.push(vec!["p".to_string(), quote.author_pubkey_hex.clone()]);
+    }
+    sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+}
+
 /// Sign one kind 1 note with zero or more validated NIP-92 `imeta` media tags.
 ///
 /// Only `imeta` tags can be emitted here; replies, mentions, and arbitrary tag
@@ -236,16 +290,7 @@ pub fn sign_note_with_imeta(
     content: &str,
     attachments: &[ImetaAttachment],
 ) -> Result<Event, SignError> {
-    if attachments.len() > MAX_IMETA_ATTACHMENTS {
-        return Err(SignError::InvalidAttachment {
-            reason: "at most 4 media attachments may be signed onto one note",
-        });
-    }
-    let mut tags = Vec::with_capacity(attachments.len());
-    for attachment in attachments {
-        tags.push(build_imeta_tag(attachment)?);
-    }
-    sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+    sign_note_with_imeta_and_quote(key, created_at, content, attachments, None)
 }
 
 /// Sign a NIP-25 `kind: 7` reaction (<https://nostr-nips.com/nip-25>) targeting
@@ -921,6 +966,48 @@ mod tests {
             sign_note_with_imeta(&key, 1_700_000_000, "clip", &[bad_hash]),
             Err(SignError::InvalidAttachment { .. })
         ));
+    }
+
+    #[test]
+    fn note_with_quote_builds_nip10_q_and_p_tags_and_rejects_bad_ids() {
+        let key = SecretKey::from_bytes(&[7u8; 32]).expect("valid test key");
+        let quote = QuoteTarget {
+            event_id_hex: "11".repeat(32),
+            author_pubkey_hex: "22".repeat(32),
+            relay_hint: Some("wss://nos.lol".to_string()),
+        };
+        let event = sign_note_with_imeta_and_quote(
+            &key,
+            1_700_000_000,
+            "Great point! nostr:note1...",
+            &[],
+            Some(&quote),
+        )
+        .expect("valid quote signs");
+        assert_eq!(event.kind(), NOTE_KIND);
+        assert_eq!(
+            event.tags(),
+            &[
+                vec![
+                    "q".to_string(),
+                    "11".repeat(32),
+                    "wss://nos.lol".to_string(),
+                    "22".repeat(32),
+                ],
+                vec!["p".to_string(), "22".repeat(32)],
+            ]
+        );
+        Event::from_json(&event.to_json()).expect("round-trip verifies");
+
+        let bad_quote = QuoteTarget {
+            event_id_hex: "not-hex".to_string(),
+            author_pubkey_hex: "22".repeat(32),
+            relay_hint: None,
+        };
+        assert!(
+            sign_note_with_imeta_and_quote(&key, 1_700_000_000, "hi", &[], Some(&bad_quote))
+                .is_err()
+        );
     }
 
     #[test]

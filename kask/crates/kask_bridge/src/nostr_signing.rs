@@ -20,8 +20,8 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrDeletionWire, NostrFollowsWire, NostrMediaAttachment, NostrNutzapWire, NostrReactionWire,
-    NostrReplyWire, NostrRepostWire, NostrZapRequestWire,
+    NostrDeletionWire, NostrFollowsWire, NostrMediaAttachment, NostrNutzapWire, NostrQuoteWire,
+    NostrReactionWire, NostrReplyWire, NostrRepostWire, NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -32,12 +32,14 @@ use crate::settings::KaskSettings;
 /// What the admitted Nostr sign request asks the editor to sign.
 #[derive(Debug)]
 pub(crate) enum NostrSignOperation {
-    /// Sign one kind 1 note (untagged, or carrying validated NIP-92 `imeta` tags).
+    /// Sign one kind 1 note (untagged, or carrying validated NIP-92 `imeta`
+    /// tags and/or an optional NIP-10 quote target).
     Note {
         content: String,
         created_at: u64,
         relays: Vec<String>,
         imeta: Vec<NostrMediaAttachment>,
+        quote: Option<NostrQuoteWire>,
     },
     /// Sign a short-lived BUD-11 `kind: 24242` Blossom upload authorization token.
     BlossomUpload {
@@ -187,13 +189,15 @@ fn is_public_https_media_url(raw: &str) -> bool {
     true
 }
 
-/// Admit a note sign request (including optional NIP-92 `imeta` attachments).
+/// Admit a note sign request (including optional NIP-92 `imeta` attachments
+/// and optional NIP-10 quote target).
 pub(crate) fn admit_note(
     grant: Option<&str>,
     content: Option<&str>,
     created_at: Option<u64>,
     relays: Vec<String>,
     imeta: Vec<NostrMediaAttachment>,
+    quote: Option<NostrQuoteWire>,
 ) -> Result<NostrSignOperation, InferenceErrorPayload> {
     let (content, created_at) = admit(grant, content, created_at)?;
     if imeta.len() > MAX_MEDIA_ATTACHMENTS {
@@ -203,6 +207,25 @@ pub(crate) fn admit_note(
                 "at most {MAX_MEDIA_ATTACHMENTS} media attachments may be signed onto one note"
             ),
         ));
+    }
+    if let Some(q) = &quote {
+        let valid_hex =
+            |s: &str| s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !valid_hex(&q.event_id_hex) || !valid_hex(&q.author_pubkey_hex) {
+            return Err(refusal(
+                "InvalidArgument",
+                "quote event_id_hex and author_pubkey_hex must be 64 lowercase hex characters",
+            ));
+        }
+        if let Some(hint) = q.relay_hint.as_deref().map(str::trim)
+            && !hint.is_empty()
+            && !hint.starts_with("wss://")
+        {
+            return Err(refusal(
+                "InvalidArgument",
+                "quote relay_hint must be empty or start with wss://",
+            ));
+        }
     }
     let publishing_to_public_relays = relays.iter().any(|r| !is_loopback_relay_url(r));
     if publishing_to_public_relays {
@@ -225,6 +248,7 @@ pub(crate) fn admit_note(
         created_at,
         relays,
         imeta,
+        quote,
     })
 }
 
@@ -589,6 +613,7 @@ pub(crate) fn sign_with_slots(
             created_at,
             relays: Vec::new(),
             imeta: Vec::new(),
+            quote: None,
         },
     )
 }
@@ -618,8 +643,9 @@ pub(crate) fn sign_operation_with_slots(
             content,
             created_at,
             imeta,
+            quote,
             ..
-        } if imeta.is_empty() => hkask_nostr_signer::sign_event(
+        } if imeta.is_empty() && quote.is_none() => hkask_nostr_signer::sign_event(
             &key,
             hkask_nostr_signer::NOTE_KIND,
             *created_at,
@@ -630,6 +656,7 @@ pub(crate) fn sign_operation_with_slots(
             content,
             created_at,
             imeta,
+            quote,
             ..
         } => {
             let attachments: Vec<hkask_nostr_signer::ImetaAttachment> = imeta
@@ -643,8 +670,19 @@ pub(crate) fn sign_operation_with_slots(
                     fallback_urls: att.fallback_urls.clone(),
                 })
                 .collect();
-            hkask_nostr_signer::sign_note_with_imeta(&key, *created_at, content, &attachments)
-                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+            let quote_target = quote.as_ref().map(|q| hkask_nostr_signer::QuoteTarget {
+                event_id_hex: q.event_id_hex.clone(),
+                author_pubkey_hex: q.author_pubkey_hex.clone(),
+                relay_hint: q.relay_hint.clone(),
+            });
+            hkask_nostr_signer::sign_note_with_imeta_and_quote(
+                &key,
+                *created_at,
+                content,
+                &attachments,
+                quote_target.as_ref(),
+            )
+            .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
         NostrSignOperation::BlossomUpload {
             created_at,
@@ -799,13 +837,23 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 content,
                 relays,
                 imeta,
+                quote,
                 ..
-            } => (
-                approval_text(&configured_npub, relays),
-                note_approval_detail(content, imeta),
-                [APPROVE_LABEL, DECLINE_LABEL],
-                "the operator did not approve the note; nothing was signed",
-            ),
+            } => {
+                let mut detail = note_approval_detail(content, imeta);
+                if let Some(q) = quote {
+                    detail.push_str(&format!(
+                        "\n\nQuoting event (NIP-10 q tag): {}\nQuoted author: {}",
+                        q.event_id_hex, q.author_pubkey_hex
+                    ));
+                }
+                (
+                    approval_text(&configured_npub, relays),
+                    detail,
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the note; nothing was signed",
+                )
+            }
             NostrSignOperation::BlossomUpload {
                 server_urls, blobs, ..
             } => (
@@ -1186,6 +1234,7 @@ mod tests {
                 dimensions: Some((1920, 1080)),
                 fallback_urls: Vec::new(),
             }],
+            None,
         )
         .expect("imeta note admitted");
         let note_event =
@@ -1217,6 +1266,7 @@ mod tests {
                 created_at: 1,
                 relays: Vec::new(),
                 imeta: Vec::new(),
+                quote: None,
             },
             "",
             &mut async_cx,
@@ -1246,6 +1296,7 @@ mod tests {
                 created_at: 1_700_000_000,
                 relays: Vec::new(),
                 imeta: Vec::new(),
+                quote: None,
             },
             EXAMPLE_NPUB,
             &mut async_cx,
@@ -1326,6 +1377,7 @@ mod tests {
             Some(1_700_000_000),
             vec!["wss://relay.damus.io".to_string()],
             vec![local_att.clone()],
+            None,
         )
         .expect_err("loopback imeta URL must be refused when publishing to public relays");
         assert_eq!(public_err.code, "InvalidArgument");
@@ -1338,6 +1390,7 @@ mod tests {
                 Some(1_700_000_000),
                 vec!["ws://127.0.0.1:7447".to_string()],
                 vec![local_att],
+                None,
             )
             .is_ok()
         );
