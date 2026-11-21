@@ -30,10 +30,12 @@
 //!   row.
 //!
 //! The viewer renders what the Nostr tools return and hosts the panel's
-//! collapsible `kind: 1` note composer, which dispatches to
-//! `nostr_publish_note` so the editor asks the operator's approval before
-//! touching the keychain. Follow, like, repost, zap, and reply affordances are
-//! not wired here yet.
+//! interactive surfaces: the collapsible `kind: 1` / NIP-10 / NIP-22 note and
+//! reply composer (with optional Blossom `media_paths`), inline NIP-25
+//! reactions & NIP-09 deletion/unreact, NIP-57 Lightning zaps & NIP-61 Cashu
+//! nutzaps, and the editor-only NIP-17 DM tab. All signing stays in the editor
+//! process behind operator approval. Follow and repost publishing are not
+//! wired here.
 //!
 //! Three rules:
 //!
@@ -3212,13 +3214,15 @@ impl NostrViewer {
                                 .tooltip(ui::Tooltip::text(
                                     "Zap via NIP-57 Lightning or NIP-61 Cashu Nutzap",
                                 ))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
                                     this.selected = Some(zap_id.clone());
+                                    this.detail_meta_expanded = false;
                                     this.toggle_zap_strip(
                                         zap_id.clone(),
                                         zap_author.clone(),
                                         zap_label.clone(),
+                                        window,
                                         cx,
                                     );
                                 })),
@@ -3713,11 +3717,12 @@ impl NostrViewer {
                                     .tooltip(ui::Tooltip::text(
                                         "Zap this post via NIP-57 Lightning or NIP-61 Cashu Nutzap",
                                     ))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         this.toggle_zap_strip(
                                             zap_event_id.clone(),
                                             zap_author.clone(),
                                             zap_label.clone(),
+                                            window,
                                             cx,
                                         );
                                     })),
@@ -4443,34 +4448,23 @@ impl NostrViewer {
         editor
     }
 
-    fn ensure_zap_editors(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
-        let amount_ed = if let Some(existing) = &self.zap_amount_editor {
-            existing.clone()
-        } else {
+    fn ensure_zap_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zap_amount_editor.is_none() {
             let ed = cx.new(|cx| {
                 let mut ed = editor::Editor::single_line(window, cx);
                 ed.set_placeholder_text("Custom sats…", window, cx);
                 ed
             });
-            self.zap_amount_editor = Some(ed.clone());
-            ed
-        };
-        let comment_ed = if let Some(existing) = &self.zap_comment_editor {
-            existing.clone()
-        } else {
+            self.zap_amount_editor = Some(ed);
+        }
+        if self.zap_comment_editor.is_none() {
             let ed = cx.new(|cx| {
                 let mut ed = editor::Editor::single_line(window, cx);
                 ed.set_placeholder_text("Optional zap comment…", window, cx);
                 ed
             });
-            self.zap_comment_editor = Some(ed.clone());
-            ed
-        };
-        (amount_ed, comment_ed)
+            self.zap_comment_editor = Some(ed);
+        }
     }
 
     /// Toggle the collapsible compose drawer; collapsing always preserves the draft.
@@ -4683,6 +4677,7 @@ impl NostrViewer {
         event_id: String,
         author: String,
         label: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -4692,12 +4687,23 @@ impl NostrViewer {
         {
             if !self.zap.as_ref().is_some_and(ZapDraftState::is_busy) {
                 self.zap = None;
+                self.clear_zap_editors(window, cx);
             }
         } else {
             self.zap = Some(ZapDraftState::new(event_id, author, label));
+            self.clear_zap_editors(window, cx);
             self.fetch_zap_wallet_status(cx);
         }
         cx.notify();
+    }
+
+    fn clear_zap_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ed) = &self.zap_amount_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
+        if let Some(ed) = &self.zap_comment_editor {
+            ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
     }
 
     fn fetch_zap_wallet_status(&mut self, cx: &mut Context<Self>) {
@@ -4759,8 +4765,6 @@ impl NostrViewer {
                 }
             }
         }
-        zap.comment = comment_text.clone();
-
         let target_event_id = zap.target_event_id.clone();
         let target_pubkey = zap.target_pubkey.clone();
         let amount_sats = zap.amount_sats;
@@ -6031,7 +6035,7 @@ impl NostrViewer {
 impl Render for NostrViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.zap.is_some() {
-            let _ = self.ensure_zap_editors(window, cx);
+            self.ensure_zap_editors(window, cx);
         }
         let compose_drawer = self.render_composer_drawer(window, cx);
         let publish_receipt = self

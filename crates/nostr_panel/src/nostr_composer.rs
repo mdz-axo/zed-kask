@@ -75,7 +75,6 @@ impl DraftValidationError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RelayOutcome {
     pub(crate) address: String,
-    pub(crate) role: String,
     pub(crate) state: String,
     pub(crate) reason: Option<String>,
 }
@@ -273,7 +272,6 @@ pub(crate) struct WalletStatusSummary {
     pub(crate) network: String,
     pub(crate) active_rail: String,
     pub(crate) per_tx_cap_sats: Option<u64>,
-    pub(crate) daily_cap_sats: Option<u64>,
     pub(crate) default_mint: Option<String>,
     pub(crate) allowed_mints: Vec<String>,
 }
@@ -350,18 +348,10 @@ pub(crate) fn parse_wallet_status(raw_json: &str) -> Result<WalletStatusSummary,
             root.pointer("/spending_caps/per_tx_sats")
                 .and_then(Value::as_u64)
         });
-    let daily_cap_sats = root
-        .get("daily_cap_sats")
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            root.pointer("/spending_caps/daily_sats")
-                .and_then(Value::as_u64)
-        });
     Ok(WalletStatusSummary {
         network: sanitize_untrusted_text(&network),
         active_rail,
         per_tx_cap_sats,
-        daily_cap_sats,
         default_mint,
         allowed_mints,
     })
@@ -403,7 +393,6 @@ pub(crate) struct ZapDraftState {
     pub(crate) target_pubkey: String,
     pub(crate) target_label: String,
     pub(crate) amount_sats: u64,
-    pub(crate) comment: String,
     pub(crate) rail: ZapRail,
     pub(crate) wallet: WalletBadge,
     pub(crate) status: ZapStatus,
@@ -420,7 +409,6 @@ impl ZapDraftState {
             target_pubkey,
             target_label,
             amount_sats: ZAP_PRESETS_SATS[0],
-            comment: String::new(),
             rail: ZapRail::Lightning,
             wallet: WalletBadge::Loading,
             status: ZapStatus::Ready,
@@ -457,12 +445,6 @@ pub(crate) fn sanitize_untrusted_text(text: &str) -> String {
             c => c,
         })
         .collect()
-}
-
-/// Validate a plain `kind: 1` note draft against `MAX_CONTENT_CHARS`.
-#[cfg(test)]
-pub(crate) fn validate_draft(text: &str) -> Result<&str, DraftValidationError> {
-    validate_draft_with_media(text, false)
 }
 
 /// Validate a note draft, allowing empty text when at least one Blossom media
@@ -510,11 +492,6 @@ pub(crate) fn parse_publish_receipt(raw_json: &str) -> Result<PublishOutcome, St
             .and_then(Value::as_str)
             .map(sanitize_untrusted_text)
             .unwrap_or_else(|| "<unknown relay>".to_string());
-        let role = entry
-            .get("role")
-            .and_then(Value::as_str)
-            .map(sanitize_untrusted_text)
-            .unwrap_or_else(|| "relay".to_string());
         let state = entry
             .get("state")
             .and_then(Value::as_str)
@@ -528,7 +505,6 @@ pub(crate) fn parse_publish_receipt(raw_json: &str) -> Result<PublishOutcome, St
             .map(sanitize_untrusted_text);
         let outcome = RelayOutcome {
             address,
-            role,
             state: state.clone(),
             reason,
         };
@@ -933,9 +909,12 @@ mod tests {
 
     #[test]
     fn validate_draft_rejects_empty_and_whitespace() {
-        assert_eq!(validate_draft(""), Err(DraftValidationError::Empty));
         assert_eq!(
-            validate_draft("   \n\t  "),
+            validate_draft_with_media("", false),
+            Err(DraftValidationError::Empty)
+        );
+        assert_eq!(
+            validate_draft_with_media("   \n\t  ", false),
             Err(DraftValidationError::Empty)
         );
     }
@@ -943,11 +922,11 @@ mod tests {
     #[test]
     fn validate_draft_rejects_over_max_chars_and_accepts_boundary() {
         let exact = "a".repeat(MAX_CONTENT_CHARS);
-        assert_eq!(validate_draft(&exact), Ok(exact.as_str()));
+        assert_eq!(validate_draft_with_media(&exact, false), Ok(exact.as_str()));
 
         let too_long = "a".repeat(MAX_CONTENT_CHARS + 1);
         assert_eq!(
-            validate_draft(&too_long),
+            validate_draft_with_media(&too_long, false),
             Err(DraftValidationError::TooLong {
                 chars: MAX_CONTENT_CHARS + 1,
                 max: MAX_CONTENT_CHARS,
