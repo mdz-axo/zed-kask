@@ -216,6 +216,78 @@ async fn a_relay_that_answers_with_nothing_is_an_empty_result() {
     assert_eq!(relay_report(&response, &seed)["state"], "complete");
 }
 
+/// expect: `references` (`#e` tag filter) fetches third-party reactions (`kind: 7`)
+/// and LNURL-zapper-signed zap receipts (`kind: 9735`) without needing `authors` or `ids`.
+#[tokio::test]
+async fn references_filter_fetches_third_party_reactions_and_zap_receipts() {
+    let author = Keys::generate();
+    let third_party_reactor = Keys::generate();
+    let lnurl_zapper = Keys::generate();
+    let target = note(&author, 100, "target post", &[]);
+    let other = note(&author, 101, "unrelated post", &[]);
+    let target_hex = target.id.to_hex();
+    let other_hex = other.id.to_hex();
+    let author_hex = author.public_key().to_hex();
+
+    let reaction = event_at(
+        &third_party_reactor,
+        7,
+        200,
+        "+",
+        &[&["e", &target_hex], &["p", &author_hex]],
+    );
+    let zap_receipt = event_at(
+        &lnurl_zapper,
+        9735,
+        201,
+        "",
+        &[
+            &["e", &target_hex],
+            &["p", &author_hex],
+            &["bolt11", "lnbc210n1test"],
+            &["description", r#"{"kind":9734}"#],
+        ],
+    );
+    let unrelated_reaction = event_at(
+        &third_party_reactor,
+        7,
+        202,
+        "+",
+        &[&["e", &other_hex], &["p", &author_hex]],
+    );
+
+    let seed = TestRelay::start().await.expect("the relay starts");
+    for ev in [
+        target,
+        other,
+        reaction.clone(),
+        zap_receipt.clone(),
+        unrelated_reaction,
+    ] {
+        seed.store(ev).await.expect("stored");
+    }
+
+    let fx = reader(None, &[seed.url().to_string()], None);
+    let response = invoke_tool!(
+        fx.server,
+        nostr_fetch_events,
+        FetchEventsRequest {
+            references: Some(vec![target_hex]),
+            kinds: Some(vec![7, 9735]),
+            ..FetchEventsRequest::default()
+        }
+    );
+    let found = events(&response, "events");
+    let found_ids: Vec<&str> = found.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(
+        found_ids.len(),
+        2,
+        "expected reaction + zap receipt: {found_ids:?}"
+    );
+    assert!(found_ids.contains(&reaction.id.to_hex().as_str()));
+    assert!(found_ids.contains(&zap_receipt.id.to_hex().as_str()));
+}
+
 /// expect: the limit is honoured newest first and the result says more may
 /// exist; long content is cut and marked.
 /// pre: three notes by one author, the oldest longer than the content bound;

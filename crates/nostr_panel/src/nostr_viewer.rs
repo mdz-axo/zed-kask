@@ -2012,10 +2012,11 @@ impl NostrViewer {
     }
 
     /// Read the reactions (`kind: 7`) and zap receipts (`kind: 9735`) for a
-    /// slice of displayed rows. Always queries the local archive; when
+    /// Fetch NIP-25 `kind: 7` reactions and NIP-57 `kind: 9735` zap receipts
+    /// referencing the displayed notes. Always queries the local archive; when
     /// `include_seed_relays` is true (Following / Conversation), also queries
-    /// seed relays for the operator and followed authors (up to 50) and merges
-    /// the deduplicated results.
+    /// seed relays by `#e` event references (up to 50) so both third-party
+    /// reactions and LNURL-server-signed zap receipts are returned and merged.
     fn load_reactions(&mut self, feed: &Feed, cx: &mut Context<Self>) {
         let include_seed = feed.origin != FeedOrigin::Archive;
         self.load_reactions_for_rows(&feed.rows, include_seed, cx);
@@ -2052,30 +2053,13 @@ impl NostrViewer {
         };
 
         let seed_task = if include_seed_relays {
-            let mut authors: Vec<String> = Vec::new();
-            if let Some(mine) = self.my_pubkey_hex(cx) {
-                authors.push(mine);
-            }
-            if let Some(Follows::Authors(followed)) = &self.follows {
-                for author in followed {
-                    if authors.len() >= 50 {
-                        break;
-                    }
-                    if !authors.contains(author) {
-                        authors.push(author.clone());
-                    }
-                }
-            }
-            if authors.is_empty() {
-                None
-            } else {
-                invoke(
-                    NOSTR_CLIENT_SERVER,
-                    FETCH_TOOL,
-                    json!({ "authors": authors, "kinds": [7, 9735], "limit": ARCHIVE_PAGE }),
-                )
-                .ok()
-            }
+            let ref_ids: Vec<String> = notes.iter().take(50).cloned().collect();
+            invoke(
+                NOSTR_CLIENT_SERVER,
+                FETCH_TOOL,
+                json!({ "references": ref_ids, "kinds": [7, 9735], "limit": ARCHIVE_PAGE }),
+            )
+            .ok()
         } else {
             None
         };
