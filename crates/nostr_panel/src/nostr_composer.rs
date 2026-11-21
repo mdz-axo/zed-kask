@@ -25,6 +25,14 @@ pub(crate) const PUBLISH_REPLY_TOOL: &str = "nostr_publish_reply";
 /// (<https://nostr-nips.com/nip-09>). Always requires native editor approval.
 pub(crate) const PUBLISH_DELETION_TOOL: &str = "nostr_publish_deletion";
 
+/// The MCP tool that publishes a NIP-18 repost (`kind: 6` or `kind: 16`,
+/// <https://nostr-nips.com/nip-18>).
+pub(crate) const PUBLISH_REPOST_TOOL: &str = "nostr_publish_repost";
+
+/// The MCP tool that publishes a NIP-02 `kind: 3` follow list
+/// (<https://nostr-nips.com/nip-02>). Always requires native editor approval.
+pub(crate) const PUBLISH_FOLLOWS_TOOL: &str = "nostr_publish_follows";
+
 /// The MCP tool that prepares a verified NIP-57 Lightning zap invoice
 /// (<https://nostr-nips.com/nip-57>).
 pub(crate) const PREPARE_ZAP_TOOL: &str = "nostr_prepare_zap";
@@ -761,6 +769,8 @@ mod tests {
             PUBLISH_REACTION_TOOL,
             PUBLISH_REPLY_TOOL,
             PUBLISH_DELETION_TOOL,
+            PUBLISH_FOLLOWS_TOOL,
+            PUBLISH_REPOST_TOOL,
             PREPARE_ZAP_TOOL,
             PUBLISH_NUTZAP_TOOL,
         ] {

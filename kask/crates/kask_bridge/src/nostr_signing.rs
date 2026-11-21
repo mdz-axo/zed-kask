@@ -20,8 +20,8 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrDeletionWire, NostrMediaAttachment, NostrNutzapWire, NostrReactionWire, NostrReplyWire,
-    NostrZapRequestWire,
+    NostrDeletionWire, NostrFollowsWire, NostrMediaAttachment, NostrNutzapWire, NostrReactionWire,
+    NostrReplyWire, NostrRepostWire, NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -59,6 +59,10 @@ pub(crate) enum NostrSignOperation {
     Reply(NostrReplyWire),
     /// Sign a NIP-09 `kind: 5` event deletion request (NEVER bypassed by `autopublish`).
     Deletion(NostrDeletionWire),
+    /// Sign a NIP-18 repost (`kind: 6` or `kind: 16`).
+    Repost(NostrRepostWire),
+    /// Sign a NIP-02 `kind: 3` follow list (NEVER bypassed by `autopublish`).
+    Follows(NostrFollowsWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -447,6 +451,56 @@ pub(crate) fn admit_deletion(
     Ok(NostrSignOperation::Deletion(payload.clone()))
 }
 
+/// Admit a NIP-18 repost (`kind: 6` or `kind: 16`).
+pub(crate) fn admit_repost(
+    grant: Option<&str>,
+    payload: Option<&NostrRepostWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr repost requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_repost payload is required",
+        ));
+    };
+    Ok(NostrSignOperation::Repost(payload.clone()))
+}
+
+/// Admit a NIP-02 `kind: 3` follow list (requires `host/sign_nostr_note`;
+/// always prompts the operator regardless of `autopublish`).
+pub(crate) fn admit_follows(
+    grant: Option<&str>,
+    payload: Option<&NostrFollowsWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr follow list requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_follows payload is required",
+        ));
+    };
+    if payload.followed_pubkeys_hex.len() > hkask_nostr_signer::MAX_FOLLOWS {
+        return Err(refusal(
+            "InvalidArgument",
+            format!(
+                "follow list exceeds maximum of {} pubkeys",
+                hkask_nostr_signer::MAX_FOLLOWS
+            ),
+        ));
+    }
+    Ok(NostrSignOperation::Follows(payload.clone()))
+}
+
 /// What the operator is shown when autopublish is off. The whole text is in
 /// the detail so what is approved is what is signed.
 pub(crate) fn approval_text(npub: &str, relays: &[String]) -> String {
@@ -656,6 +710,21 @@ pub(crate) fn sign_operation_with_slots(
             &del.reason,
         )
         .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::Repost(repost) => hkask_nostr_signer::sign_repost(
+            &key,
+            repost.created_at,
+            &repost.target_event_id_hex,
+            &repost.target_pubkey_hex,
+            repost.target_kind,
+            repost.relay_hint.as_deref(),
+        )
+        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::Follows(follows) => hkask_nostr_signer::sign_follows(
+            &key,
+            follows.created_at,
+            &follows.followed_pubkeys_hex,
+        )
+        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
     };
     drop(key);
     serde_json::from_str(&event.to_json()).map_err(|error| {
@@ -702,9 +771,13 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
         (nostr.autopublish, nostr.npub.clone())
     });
 
-    // D110 & NIP-09 rulings: `autopublish` NEVER applies to zaps, nutzaps, or deletions.
-    let is_deletion_op = matches!(operation, NostrSignOperation::Deletion(_));
-    if is_zap_op || is_deletion_op || !autopublish {
+    // D110, NIP-09 & NIP-02 rulings: `autopublish` NEVER applies to zaps,
+    // nutzaps, deletions, or replaceable kind:3 follow list updates.
+    let always_prompt_op = matches!(
+        operation,
+        NostrSignOperation::Deletion(_) | NostrSignOperation::Follows(_)
+    );
+    if is_zap_op || always_prompt_op || !autopublish {
         let Some(window) = cx.update(|cx| {
             cx.active_window()
                 .or_else(|| cx.windows().into_iter().next())
@@ -713,8 +786,8 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 "Unavailable",
                 if is_zap_op {
                     "signing a Nostr zap/nutzap always requires an open editor window for operator approval"
-                } else if is_deletion_op {
-                    "signing a NIP-09 deletion request always requires an open editor window for operator approval"
+                } else if always_prompt_op {
+                    "signing a NIP-09 deletion or NIP-02 follow list update always requires an open editor window for operator approval"
                 } else {
                     "autopublish is off and no editor window is open to approve the action"
                 },
@@ -820,6 +893,39 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 ),
                 [DELETE_APPROVE_LABEL, DELETE_DECLINE_LABEL],
                 "the operator declined the deletion request; nothing was signed",
+            ),
+            NostrSignOperation::Repost(repost) => (
+                format!(
+                    "Repost Nostr event (NIP-18 kind:{})?",
+                    if repost.target_kind == hkask_nostr_signer::NOTE_KIND {
+                        hkask_nostr_signer::REPOST_KIND
+                    } else {
+                        hkask_nostr_signer::GENERIC_REPOST_KIND
+                    }
+                ),
+                format!(
+                    "Target event: {}\nTarget author: {}\nTarget kind: {}\nRelays: {}",
+                    repost.target_event_id_hex,
+                    repost.target_pubkey_hex,
+                    repost.target_kind,
+                    repost.relays.join(", ")
+                ),
+                [APPROVE_LABEL, DECLINE_LABEL],
+                "the operator did not approve the repost; nothing was signed",
+            ),
+            NostrSignOperation::Follows(follows) => (
+                format!(
+                    "Publish updated Nostr follow list ({} followed author(s), NIP-02 kind:3)?",
+                    follows.followed_pubkeys_hex.len()
+                ),
+                format!(
+                    "This replaces your kind:3 contact list across relays.\n\
+                     Total followed pubkeys: {}\nRelays: {}",
+                    follows.followed_pubkeys_hex.len(),
+                    follows.relays.join(", ")
+                ),
+                [APPROVE_LABEL, DECLINE_LABEL],
+                "the operator did not approve the follow list update; nothing was signed",
             ),
         };
         let answer = cx.update_window(window, |_, window, cx| {
@@ -1190,7 +1296,9 @@ mod tests {
             | NostrSignOperation::Nutzap(_)
             | NostrSignOperation::Reaction(_)
             | NostrSignOperation::Reply(_)
-            | NostrSignOperation::Deletion(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::Deletion(_)
+            | NostrSignOperation::Repost(_)
+            | NostrSignOperation::Follows(_) => panic!("expected BlossomUpload"),
         }
     }
 

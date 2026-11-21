@@ -30,9 +30,11 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // editor signs on the operator's approval and the step sends the
         // signed event, as the relay's sync is a step of archiving.
         "nostr_publish_deletion"
+        | "nostr_publish_follows"
         | "nostr_publish_note"
         | "nostr_publish_reaction"
         | "nostr_publish_reply"
+        | "nostr_publish_repost"
         | "nostr_prepare_zap"
         | "nostr_publish_nutzap"
         | "nostr_blossom_archive"
@@ -53,9 +55,11 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "nostr_thread"
         | "nostr_notifications"
         | "nostr_publish_deletion"
+        | "nostr_publish_follows"
         | "nostr_publish_note"
         | "nostr_publish_reaction"
         | "nostr_publish_reply"
+        | "nostr_publish_repost"
         | "nostr_prepare_zap"
         | "nostr_publish_nutzap"
         | "nostr_blossom_archive"

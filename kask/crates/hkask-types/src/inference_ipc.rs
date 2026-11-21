@@ -191,6 +191,14 @@ pub enum InferenceMethod {
     /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
     SignNostrReply,
 
+    /// Sign a NIP-18 repost (`kind: 6` or `kind: 16`, <https://nostr-nips.com/nip-18>).
+    /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
+    SignNostrRepost,
+
+    /// Sign a NIP-02 `kind: 3` follow list (<https://nostr-nips.com/nip-02>).
+    /// Gated by [`NOSTR_SIGN_GRANT`] and always requires native operator confirmation.
+    SignNostrFollows,
+
     /// Unlock `hkask-mcp-wallet`'s SQLCipher database by requesting the
     /// keychain-held passphrase over the authenticated IPC socket (D110).
     /// Gated by [`WALLET_DB_UNLOCK_GRANT`]. Returns `InferenceOutcome::WalletDbKey`.
@@ -326,6 +334,12 @@ pub struct InferenceParams {
     /// NIP-10/NIP-22 reply payload for `InferenceMethod::SignNostrReply`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_reply: Option<crate::nostr_wire::NostrReplyWire>,
+    /// NIP-18 repost payload for `InferenceMethod::SignNostrRepost`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_repost: Option<crate::nostr_wire::NostrRepostWire>,
+    /// NIP-02 follow list payload for `InferenceMethod::SignNostrFollows`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_follows: Option<crate::nostr_wire::NostrFollowsWire>,
 }
 
 /// A response from the zed inference bridge to the MCP server.

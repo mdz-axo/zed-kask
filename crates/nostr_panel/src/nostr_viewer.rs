@@ -32,10 +32,10 @@
 //! The viewer renders what the Nostr tools return and hosts the panel's
 //! interactive surfaces: the collapsible `kind: 1` / NIP-10 / NIP-22 note and
 //! reply composer (with optional Blossom `media_paths`), inline NIP-25
-//! reactions & NIP-09 deletion/unreact, NIP-57 Lightning zaps & NIP-61 Cashu
-//! nutzaps, and the editor-only NIP-17 DM tab. All signing stays in the editor
-//! process behind operator approval. Follow and repost publishing are not
-//! wired here.
+//! reactions & NIP-09 deletion/unreact, NIP-18 reposts, NIP-02 follow/unfollow,
+//! NIP-57 Lightning zaps & NIP-61 Cashu nutzaps, a Notifications tab, and the
+//! editor-only NIP-17 DM tab. All signing stays in the editor process behind
+//! operator approval.
 //!
 //! Three rules:
 //!
@@ -60,10 +60,11 @@ use std::sync::Arc;
 use crate::blurhash;
 use crate::nostr_composer::{
     CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_DELETION_TOOL,
-    PUBLISH_NUTZAP_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome,
-    QUICK_REACTIONS, ReplyContext, WALLET_PAY_INVOICE_TOOL, WALLET_SEND_ECASH_TOOL,
-    WALLET_STATUS_TOOL, WalletBadge, ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus,
-    parse_custom_sats, parse_wallet_status, sanitize_untrusted_text,
+    PUBLISH_FOLLOWS_TOOL, PUBLISH_NUTZAP_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL,
+    PUBLISH_REPOST_TOOL, PUBLISH_TOOL, PublishOutcome, QUICK_REACTIONS, ReplyContext,
+    WALLET_PAY_INVOICE_TOOL, WALLET_SEND_ECASH_TOOL, WALLET_STATUS_TOOL, WalletBadge,
+    ZAP_PRESETS_SATS, ZapDraftState, ZapRail, ZapStatus, parse_custom_sats, parse_wallet_status,
+    sanitize_untrusted_text,
 };
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
@@ -98,6 +99,7 @@ const STATUS_TOOL: &str = "nostr_relay_status";
 const LOG_TOOL: &str = "nostr_relay_log";
 const THREAD_TOOL: &str = "nostr_thread";
 const FETCH_TOOL: &str = "nostr_fetch_events";
+const NOTIFICATIONS_TOOL: &str = "nostr_notifications";
 /// A labelled click in the detail pane: the network is contacted only
 /// there.
 const PROFILE_TOOL: &str = "nostr_profile";
@@ -1405,6 +1407,7 @@ impl Request {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewerTab {
     Timeline,
+    Notifications,
     Conversation,
     Relay,
     Messages,
@@ -1414,12 +1417,14 @@ pub struct NostrViewer {
     tab: ViewerTab,
     feed: Option<Feed>,
     following_feed: Option<Feed>,
+    notifications_feed: Option<Feed>,
     conversation: Option<Conversation>,
     relay: Option<RelayReading>,
     /// The selected event's id, in the view it was selected in.
     selected: Option<String>,
     archive_request: Request,
     following_request: Request,
+    notifications_request: Request,
     thread_request: Request,
     relay_request: Request,
     started: bool,
@@ -1738,11 +1743,13 @@ impl NostrViewer {
             tab: ViewerTab::Timeline,
             feed: None,
             following_feed: None,
+            notifications_feed: None,
             conversation: None,
             relay: None,
             selected: None,
             archive_request: Request::new(),
             following_request: Request::new(),
+            notifications_request: Request::new(),
             thread_request: Request::new(),
             relay_request: Request::new(),
             started: false,
@@ -1812,6 +1819,9 @@ impl NostrViewer {
         if tab == ViewerTab::Relay && self.relay.is_none() {
             self.load_relay(cx);
         }
+        if tab == ViewerTab::Notifications && self.notifications_feed.is_none() {
+            self.load_notifications(cx);
+        }
         cx.notify();
     }
 
@@ -1819,6 +1829,7 @@ impl NostrViewer {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         match self.tab {
             ViewerTab::Relay => self.load_relay(cx),
+            ViewerTab::Notifications => self.load_notifications(cx),
             ViewerTab::Messages => self.sync_dms(cx),
             ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
                 if !matches!(self.follows, Some(Follows::Authors(_))) {
@@ -1832,6 +1843,53 @@ impl NostrViewer {
     }
 
     // ── The archive feed ────────────────────────────────────────────
+
+    /// Load notifications tagging the configured identity (`nostr_notifications`).
+    fn load_notifications(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.notifications_request.begin();
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            NOTIFICATIONS_TOOL,
+            json!({ "limit": 50 }),
+        ) {
+            Ok(task) => task,
+            Err(error) => return self.apply_notifications(epoch, Err(error), cx),
+        };
+        cx.spawn(async move |this, cx| {
+            let result =
+                content_of(NOTIFICATIONS_TOOL, task.await).and_then(
+                    |content| match parse_surfaced(&content, FeedOrigin::Conversation) {
+                        Some(Ok(Surfaced::Feed(feed))) => Ok(feed),
+                        Some(Err(error)) => Err(error),
+                        _ => Err(format!("{NOTIFICATIONS_TOOL} returned no notifications")),
+                    },
+                );
+            this.update(cx, |this, cx| this.apply_notifications(epoch, result, cx))
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn apply_notifications(
+        &mut self,
+        epoch: u64,
+        result: Result<Feed, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let (feed, error) = match result {
+            Ok(feed) => (Some(feed), None),
+            Err(error) => (None, Some(error)),
+        };
+        if !self.notifications_request.finish(epoch, error) {
+            return;
+        }
+        if let Some(feed) = feed {
+            self.load_reactions(&feed, cx);
+            self.notifications_feed = Some(feed);
+        }
+        cx.notify();
+    }
 
     /// Read the local relay's archive. Local: the tool contacts no relay.
     pub fn load_archive(&mut self, cx: &mut Context<Self>) {
@@ -2731,6 +2789,7 @@ impl NostrViewer {
         let id = self.selected.as_ref()?;
         let rows = match self.tab {
             ViewerTab::Timeline => &self.active_timeline_feed()?.rows,
+            ViewerTab::Notifications => &self.notifications_feed.as_ref()?.rows,
             ViewerTab::Conversation => &self.conversation.as_ref()?.rows,
             ViewerTab::Relay | ViewerTab::Messages => return None,
         };
@@ -3124,6 +3183,9 @@ impl NostrViewer {
                 let like_author = inline_author.clone();
                 let dislike_id = inline_event_id.clone();
                 let dislike_author = inline_author.clone();
+                let repost_id = inline_event_id.clone();
+                let repost_author = inline_author.clone();
+                let repost_kind = row.event.kind;
                 let zap_id = inline_event_id.clone();
                 let zap_author = inline_author.clone();
                 let zap_label = inline_reply_target
@@ -3207,6 +3269,21 @@ impl NostrViewer {
                                     })),
                             )
                         })
+                        .child(
+                            ui::Button::new(("nostr-row-repost", ix), "🔁")
+                                .label_size(LabelSize::XSmall)
+                                .disabled(inline_busy)
+                                .tooltip(ui::Tooltip::text("Repost (NIP-18 kind:6 / kind:16)"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.send_repost(
+                                        repost_id.clone(),
+                                        repost_author.clone(),
+                                        repost_kind,
+                                        cx,
+                                    );
+                                })),
+                        )
                         .child(
                             ui::Button::new(("nostr-row-zap", ix), zap_text)
                                 .label_size(LabelSize::XSmall)
@@ -3634,6 +3711,11 @@ impl NostrViewer {
                             .unwrap_or_else(|| short_hex(&event.author)),
                     );
 
+                    let repost_event_id = event.id.clone();
+                    let repost_author = event.author.clone();
+                    let repost_kind = event.kind;
+                    let follow_author = event.author.clone();
+                    let is_followed = self.is_followed_author(&event.author);
                     let zap_event_id = event.id.clone();
                     let zap_author = event.author.clone();
                     let zap_label = reply_target.target_label.clone();
@@ -3645,6 +3727,11 @@ impl NostrViewer {
                     let is_own_event = my_pubkey_hex
                         .as_deref()
                         .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
+                    let can_follow = !is_own_event
+                        && matches!(
+                            self.follows,
+                            Some(Follows::Authors(_) | Follows::NoList)
+                        );
                     let delete_event_id = event.id.clone();
                     let delete_kind = event.kind;
                     let reaction_note = self
@@ -3710,6 +3797,41 @@ impl NostrViewer {
                                         this.open_reply_compose(reply_target.clone(), window, cx);
                                     })),
                             )
+                            .child(
+                                ui::Button::new("nostr-detail-repost", "🔁 Repost")
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(reacting)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Repost via NIP-18 (kind:6 for notes, kind:16 otherwise; https://nostr-nips.com/nip-18)",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.send_repost(
+                                            repost_event_id.clone(),
+                                            repost_author.clone(),
+                                            repost_kind,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .when(can_follow, |row| {
+                                row.child(
+                                    ui::Button::new(
+                                        "nostr-detail-follow",
+                                        if is_followed { "Following ✓" } else { "Follow" },
+                                    )
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(is_followed)
+                                    .disabled(reacting)
+                                    .tooltip(ui::Tooltip::text(if is_followed {
+                                        "Unfollow this author (NIP-02 kind:3; always asks for confirmation)"
+                                    } else {
+                                        "Follow this author (NIP-02 kind:3; always asks for confirmation)"
+                                    }))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_follow(follow_author.clone(), cx);
+                                    })),
+                                )
+                            })
                             .child(
                                 ui::Button::new("nostr-detail-zap", "⚡ Zap")
                                     .label_size(LabelSize::XSmall)
@@ -4192,6 +4314,57 @@ impl NostrViewer {
             .into_any_element()
     }
 
+    fn render_notifications(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
+        let request = Self::request_line(
+            &self.notifications_request,
+            "Loading notifications from relays…",
+        );
+        let Some(feed) = &self.notifications_feed else {
+            return v_flex()
+                .size_full()
+                .min_h_0()
+                .overflow_hidden()
+                .children(request)
+                .child(Self::empty(
+                    "No notifications loaded",
+                    "Replies, mentions, reactions, and comments tagging your identity appear here.",
+                ))
+                .into_any_element();
+        };
+        let names = self.names_of(&feed.rows);
+        let selected_row = self
+            .selected
+            .as_ref()
+            .and_then(|id| feed.rows.iter().find(|row| &row.event.id == id));
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .children(request)
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(if feed.rows.is_empty() {
+                        Self::empty(
+                            "No notifications",
+                            "No replies, mentions, reactions, or comments were returned.",
+                        )
+                        .into_any_element()
+                    } else {
+                        self.rows(&feed.rows, false, cx).into_any_element()
+                    }),
+            )
+            .when_some(selected_row, |el, row| {
+                el.child(self.detail(row, &names, window, cx))
+            })
+            .into_any_element()
+    }
+
     fn render_conversation(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         let request = Self::request_line(
             &self.thread_request,
@@ -4599,6 +4772,155 @@ impl NostrViewer {
                     Err(err) => {
                         this.reaction_feedback =
                             Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
+    /// Dispatch a NIP-18 repost (`nostr_publish_repost`, `kind: 6` or `kind: 16`).
+    fn send_repost(
+        &mut self,
+        event_id: String,
+        author: String,
+        target_kind: u16,
+        cx: &mut Context<Self>,
+    ) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+
+        let args = json!({
+            "target_event_id": event_id,
+            "target_pubkey": author,
+            "target_kind": target_kind,
+        });
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_REPOST_TOOL, args) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            let accepted = outcome.receipt().accepted.len();
+                            this.reaction_feedback = Some((
+                                event_id.clone(),
+                                true,
+                                format!("Reposted (NIP-18 · {accepted} relay(s))"),
+                            ));
+                            this.refresh_active_view(cx);
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                event_id,
+                                false,
+                                "Repost failed: no relay accepted the event.".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((event_id, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback =
+                            Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
+    /// Follow or unfollow an author by publishing an updated NIP-02 `kind: 3`
+    /// contact list (`nostr_publish_follows`). Always prompts in the editor.
+    fn toggle_follow(&mut self, author_hex: String, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        let mut updated: Vec<String> = match &self.follows {
+            Some(Follows::Authors(set)) => set.iter().cloned().collect(),
+            Some(Follows::NoList) => Vec::new(),
+            _ => return,
+        };
+        let was_followed = updated
+            .iter()
+            .any(|pk| pk.eq_ignore_ascii_case(&author_hex));
+        if was_followed {
+            updated.retain(|pk| !pk.eq_ignore_ascii_case(&author_hex));
+        } else {
+            updated.push(author_hex.clone());
+        }
+        let feedback_target = self.selected.clone().unwrap_or_else(|| author_hex.clone());
+        self.reaction_in_flight = Some(feedback_target.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+
+        let args = json!({ "followed_pubkeys": updated });
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_FOLLOWS_TOOL, args) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((feedback_target, false, err));
+                cx.notify();
+                return;
+            }
+        };
+
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            let accepted = outcome.receipt().accepted.len();
+                            let verb = if was_followed {
+                                "Unfollowed"
+                            } else {
+                                "Followed"
+                            };
+                            this.reaction_feedback = Some((
+                                feedback_target,
+                                true,
+                                format!("{verb} (NIP-02 kind:3 · {accepted} relay(s))"),
+                            ));
+                            this.load_follows(cx);
+                            this.refresh_active_view(cx);
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                feedback_target,
+                                false,
+                                "Follow list update failed: no relay accepted the kind:3 event."
+                                    .to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((feedback_target, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback = Some((
+                            feedback_target,
+                            false,
+                            sanitize_untrusted_text(&err.to_string()),
+                        ));
                     }
                 }
                 cx.notify();
@@ -6055,6 +6377,7 @@ impl Render for NostrViewer {
 
         let body = match self.tab {
             ViewerTab::Timeline => self.render_timeline(window, cx),
+            ViewerTab::Notifications => self.render_notifications(window, cx),
             ViewerTab::Conversation => self.render_conversation(window, cx),
             ViewerTab::Relay => self.render_relay(cx),
             ViewerTab::Messages => self.render_messages(window, cx),
@@ -6075,6 +6398,7 @@ impl Render for NostrViewer {
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Timeline, "Timeline".into(), cx))
+                    .child(self.tab_button(ViewerTab::Notifications, "Alerts".into(), cx))
                     .child(self.tab_button(ViewerTab::Conversation, "Conversation".into(), cx))
                     .child(self.tab_button(ViewerTab::Relay, "Relay".into(), cx))
                     .child(self.tab_button(ViewerTab::Messages, "Messages".into(), cx))
@@ -6215,6 +6539,7 @@ mod tests {
         assert!(CLIENT_TOOL_NAMES.contains(&THREAD_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PROFILE_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&FETCH_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&NOTIFICATIONS_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PUBLISH_TOOL));
         assert!(
             !CLIENT_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL)

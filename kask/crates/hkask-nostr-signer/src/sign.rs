@@ -12,8 +12,20 @@ use crate::secret::SecretKey;
 /// Short text note kind (NIP-01: <https://nostr-nips.com/nip-01>).
 pub const NOTE_KIND: u16 = 1;
 
+/// Follow list kind (NIP-02: <https://nostr-nips.com/nip-02>).
+pub const FOLLOWS_KIND: u16 = 3;
+
+/// Maximum followed pubkeys in one NIP-02 `kind: 3` contact list.
+pub const MAX_FOLLOWS: usize = 2_000;
+
 /// Event deletion request kind (NIP-09: <https://nostr-nips.com/nip-09>).
 pub const DELETION_KIND: u16 = 5;
+
+/// Repost kind for `kind: 1` notes (NIP-18: <https://nostr-nips.com/nip-18>).
+pub const REPOST_KIND: u16 = 6;
+
+/// Generic repost kind for non-`kind: 1` events (NIP-18: <https://nostr-nips.com/nip-18>).
+pub const GENERIC_REPOST_KIND: u16 = 16;
 
 /// Maximum target event IDs in one NIP-09 deletion request.
 pub const MAX_DELETION_TARGETS: usize = 20;
@@ -77,6 +89,12 @@ pub enum SignError {
     /// A NIP-09 deletion request violated its protocol invariants.
     #[error("invalid deletion payload: {reason}")]
     InvalidDeletion { reason: &'static str },
+    /// A NIP-18 repost violated its protocol invariants.
+    #[error("invalid repost payload: {reason}")]
+    InvalidRepost { reason: &'static str },
+    /// A NIP-02 follow list violated its protocol invariants.
+    #[error("invalid follow list payload: {reason}")]
+    InvalidFollows { reason: &'static str },
     /// The operating system did not supply random bytes for the signature's
     /// auxiliary randomness.
     #[error("the operating system did not supply random bytes")]
@@ -393,6 +411,70 @@ pub fn sign_deletion(
         tags.push(vec!["k".to_string(), kind.to_string()]);
     }
     sign_verified_parts(key, DELETION_KIND, created_at, tags, reason.trim())
+}
+
+/// Sign a NIP-18 repost (<https://nostr-nips.com/nip-18>): `kind: 6` when
+/// `target_kind == 1`, or `kind: 16` generic repost with a `["k", kind]` tag
+/// for any other kind (e.g. `kind: 30023` articles).
+pub fn sign_repost(
+    key: &SecretKey,
+    created_at: u64,
+    target_event_id_hex: &str,
+    target_pubkey_hex: &str,
+    target_kind: u16,
+    relay_hint: Option<&str>,
+) -> Result<Event, SignError> {
+    if !is_lower_sha256_hex(target_event_id_hex) {
+        return Err(SignError::InvalidRepost {
+            reason: "target_event_id_hex must be 64 lowercase hex characters",
+        });
+    }
+    if !is_lower_sha256_hex(target_pubkey_hex) {
+        return Err(SignError::InvalidRepost {
+            reason: "target_pubkey_hex must be 64 lowercase hex characters",
+        });
+    }
+    let hint = relay_hint.map(str::trim).unwrap_or("");
+    let mut e_tag = vec!["e".to_string(), target_event_id_hex.to_string()];
+    if !hint.is_empty() {
+        e_tag.push(hint.to_string());
+    }
+    let mut tags = vec![e_tag, vec!["p".to_string(), target_pubkey_hex.to_string()]];
+    let kind = if target_kind == NOTE_KIND {
+        REPOST_KIND
+    } else {
+        tags.push(vec!["k".to_string(), target_kind.to_string()]);
+        GENERIC_REPOST_KIND
+    };
+    sign_verified_parts(key, kind, created_at, tags, "")
+}
+
+/// Sign a NIP-02 `kind: 3` follow list (<https://nostr-nips.com/nip-02>).
+/// Each pubkey must be 64 lowercase hex characters; duplicates are dropped in
+/// order and capped at [`MAX_FOLLOWS`].
+pub fn sign_follows(
+    key: &SecretKey,
+    created_at: u64,
+    followed_pubkeys_hex: &[String],
+) -> Result<Event, SignError> {
+    if followed_pubkeys_hex.len() > MAX_FOLLOWS {
+        return Err(SignError::InvalidFollows {
+            reason: "follow list exceeds maximum of 2000 pubkeys",
+        });
+    }
+    let mut seen = std::collections::HashSet::with_capacity(followed_pubkeys_hex.len());
+    let mut tags = Vec::with_capacity(followed_pubkeys_hex.len());
+    for pk in followed_pubkeys_hex {
+        if !is_lower_sha256_hex(pk) {
+            return Err(SignError::InvalidFollows {
+                reason: "each followed pubkey must be 64 lowercase hex characters",
+            });
+        }
+        if seen.insert(pk.as_str()) {
+            tags.push(vec!["p".to_string(), pk.clone()]);
+        }
+    }
+    sign_verified_parts(key, FOLLOWS_KIND, created_at, tags, "")
 }
 
 /// Sign a short-lived BUD-11 `kind: 24242` Blossom upload authorization token
@@ -716,6 +798,60 @@ mod tests {
         assert_eq!(nip22.kind(), COMMENT_KIND);
         assert_eq!(nip22.tags()[0], vec!["E", &root, "", &author]);
         assert_eq!(nip22.tags()[1], vec!["K", "30023"]);
+    }
+
+    #[test]
+    fn sign_repost_emits_kind_6_for_notes_and_kind_16_for_other_kinds() {
+        let key = SecretKey::from_nsec(NIP19_NSEC).expect("published nsec parses");
+        let target_id = "a".repeat(64);
+        let target_pk = "b".repeat(64);
+
+        let r6 = sign_repost(&key, 1_700_000_000, &target_id, &target_pk, 1, None)
+            .expect("kind:6 repost signs");
+        assert_eq!(r6.kind(), REPOST_KIND);
+        assert_eq!(r6.content(), "");
+        assert_eq!(
+            r6.tags(),
+            &[
+                vec!["e".to_string(), target_id.clone()],
+                vec!["p".to_string(), target_pk.clone()],
+            ]
+        );
+        assert_eq!(Event::from_json(&r6.to_json()).expect("verifies"), r6);
+
+        let r16 = sign_repost(
+            &key,
+            1_700_000_001,
+            &target_id,
+            &target_pk,
+            30023,
+            Some("wss://nos.lol"),
+        )
+        .expect("kind:16 generic repost signs");
+        assert_eq!(r16.kind(), GENERIC_REPOST_KIND);
+        assert_eq!(
+            r16.tags(),
+            &[
+                vec!["e".to_string(), target_id, "wss://nos.lol".to_string()],
+                vec!["p".to_string(), target_pk],
+                vec!["k".to_string(), "30023".to_string()],
+            ]
+        );
+        assert_eq!(Event::from_json(&r16.to_json()).expect("verifies"), r16);
+    }
+
+    #[test]
+    fn sign_follows_deduplicates_and_rejects_invalid_hex() {
+        let key = SecretKey::from_nsec(NIP19_NSEC).expect("published nsec parses");
+        let a = "a".repeat(64);
+        let b = "b".repeat(64);
+        let event = sign_follows(&key, 1_700_000_002, &[a.clone(), b.clone(), a.clone()])
+            .expect("kind:3 follows signs");
+        assert_eq!(event.kind(), FOLLOWS_KIND);
+        assert_eq!(event.tags(), &[vec!["p", &a], vec!["p", &b]]);
+        assert_eq!(Event::from_json(&event.to_json()).expect("verifies"), event);
+
+        assert!(sign_follows(&key, 1_700_000_003, &["not-hex".to_string()]).is_err());
     }
 
     /// expect: nothing but a kind 1 note is signed.

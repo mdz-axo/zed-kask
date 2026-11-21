@@ -861,6 +861,44 @@ impl InferenceIpcClient {
         }
     }
 
+    /// Ask the editor to sign a NIP-18 repost (`kind: 6` or `kind: 16`).
+    /// Gated by `host/sign_nostr_note`.
+    pub async fn sign_nostr_repost(
+        &self,
+        payload: hkask_types::nostr_wire::NostrRepostWire,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::SignNostrRepost;
+        let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            nostr_repost: Some(payload),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => Ok(event),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
+    /// Ask the editor to sign a NIP-02 `kind: 3` follow list.
+    /// Gated by `host/sign_nostr_note` and always requires native confirmation.
+    pub async fn sign_nostr_follows(
+        &self,
+        payload: hkask_types::nostr_wire::NostrFollowsWire,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::SignNostrFollows;
+        let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            nostr_follows: Some(payload),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => Ok(event),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
     /// Ask the editor to sign a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply/comment.
     /// Gated by `host/sign_nostr_note`.
     pub async fn sign_nostr_reply(

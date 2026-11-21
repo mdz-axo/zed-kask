@@ -56,10 +56,12 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_prepare_zap",
     "nostr_profile",
     "nostr_publish_deletion",
+    "nostr_publish_follows",
     "nostr_publish_note",
     "nostr_publish_nutzap",
     "nostr_publish_reaction",
     "nostr_publish_reply",
+    "nostr_publish_repost",
     "nostr_thread",
 ];
 
@@ -188,6 +190,32 @@ pub struct NostrDeletionWire {
     pub target_kind: Option<u16>,
     #[serde(default)]
     pub reason: String,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-18 repost (`kind: 6` for
+/// `kind: 1` notes, `kind: 16` generic repost otherwise;
+/// <https://nostr-nips.com/nip-18>). Gated by `host/sign_nostr_note`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrRepostWire {
+    pub created_at: u64,
+    pub target_event_id_hex: String,
+    pub target_pubkey_hex: String,
+    pub target_kind: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_hint: Option<String>,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-02 `kind: 3` follow list
+/// (<https://nostr-nips.com/nip-02>). Gated by `host/sign_nostr_note` and
+/// NEVER bypassed by `autopublish` because `kind: 3` replaces the full list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrFollowsWire {
+    pub created_at: u64,
+    pub followed_pubkeys_hex: Vec<String>,
     #[serde(default)]
     pub relays: Vec<String>,
 }

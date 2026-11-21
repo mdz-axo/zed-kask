@@ -19,8 +19,9 @@ pub use nip49::{
 };
 pub use secret::{NsecError, SecretKey};
 pub use sign::{
-    BLOSSOM_AUTH_KIND, COMMENT_KIND, DELETION_KIND, ImetaAttachment, MAX_BLOSSOM_SERVERS,
-    MAX_DELETION_TARGETS, MAX_IMETA_ATTACHMENTS, NOTE_KIND, NUTZAP_KIND, REACTION_KIND,
-    ReplyTarget, SignError, ZAP_REQUEST_KIND, sign_blossom_upload_auth, sign_deletion, sign_event,
-    sign_note_with_imeta, sign_nutzap, sign_reaction, sign_reply, sign_zap_request,
+    BLOSSOM_AUTH_KIND, COMMENT_KIND, DELETION_KIND, FOLLOWS_KIND, GENERIC_REPOST_KIND,
+    ImetaAttachment, MAX_BLOSSOM_SERVERS, MAX_DELETION_TARGETS, MAX_FOLLOWS, MAX_IMETA_ATTACHMENTS,
+    NOTE_KIND, NUTZAP_KIND, REACTION_KIND, REPOST_KIND, ReplyTarget, SignError, ZAP_REQUEST_KIND,
+    sign_blossom_upload_auth, sign_deletion, sign_event, sign_follows, sign_note_with_imeta,
+    sign_nutzap, sign_reaction, sign_reply, sign_repost, sign_zap_request,
 };

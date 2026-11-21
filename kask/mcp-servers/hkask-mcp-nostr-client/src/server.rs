@@ -1951,6 +1951,189 @@ impl NostrClientServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Publish a NIP-18 repost (kind 6 for kind 1 notes, kind 16 generic repost otherwise; https://nostr-nips.com/nip-18). Signed inside the editor process after operator approval (unless kask.nostr.autopublish is on)."
+    )]
+    pub async fn nostr_publish_repost(
+        &self,
+        Parameters(request): Parameters<PublishRepostRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_repost", async {
+            let target_event_id_hex = identifiers::parse_event_id(&request.target_event_id)
+                .map_err(|error| refused("target_event_id", error))?
+                .to_hex();
+            let target_pubkey_hex = identifiers::parse_public_key(&request.target_pubkey)
+                .map_err(|error| refused("target_pubkey", error))?
+                .to_hex();
+            let target_kind = request.target_kind.unwrap_or(1);
+            let relay_hint = request
+                .relay_hint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrRepostWire {
+                created_at: now_secs,
+                target_event_id_hex,
+                target_pubkey_hex,
+                target_kind,
+                relay_hint,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_repost(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Publish an updated NIP-02 kind 3 follow list (https://nostr-nips.com/nip-02). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because kind 3 replaces the full contact list."
+    )]
+    pub async fn nostr_publish_follows(
+        &self,
+        Parameters(request): Parameters<PublishFollowsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_follows", async {
+            if request.followed_pubkeys.len() > 2_000 {
+                return Err(McpToolError::invalid_argument(
+                    "followed_pubkeys exceeds maximum of 2000 authors",
+                ));
+            }
+            let mut followed_pubkeys_hex = Vec::with_capacity(request.followed_pubkeys.len());
+            for raw in &request.followed_pubkeys {
+                let hex = identifiers::parse_public_key(raw)
+                    .map_err(|error| refused("followed_pubkeys", error))?
+                    .to_hex();
+                if !followed_pubkeys_hex.contains(&hex) {
+                    followed_pubkeys_hex.push(hex);
+                }
+            }
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrFollowsWire {
+                created_at: now_secs,
+                followed_pubkeys_hex,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_follows(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishRepostRequest {
+    /// Target event id (`note`, `nevent`, or 64-character hex).
+    pub target_event_id: String,
+    /// Target author pubkey (`npub`, `nprofile`, or 64-character hex).
+    pub target_pubkey: String,
+    /// Event kind of the reposted event (default `1` → `kind: 6`; non-1 → `kind: 16`).
+    #[serde(default)]
+    pub target_kind: Option<u16>,
+    /// Optional relay URL hint for the `e` tag.
+    #[serde(default)]
+    pub relay_hint: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishFollowsRequest {
+    /// Complete ordered list of followed author pubkeys (`npub`, `nprofile`, or 64-character hex; max 2000).
+    pub followed_pubkeys: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
