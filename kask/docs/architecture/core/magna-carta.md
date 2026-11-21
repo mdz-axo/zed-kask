@@ -71,7 +71,7 @@ PID-bound. See the settings reference for provisioning and revocation behavior.
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `kask/crates/hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
 | Parent-held delegated-tool grant intersected with the request's tool narrowing | `kask/crates/kask_bridge/src/delegation_grants.rs:16` (mint), `:54` (revoke), `:67` (`worktree_tools` intersection) + the `create_worktree_thread` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961`) | Refuses a `server/tool` outside the intersection before a sibling thread is created; missing grant or narrowing denies. Settings unload revokes before child stop. |
-| Per-server MCP env / credential allowlists | `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` and `kask/crates/kask_bridge/src/mcp_servers/env.rs:259@build_mcp_server_env` | Scopes credentials per server |
+| Per-server MCP env / credential allowlists | `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` and `kask/crates/kask_bridge/src/mcp_servers/env.rs:284@build_mcp_server_env` | Scopes credentials per server |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`, `ToolPort::invoke`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist

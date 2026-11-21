@@ -284,7 +284,7 @@ erDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
 verified_date: 2026-11-18
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs; kask/crates/hkask-mcp-server/src/server/context.rs; kask/crates/hkask-keystore/src/keychain.rs; kask/crates/kask_bridge/src/identity.rs; kask/crates/kask_bridge/src/mcp_servers/env.rs:73; crates/settings_ui/src/pages/kask_page.rs:328
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs; kask/crates/hkask-mcp-server/src/server/context.rs; kask/crates/hkask-keystore/src/keychain.rs; kask/crates/kask_bridge/src/identity.rs; kask/crates/kask_bridge/src/mcp_servers/env.rs:93; crates/settings_ui/src/pages/kask_page.rs:328
 status: VERIFIED
 -->
 
@@ -294,7 +294,7 @@ when both tiers are empty — a missing credential is an authorization failure,
 not a transient unavailability. `provision_db_passphrase`
 (`kask/crates/kask_bridge/src/identity.rs:132`) is idempotent (env override →
 existing keychain entry → default `"allostery"`) and runs at governed MCP
-server launch (`kask/crates/kask_bridge/src/mcp_servers/env.rs:73@build_mcp_server_env_with_sweep`); a failed
+server launch (`kask/crates/kask_bridge/src/mcp_servers/env.rs:93@build_mcp_server_env_with_sweep`); a failed
 provision logs a `tracing::warn!` naming the env var and the server fails
 with `permission_denied` at tool time.
 

@@ -531,7 +531,7 @@ other than the caller being checked; the rows below satisfy that.
 |----------|-------------|-----------|
 | Delegated tool dispatch | The parent-held grant (`kask/crates/kask_bridge/src/delegation_grants.rs:16`) intersected with the request's tool narrowing at the inference IPC `create_worktree_thread` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961`), fail-closed on a missing narrowing, enforced before the sibling thread is created | P4 |
 | Per-agent tool reach | The granted ceiling derived from the parent grant and the requested narrowing (`kask/crates/kask_bridge/src/delegation_grants.rs:67` `worktree_tools`) — an empty list deliberately creates an inference-only child, never grant-all | P4 |
-| Per-server credentials | Per-server MCP env / credential allowlists (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` and `kask/crates/kask_bridge/src/mcp_servers/env.rs:259@build_mcp_server_env`) | P1 |
+| Per-server credentials | Per-server MCP env / credential allowlists (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` and `kask/crates/kask_bridge/src/mcp_servers/env.rs:284@build_mcp_server_env`) | P1 |
 | Information flow | **None — absent by decision.** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
 | MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs`) | P1 |
 | Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent). Breakers and meters, **not** authorization. | P4 |

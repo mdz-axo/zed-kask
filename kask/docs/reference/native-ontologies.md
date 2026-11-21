@@ -159,7 +159,7 @@ resolve through the ladder (never a fabricated anchor), and an `authority`
 — an operator ruling with its date, a published standard, or both. The
 `every_entry_cites_authority` test pins the no-fabricated-definitions
 discipline; resolution is exact under the same normalization
-(`resolve_derived`, `kask/crates/hkask-bridge-ontology/src/derived.rs:2484@resolve_derived`).
+(`resolve_derived`, `kask/crates/hkask-bridge-ontology/src/derived.rs:2553@resolve_derived`).
 
 Grouped by the domains they serve: finance (the DuPont family, valuation,
 expectations investing), forecasting and calibration (Brier, calibration,
