@@ -137,6 +137,16 @@ impl Session {
     /// Connect to the local relay, if it is announced, and to the first
     /// [`MAX_SEED_RELAYS`] seed relays `policy` admits.
     pub async fn open(config: &Config, policy: AddressPolicy) -> Self {
+        Self::open_with_extra_relays(config, policy, &[]).await
+    }
+
+    /// Connect to the local relay, configured seed relays, and an explicit list
+    /// of pre-validated NIP-65 outbox relays (capped by the caller).
+    pub async fn open_with_extra_relays(
+        config: &Config,
+        policy: AddressPolicy,
+        extra_relays: &[RelayUrl],
+    ) -> Self {
         let local = read_local_relay(config.local_relay_announcement.as_deref());
         let mut targets: Vec<(Role, RelayUrl)> = Vec::new();
         if let LocalRelay::Announced(url) = &local {
@@ -157,6 +167,11 @@ impl Session {
                     "state": "refused",
                     "reason": error.to_string(),
                 })),
+            }
+        }
+        for url in extra_relays {
+            if !targets.iter().any(|(_, seen)| seen == url) {
+                targets.push((Role::Seed, url.clone()));
             }
         }
         let slots = futures::future::join_all(targets.into_iter().map(|(role, url)| async move {

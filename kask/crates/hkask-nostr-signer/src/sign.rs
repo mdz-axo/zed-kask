@@ -51,6 +51,9 @@ pub const MUTE_LIST_KIND: u16 = 10_000;
 /// Bookmark list kind (NIP-51: <https://nostr-nips.com/nip-51>).
 pub const BOOKMARK_LIST_KIND: u16 = 10_003;
 
+/// Relay list metadata kind (NIP-65: <https://nostr-nips.com/nip-65>).
+pub const RELAY_LIST_KIND: u16 = 10_002;
+
 /// DM inbox relay list kind (NIP-17: <https://nostr-nips.com/nip-17>).
 pub const DM_RELAYS_KIND: u16 = 10_050;
 
@@ -695,6 +698,44 @@ pub fn sign_list(
 }
 
 /// Sign a NIP-17 `kind: 10050` DM inbox relay list (<https://nostr-nips.com/nip-17>).
+/// Sign a NIP-65 `kind: 10002` replaceable relay list event.
+///
+/// Each entry in `relay_urls` is either a bare `wss://...` URL (read+write) or
+/// `wss://...|read` / `wss://...|write` to carry an explicit NIP-65 marker.
+pub fn sign_relay_list(
+    key: &SecretKey,
+    created_at: u64,
+    relay_urls: &[String],
+) -> Result<Event, SignError> {
+    if relay_urls.is_empty() || relay_urls.len() > 16 {
+        return Err(SignError::InvalidList {
+            reason: "kind 10002 relay list must name between 1 and 16 wss:// relays",
+        });
+    }
+    let mut tags = Vec::with_capacity(relay_urls.len());
+    let mut seen = std::collections::HashSet::with_capacity(relay_urls.len());
+    for raw in relay_urls {
+        let trimmed = raw.trim();
+        let (url, marker) = match trimmed.rsplit_once('|') {
+            Some((u, m @ ("read" | "write"))) => (u.trim(), Some(m)),
+            _ => (trimmed, None),
+        };
+        if !url.starts_with("wss://") || url.chars().any(char::is_whitespace) || url.len() > 512 {
+            return Err(SignError::InvalidList {
+                reason: "kind 10002 relays must be valid wss:// URLs without whitespace",
+            });
+        }
+        if seen.insert(url.to_ascii_lowercase()) {
+            let mut tag = vec!["r".to_string(), url.to_string()];
+            if let Some(m) = marker {
+                tag.push(m.to_string());
+            }
+            tags.push(tag);
+        }
+    }
+    sign_verified_parts(key, RELAY_LIST_KIND, created_at, tags, "")
+}
+
 pub fn sign_dm_relays(
     key: &SecretKey,
     created_at: u64,
@@ -1470,6 +1511,43 @@ mod tests {
         Event::from_json(&ev.to_json()).expect("kind 0 verifies");
         assert!(ev.content().contains("\"name\":\"alice\""));
         assert!(ev.content().contains("\"nip05\":\"alice@example.com\""));
+    }
+
+    #[test]
+    fn sign_relay_list_emits_verified_nip65_kind_10002() {
+        let key = SecretKey::from_bytes(&[13u8; 32]).expect("valid test key");
+        let ev = sign_relay_list(
+            &key,
+            1_700_000_000,
+            &[
+                "wss://nos.lol".into(),
+                "wss://nostr.mom|write".into(),
+                "wss://relay.damus.io|read".into(),
+            ],
+        )
+        .expect("10002 signs");
+        assert_eq!(ev.kind(), RELAY_LIST_KIND);
+        Event::from_json(&ev.to_json()).expect("10002 verifies");
+        assert_eq!(
+            ev.tags(),
+            &[
+                vec!["r".to_string(), "wss://nos.lol".to_string()],
+                vec![
+                    "r".to_string(),
+                    "wss://nostr.mom".to_string(),
+                    "write".to_string()
+                ],
+                vec![
+                    "r".to_string(),
+                    "wss://relay.damus.io".to_string(),
+                    "read".to_string()
+                ],
+            ]
+        );
+        assert!(matches!(
+            sign_relay_list(&key, 1_700_000_000, &["ws://insecure.local".into()]),
+            Err(SignError::InvalidList { .. })
+        ));
     }
 
     #[test]

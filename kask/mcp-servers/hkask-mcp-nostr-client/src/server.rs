@@ -110,6 +110,12 @@ pub struct FetchEventsRequest {
     pub until: Option<u64>,
     /// How many events to return, newest first (default 20, maximum 100).
     pub limit: Option<u32>,
+    /// Optional explicit opt-in NIP-65 outbox routing (default false). When true
+    /// and `authors` is non-empty, resolves those authors' `kind: 10002` write
+    /// relays under the public `wss://` SSRF policy (up to 8 extra relays) and
+    /// includes them alongside the local and seed relays.
+    #[serde(default)]
+    pub use_outbox: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -159,6 +165,44 @@ pub struct PublishProfileRequest {
     /// Lightning Address (`user@domain`, `lud16`).
     #[serde(default)]
     pub lud16: Option<String>,
+}
+
+/// Extract and validate NIP-65 write relays (`["r", url]` or `["r", url, "write"]`)
+/// from fetched `kind: 10002` events, filtering through `policy` and capping at `max_relays`.
+fn extract_validated_outbox_relays(
+    events: &[(Event, Vec<String>)],
+    policy: AddressPolicy,
+    max_relays: usize,
+) -> Vec<RelayUrl> {
+    let mut out = Vec::new();
+    for (event, _) in events {
+        if event.kind != Kind::RelayList {
+            continue;
+        }
+        for tag in event.tags.iter() {
+            let slice = tag.as_slice();
+            if slice.first().map(String::as_str) != Some("r") {
+                continue;
+            }
+            let Some(raw_url) = slice.get(1).map(String::as_str) else {
+                continue;
+            };
+            // NIP-65: unmarked `r` tags are read+write; only `"read"`-only tags are excluded.
+            let marker = slice.get(2).map(|s| s.trim().to_ascii_lowercase());
+            if marker.as_deref() == Some("read") {
+                continue;
+            }
+            if let Ok(url) = crate::relays::validate_relay_address(raw_url, policy) {
+                if !out.contains(&url) {
+                    out.push(url);
+                    if out.len() >= max_relays {
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Explicitly verify a claimed NIP-05 identifier against
@@ -696,6 +740,7 @@ impl NostrClientServer {
             }
 
             let mut filter = Filter::new().limit(limit);
+            let outbox_authors = authors.clone();
             if !authors.is_empty() {
                 filter = filter.authors(authors);
             }
@@ -715,7 +760,31 @@ impl NostrClientServer {
                 filter = filter.until(Timestamp::from_secs(until));
             }
 
-            let session = self.open_session().await?;
+            let use_outbox = request.use_outbox.unwrap_or(false) && !outbox_authors.is_empty();
+            let (session, outbox_relays_contacted) = if use_outbox {
+                let base_session = self.open_session().await?;
+                let rl_filter = Filter::new()
+                    .kind(Kind::RelayList)
+                    .authors(outbox_authors.iter().copied())
+                    .limit(outbox_authors.len().saturating_mul(2).max(4));
+                let rl_reading = base_session.read(&[rl_filter], 64).await;
+                let extra = extract_validated_outbox_relays(
+                    &rl_reading.events,
+                    BUILD_ADDRESS_POLICY,
+                    8,
+                );
+                if extra.is_empty() {
+                    (base_session, Vec::new())
+                } else {
+                    let contacted: Vec<String> = extra.iter().map(ToString::to_string).collect();
+                    let expanded =
+                        Session::open_with_extra_relays(&self.config, BUILD_ADDRESS_POLICY, &extra)
+                            .await;
+                    (expanded, contacted)
+                }
+            } else {
+                (self.open_session().await?, Vec::new())
+            };
             let reading = session.read(&[filter], limit).await;
             require_an_answer(&reading)?;
             let events: Vec<_> = reading
@@ -724,18 +793,18 @@ impl NostrClientServer {
                 .take(limit)
                 .map(|(event, served_by)| wire_event(event, served_by))
                 .collect();
-            Ok(with_sources(
-                json!({
-                    "returned": events.len(),
-                    "limit": limit,
-                    // A relay that returned as many as were asked for may
-                    // hold more, and so may the relays together.
-                    "more_may_exist": reading.events.len() > limit || reading.largest_answer >= limit,
-                    "events": events,
-                }),
-                &session,
-                &reading,
-            ))
+            let mut body = json!({
+                "returned": events.len(),
+                "limit": limit,
+                // A relay that returned as many as were asked for may
+                // hold more, and so may the relays together.
+                "more_may_exist": reading.events.len() > limit || reading.largest_answer >= limit,
+                "events": events,
+            });
+            if !outbox_relays_contacted.is_empty() {
+                body["outbox_relays_contacted"] = json!(outbox_relays_contacted);
+            }
+            Ok(with_sources(body, &session, &reading))
         })
         .await
     }
@@ -2550,16 +2619,16 @@ impl NostrClientServer {
     }
 
     #[tool(
-        description = "Publish an updated replaceable Nostr list: kind 10000 (NIP-51 Mute list), kind 10003 (NIP-51 Bookmark list), kind 10050 (NIP-17 DM inbox relay list), or kind 10019 (NIP-61 Nutzap info). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish)."
+        description = "Publish an updated replaceable Nostr list: kind 10000 (NIP-51 Mute list), kind 10002 (NIP-65 Relay list), kind 10003 (NIP-51 Bookmark list), kind 10050 (NIP-17 DM inbox relay list), or kind 10019 (NIP-61 Nutzap info). Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish)."
     )]
     pub async fn nostr_publish_list(
         &self,
         Parameters(request): Parameters<PublishListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "nostr_publish_list", async {
-            if !matches!(request.kind, 10_000 | 10_003 | 10_050 | 10_019) {
+            if !matches!(request.kind, 10_000 | 10_002 | 10_003 | 10_050 | 10_019) {
                 return Err(McpToolError::invalid_argument(
-                    "kind must be 10000 (mute), 10003 (bookmark), 10050 (DM relays), or 10019 (nutzap info)",
+                    "kind must be 10000 (mute), 10002 (NIP-65 relays), 10003 (bookmark), 10050 (DM relays), or 10019 (nutzap info)",
                 ));
             }
             let mut event_ids_hex = Vec::new();
@@ -2764,4 +2833,51 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         Vec::new(),
     )
     .await
+}
+
+#[cfg(test)]
+mod b2_b3_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn verify_nip05_claim_blocks_ssrf_and_malformed_addresses() {
+        let pk = "a".repeat(64);
+        for bad in [
+            "not-an-address",
+            "alice@127.0.0.1",
+            "alice@10.0.0.1",
+            "alice@localhost",
+            "alice@169.254.169.254",
+        ] {
+            let res = verify_nip05_claim(bad, &pk).await;
+            assert_eq!(res["checked"], true, "must mark checked for {bad}");
+            assert_eq!(res["verified"], false, "must refuse {bad}");
+        }
+    }
+
+    #[test]
+    fn extract_validated_outbox_relays_keeps_write_and_unmarked_public_wss_only() {
+        let ev: Event = serde_json::from_value(json!({
+            "id": "1".repeat(64),
+            "pubkey": "2".repeat(64),
+            "created_at": 1_700_000_000u64,
+            "kind": 10002,
+            "tags": [
+                ["r", "wss://nos.lol"],
+                ["r", "wss://nostr.mom", "write"],
+                ["r", "wss://read-only.example.com", "read"],
+                ["r", "ws://127.0.0.1:7777", "write"],
+                ["r", "wss://10.0.0.1", "write"],
+            ],
+            "content": "",
+            "sig": "3".repeat(128),
+        }))
+        .expect("parses test event");
+
+        let out = extract_validated_outbox_relays(&[(ev, vec![])], AddressPolicy::PublicOnly, 8);
+        let urls: Vec<String> = out.iter().map(ToString::to_string).collect();
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().any(|u| u.contains("nos.lol")));
+        assert!(urls.iter().any(|u| u.contains("nostr.mom")));
+    }
 }

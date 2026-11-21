@@ -624,12 +624,13 @@ pub(crate) fn admit_list(
         payload.kind,
         hkask_nostr_signer::MUTE_LIST_KIND
             | hkask_nostr_signer::BOOKMARK_LIST_KIND
+            | hkask_nostr_signer::RELAY_LIST_KIND
             | hkask_nostr_signer::DM_RELAYS_KIND
             | hkask_nostr_signer::NUTZAP_INFO_KIND
     ) {
         return Err(refusal(
             "InvalidArgument",
-            "only kinds 10000 (mute), 10003 (bookmark), 10050 (NIP-17 DM relays), and 10019 (NIP-61 nutzap info) are admitted",
+            "only kinds 10000 (mute), 10002 (NIP-65 relay list), 10003 (bookmark), 10050 (NIP-17 DM relays), and 10019 (NIP-61 nutzap info) are admitted",
         ));
     }
     if payload.event_ids_hex.len() + payload.pubkeys_hex.len() > hkask_nostr_signer::MAX_LIST_ITEMS
@@ -905,6 +906,12 @@ pub(crate) fn sign_operation_with_slots(
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
         NostrSignOperation::List(list) => match list.kind {
+            hkask_nostr_signer::RELAY_LIST_KIND => {
+                hkask_nostr_signer::sign_relay_list(&key, list.created_at, &list.relay_urls)
+                    .map_err(|error| {
+                        refusal("InvalidArgument", format!("signing failed: {error}"))
+                    })?
+            }
             hkask_nostr_signer::DM_RELAYS_KIND => {
                 hkask_nostr_signer::sign_dm_relays(&key, list.created_at, &list.relay_urls)
                     .map_err(|error| {
@@ -1200,6 +1207,19 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 )
             }
             NostrSignOperation::List(list) => match list.kind {
+                hkask_nostr_signer::RELAY_LIST_KIND => (
+                    format!(
+                        "Publish NIP-65 relay list ({} relay(s), kind:10002)?",
+                        list.relay_urls.len()
+                    ),
+                    format!(
+                        "NIP-65 relays:\n{}\n\nPublishing to relays: {}",
+                        list.relay_urls.join("\n"),
+                        list.relays.join(", ")
+                    ),
+                    [APPROVE_LABEL, DECLINE_LABEL],
+                    "the operator did not approve the NIP-65 relay list; nothing was signed",
+                ),
                 hkask_nostr_signer::DM_RELAYS_KIND => (
                     format!(
                         "Publish NIP-17 DM inbox relay list ({} relay(s), kind:10050)?",

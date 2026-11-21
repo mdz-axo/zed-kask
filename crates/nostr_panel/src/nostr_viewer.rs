@@ -193,7 +193,12 @@ pub struct NostrViewer {
     profile_about_editor: Option<Entity<editor::Editor>>,
     profile_nip05_editor: Option<Entity<editor::Editor>>,
     profile_lud16_editor: Option<Entity<editor::Editor>>,
+    /// Non-edited `kind: 0` fields (`display_name`, `picture`, `website`) preserved
+    /// from the operator's loaded profile so publishing never silently wipes them.
+    loaded_profile_extras: (Option<String>, Option<String>, Option<String>),
     profile_publish_status: Option<(bool, String)>,
+    /// Status feedback for publishing NIP-65 `kind: 10002` relay list.
+    nip65_publish_status: Option<(bool, String)>,
     /// Each note's resolved media attachment, keyed by note id.
     media_attachments: BTreeMap<String, MediaAttachment>,
     /// Each note's own blurhash decoded to a small preview, keyed by
@@ -507,7 +512,9 @@ impl NostrViewer {
             profile_about_editor: None,
             profile_nip05_editor: None,
             profile_lud16_editor: None,
+            loaded_profile_extras: (None, None, None),
             profile_publish_status: None,
+            nip65_publish_status: None,
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
             fetched_images: BTreeMap::new(),
@@ -1358,7 +1365,8 @@ impl NostrViewer {
             json!({
                 "authors": authors_vec,
                 "kinds": [0, 1, 30023],
-                "limit": 50
+                "limit": 50,
+                "use_outbox": true
             }),
         ) {
             Ok(task) => task,
@@ -1985,6 +1993,19 @@ impl NostrViewer {
                             let about_v = get_str("about");
                             let nip05_v = get_str("nip05");
                             let lud16_v = get_str("lud16");
+                            let opt_str = |k: &str| {
+                                fields
+                                    .get(k)
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string)
+                            };
+                            this.loaded_profile_extras = (
+                                opt_str("display_name"),
+                                opt_str("picture"),
+                                opt_str("website"),
+                            );
                             window_handle
                                 .update(cx, |_, window, cx| {
                                     name_ed.update(cx, |e, cx| e.set_text(name_v, window, cx));
@@ -2023,7 +2044,10 @@ impl NostrViewer {
         let mut args = serde_json::Map::new();
         for (k, v) in [
             ("name", read_opt(&self.profile_name_editor)),
+            ("display_name", self.loaded_profile_extras.0.clone()),
             ("about", read_opt(&self.profile_about_editor)),
+            ("picture", self.loaded_profile_extras.1.clone()),
+            ("website", self.loaded_profile_extras.2.clone()),
             ("nip05", read_opt(&self.profile_nip05_editor)),
             ("lud16", read_opt(&self.profile_lud16_editor)),
         ] {
@@ -2071,6 +2095,72 @@ impl NostrViewer {
                         Ok(_) => Some((
                             false,
                             "Publishing kind:0 profile failed: no relay accepted.".to_string(),
+                        )),
+                        Err(err) => Some((false, err)),
+                    },
+                    Err(err) => Some((false, sanitize_untrusted_text(&err.to_string()))),
+                };
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// Publish the operator's configured `wss://` seed relays as their NIP-65
+    /// `kind: 10002` relay list (`nostr_publish_list`). Always prompts in editor.
+    fn publish_nip65_relays(&mut self, cx: &mut Context<Self>) {
+        let relays: Vec<String> = KaskSettings::get_global(cx)
+            .nostr
+            .seed_relays
+            .iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| r.starts_with("wss://"))
+            .collect();
+        if relays.is_empty() {
+            self.nip65_publish_status = Some((
+                false,
+                "Configure at least one public wss:// seed relay in Settings > Kask > Nostr first."
+                    .to_string(),
+            ));
+            cx.notify();
+            return;
+        }
+        self.nip65_publish_status = Some((
+            true,
+            format!(
+                "Awaiting editor approval to publish {} relay(s) as NIP-65 kind:10002…",
+                relays.len()
+            ),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PUBLISH_LIST_TOOL,
+            json!({ "kind": 10_002, "relay_urls": relays }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.nip65_publish_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            this.update(cx, |this, cx| {
+                this.nip65_publish_status = match res {
+                    Ok(raw) => match parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => Some((
+                            true,
+                            format!(
+                                "Published NIP-65 relay list (kind:10002 · {} relay(s))",
+                                outcome.receipt().accepted.len()
+                            ),
+                        )),
+                        Ok(_) => Some((
+                            false,
+                            "Publishing NIP-65 relay list failed: no relay accepted.".to_string(),
                         )),
                         Err(err) => Some((false, err)),
                     },
@@ -4668,6 +4758,14 @@ impl NostrViewer {
                             .on_click(cx.listener(|this, _, _, cx| this.probe_seed_relays(cx))),
                     )
                     .child(
+                        ui::Button::new("nostr-publish-10002", "Publish NIP-65 relays (10002)")
+                            .label_size(LabelSize::XSmall)
+                            .tooltip(ui::Tooltip::text(
+                                "Publish your configured wss:// seed relays as your NIP-65 kind:10002 relay list (always prompts)",
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| this.publish_nip65_relays(cx))),
+                    )
+                    .child(
                         ui::Button::new("nostr-publish-10019", "Publish Nutzap info (10019)")
                             .label_size(LabelSize::XSmall)
                             .tooltip(ui::Tooltip::text(
@@ -4686,12 +4784,21 @@ impl NostrViewer {
                         )
                         .label_size(LabelSize::XSmall)
                         .toggle_state(profile_open)
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.profile_editor_open = !this.profile_editor_open;
+                            if this.profile_editor_open && this.profile_publish_status.is_none() {
+                                this.load_own_profile_into_editors(window, cx);
+                            }
                             cx.notify();
                         })),
                     ),
             )
+            .when_some(self.nip65_publish_status.as_ref(), |el, (ok, msg)| {
+                el.child(Self::line(
+                    display_text(msg),
+                    if *ok { Color::Muted } else { Color::Error },
+                ))
+            })
             .when_some(
                 profile_editors,
                 |el, (name_ed, about_ed, nip05_ed, lud16_ed)| {
