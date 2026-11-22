@@ -45,6 +45,68 @@ pub(crate) const PUBLISH_LIST_TOOL: &str = "nostr_publish_list";
 /// (<https://nostr-nips.com/nip-01>). Always requires native editor approval.
 pub(crate) const PUBLISH_PROFILE_TOOL: &str = "nostr_publish_profile";
 
+/// Hard per-zap ceiling for opt-in auto-zap (satoshis).
+pub(crate) const AUTO_ZAP_HARD_MAX_SATS: u64 = 1_000;
+
+/// Hard daily cumulative ceiling for opt-in auto-zap (satoshis).
+pub(crate) const AUTO_ZAP_HARD_DAILY_CAP_SATS: u64 = 10_000;
+
+/// Fail-closed daily budget tracker for opt-in Like (`+`) auto-zaps.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct AutoZapTracker {
+    day_index: u64,
+    spent_today_sats: u64,
+}
+
+impl AutoZapTracker {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check policy bounds and reserve `amount_sats` against today's budget.
+    /// Returns `Ok((amount_sats, new_spent_today, effective_daily_cap))`.
+    pub(crate) fn check_and_reserve(
+        &mut self,
+        now_day: u64,
+        enabled: bool,
+        amount_sats: u64,
+        max_sats: u64,
+        daily_cap_sats: u64,
+    ) -> Result<(u64, u64, u64), String> {
+        if !enabled {
+            return Err("auto-zap is disabled".to_string());
+        }
+        if now_day != self.day_index {
+            self.day_index = now_day;
+            self.spent_today_sats = 0;
+        }
+        if amount_sats == 0 {
+            return Err("auto_zap_sats must be > 0".to_string());
+        }
+        let effective_max = max_sats.min(AUTO_ZAP_HARD_MAX_SATS);
+        if amount_sats > effective_max {
+            return Err(format!(
+                "{amount_sats} sats exceeds per-zap cap ({effective_max} sats)"
+            ));
+        }
+        let effective_daily = daily_cap_sats.min(AUTO_ZAP_HARD_DAILY_CAP_SATS);
+        let next_total = self.spent_today_sats.saturating_add(amount_sats);
+        if next_total > effective_daily {
+            return Err(format!(
+                "daily cap reached ({}/{} sats)",
+                self.spent_today_sats, effective_daily
+            ));
+        }
+        self.spent_today_sats = next_total;
+        Ok((amount_sats, self.spent_today_sats, effective_daily))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn refund(&mut self, amount_sats: u64) {
+        self.spent_today_sats = self.spent_today_sats.saturating_sub(amount_sats);
+    }
+}
+
 /// The MCP tool that publishes a NIP-84 `kind: 9802` highlight event
 /// (<https://nostr-nips.com/nip-84>).
 pub(crate) const PUBLISH_HIGHLIGHT_TOOL: &str = "nostr_publish_highlight";
@@ -1164,5 +1226,36 @@ mod tests {
         assert!(!state.is_open());
         assert!(state.draft.is_empty());
         assert!(state.error.is_none());
+    }
+
+    #[test]
+    fn auto_zap_tracker_enforces_per_zap_daily_cap_rollover_and_refund() {
+        let mut tracker = AutoZapTracker::new();
+        assert!(tracker.check_and_reserve(100, false, 21, 21, 210).is_err());
+        assert!(tracker.check_and_reserve(100, true, 0, 21, 210).is_err());
+        assert!(tracker.check_and_reserve(100, true, 50, 21, 210).is_err());
+        assert!(
+            tracker
+                .check_and_reserve(100, true, 1_500, 5_000, 10_000)
+                .is_err()
+        );
+        assert_eq!(
+            tracker.check_and_reserve(100, true, 21, 21, 42).unwrap(),
+            (21, 21, 42)
+        );
+        assert_eq!(
+            tracker.check_and_reserve(100, true, 21, 21, 42).unwrap(),
+            (21, 42, 42)
+        );
+        assert!(tracker.check_and_reserve(100, true, 21, 21, 42).is_err());
+        tracker.refund(21);
+        assert_eq!(
+            tracker.check_and_reserve(100, true, 21, 21, 42).unwrap(),
+            (21, 42, 42)
+        );
+        assert_eq!(
+            tracker.check_and_reserve(101, true, 21, 21, 42).unwrap(),
+            (21, 21, 42)
+        );
     }
 }

@@ -24,8 +24,9 @@ use crate::nostr_event_model::{
     host_of, parse_account_seed_relays, parse_blossom_status,
 };
 use crate::nostr_viewer::{
-    ACCOUNT_TOOL, BLOSSOM_STATUS_TOOL, LOG_TOOL, NostrViewer, PROFILE_TOOL, STATUS_TOOL, SYNC_TOOL,
-    content_of, display_text, invoke, short_hex, utc_text,
+    ACCOUNT_TOOL, BLOSSOM_ARCHIVE_TOOL, BLOSSOM_MIRROR_TOOL, BLOSSOM_STATUS_TOOL, LOG_TOOL,
+    NostrViewer, PROFILE_TOOL, STATUS_TOOL, SYNC_TOOL, content_of, display_text, invoke, short_hex,
+    utc_text,
 };
 
 /// Emitted when `nostr_relay_sync` completes successfully so `NostrViewer`
@@ -36,6 +37,7 @@ pub(crate) struct NostrRelayView {
     relay: Option<RelayReading>,
     relay_request: Request,
     blossom_status: Option<BlossomStatusSummary>,
+    blossom_action_status: Option<(bool, String)>,
     seed_relay_probes: Vec<SeedRelayProbe>,
     probe_request: Request,
     nutzap_info_status: Option<(bool, String)>,
@@ -61,6 +63,7 @@ impl NostrRelayView {
             relay: None,
             relay_request: Request::new(),
             blossom_status: None,
+            blossom_action_status: None,
             seed_relay_probes: Vec::new(),
             probe_request: Request::new(),
             nutzap_info_status: None,
@@ -647,6 +650,99 @@ impl NostrRelayView {
         .detach();
     }
 
+    /// Archive NIP-92 `imeta` media blobs referenced by the operator's recent
+    /// events into the local Blossom sidecar (`nostr_blossom_archive`).
+    fn archive_own_blossom_media(&mut self, cx: &mut Context<Self>) {
+        let Some(mine) = self.my_pubkey_hex(cx) else {
+            self.blossom_action_status = Some((
+                false,
+                "Configure your Nostr npub in Settings > Kask > Nostr first.".to_string(),
+            ));
+            cx.notify();
+            return;
+        };
+        self.blossom_action_status = Some((
+            true,
+            "Archiving NIP-92 imeta media into local Blossom sidecar…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            BLOSSOM_ARCHIVE_TOOL,
+            json!({ "authors": [mine], "limit": 20 }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.blossom_action_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(BLOSSOM_ARCHIVE_TOOL, task.await);
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(content) => {
+                        let archived = content.get("archived").and_then(Value::as_u64).unwrap_or(0);
+                        this.blossom_action_status = Some((
+                            true,
+                            format!("Archived {archived} media blob(s) to local Blossom sidecar."),
+                        ));
+                        this.load_relay(cx);
+                    }
+                    Err(err) => {
+                        this.blossom_action_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// Mirror blobs owned by the operator from the local Blossom sidecar out
+    /// to configured public `kask.nostr.blossom_servers` (`nostr_blossom_mirror`).
+    fn mirror_blossom_media(&mut self, cx: &mut Context<Self>) {
+        self.blossom_action_status = Some((
+            true,
+            "Mirroring local Blossom blobs to configured public Blossom servers…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            BLOSSOM_MIRROR_TOOL,
+            json!({ "limit": 10 }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.blossom_action_status = Some((false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(BLOSSOM_MIRROR_TOOL, task.await);
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(content) => {
+                        let mirrored = content.get("mirrored").and_then(Value::as_u64).unwrap_or(0);
+                        this.blossom_action_status = Some((
+                            true,
+                            format!("Mirrored {mirrored} blob(s) to public Blossom server(s)."),
+                        ));
+                    }
+                    Err(err) => {
+                        this.blossom_action_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let profile_editors = if self.profile_editor_open {
             Some(self.ensure_profile_editors(window, cx))
@@ -851,6 +947,38 @@ impl NostrRelayView {
                     block = block.child(NostrViewer::line(
                         display_text(&format!("Public base URL: {url}")),
                         Color::Muted,
+                    ));
+                }
+                block = block.child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            ui::Button::new("nostr-blossom-archive-mine", "Archive my media")
+                                .label_size(LabelSize::XSmall)
+                                .tooltip(ui::Tooltip::text(
+                                    "Download verified NIP-92 imeta blobs from your recent events into the local Blossom sidecar (editor-signed BUD-11 auth)",
+                                ))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.archive_own_blossom_media(cx)),
+                                ),
+                        )
+                        .child(
+                            ui::Button::new("nostr-blossom-mirror-mine", "Mirror to Blossom")
+                                .label_size(LabelSize::XSmall)
+                                .tooltip(ui::Tooltip::text(
+                                    "Mirror local Blossom blobs out to configured public kask.nostr.blossom_servers (editor-signed BUD-11 auth)",
+                                ))
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.mirror_blossom_media(cx)),
+                                ),
+                        ),
+                );
+                if let Some((ok, msg)) = &self.blossom_action_status {
+                    block = block.child(NostrViewer::line(
+                        display_text(msg),
+                        if *ok { Color::Muted } else { Color::Error },
                     ));
                 }
                 block

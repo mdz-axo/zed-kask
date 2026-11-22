@@ -351,7 +351,7 @@ pub struct KaskPredictionMarketsSettings {
 }
 
 /// Nostr configuration (`kask.nostr`).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct KaskNostrSettings {
     /// The public identity the Nostr client server reads for, as the
     /// operator wrote it, trimmed. Empty: none set. Delivered as
@@ -371,11 +371,58 @@ pub struct KaskNostrSettings {
     /// on approval. Read in the editor where the signature is made;
     /// delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`).
     pub autopublish: bool,
+    /// Sign via a NIP-46 remote bunker (`kask://credentials/nostr_bunker_uri`)
+    /// instead of a local NIP-49 `ncryptsec`. Off by default; editor-only.
+    #[serde(default)]
+    pub use_remote_bunker: bool,
+    /// Opt-in bounded auto-zap on Like (`+`) in the Nostr Panel. Off by default.
+    #[serde(default)]
+    pub auto_zap_enabled: bool,
+    /// Satoshis per opt-in auto-zap (default 21).
+    #[serde(default = "default_auto_zap_sats")]
+    pub auto_zap_sats: u64,
+    /// Per-zap safety cap in satoshis (default 21, hard ceiling 1,000).
+    #[serde(default = "default_auto_zap_sats")]
+    pub auto_zap_max_sats: u64,
+    /// Daily cumulative safety cap in satoshis (default 210, hard ceiling 10,000).
+    #[serde(default = "default_auto_zap_daily_cap_sats")]
+    pub auto_zap_daily_cap_sats: u64,
     /// The local relay server's policy.
     pub relay: KaskNostrRelaySettings,
     /// The local Blossom media sidecar's policy.
     #[serde(default)]
     pub blossom: KaskNostrBlossomSettings,
+}
+
+/// Default per-zap satoshi amount/cap for opt-in auto-zap.
+pub const DEFAULT_NOSTR_AUTO_ZAP_SATS: u64 = 21;
+/// Default daily satoshi cap for opt-in auto-zap.
+pub const DEFAULT_NOSTR_AUTO_ZAP_DAILY_CAP_SATS: u64 = 210;
+
+impl Default for KaskNostrSettings {
+    fn default() -> Self {
+        Self {
+            npub: String::new(),
+            seed_relays: Vec::new(),
+            blossom_servers: Vec::new(),
+            autopublish: false,
+            use_remote_bunker: false,
+            auto_zap_enabled: false,
+            auto_zap_sats: DEFAULT_NOSTR_AUTO_ZAP_SATS,
+            auto_zap_max_sats: DEFAULT_NOSTR_AUTO_ZAP_SATS,
+            auto_zap_daily_cap_sats: DEFAULT_NOSTR_AUTO_ZAP_DAILY_CAP_SATS,
+            relay: KaskNostrRelaySettings::default(),
+            blossom: KaskNostrBlossomSettings::default(),
+        }
+    }
+}
+
+fn default_auto_zap_sats() -> u64 {
+    DEFAULT_NOSTR_AUTO_ZAP_SATS
+}
+
+fn default_auto_zap_daily_cap_sats() -> u64 {
+    DEFAULT_NOSTR_AUTO_ZAP_DAILY_CAP_SATS
 }
 
 /// Default local Blossom disk quota: 10 GiB.
@@ -1099,6 +1146,13 @@ impl From<KaskNostrSettingsContent> for KaskNostrSettings {
             seed_relays: clean_list(c.seed_relays.unwrap_or_default()),
             blossom_servers: clean_list(c.blossom_servers.unwrap_or_default()),
             autopublish: c.autopublish.unwrap_or(false),
+            use_remote_bunker: c.use_remote_bunker.unwrap_or(false),
+            auto_zap_enabled: c.auto_zap_enabled.unwrap_or(false),
+            auto_zap_sats: c.auto_zap_sats.unwrap_or(DEFAULT_NOSTR_AUTO_ZAP_SATS),
+            auto_zap_max_sats: c.auto_zap_max_sats.unwrap_or(DEFAULT_NOSTR_AUTO_ZAP_SATS),
+            auto_zap_daily_cap_sats: c
+                .auto_zap_daily_cap_sats
+                .unwrap_or(DEFAULT_NOSTR_AUTO_ZAP_DAILY_CAP_SATS),
             relay: c.relay.map(Into::into).unwrap_or_default(),
             blossom: c.blossom.map(Into::into).unwrap_or_default(),
         }

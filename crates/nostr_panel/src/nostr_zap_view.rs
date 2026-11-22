@@ -216,6 +216,29 @@ impl NostrZapView {
         }
     }
 
+    /// Open the zap strip pre-filled with a bounded auto-zap amount (`amount_sats`)
+    /// and fetch wallet status so the operator can confirm or dispatch under wallet caps.
+    pub(crate) fn open_with_amount(
+        &mut self,
+        target_event_id: String,
+        recipient_pubkey: String,
+        recipient_label: String,
+        amount_sats: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_zap_editors(window, cx);
+        self.ensure_zap_editors(window, cx);
+        let mut draft = ZapDraftState::new(target_event_id, recipient_pubkey, recipient_label);
+        draft.amount_sats = amount_sats;
+        self.zap = Some(draft);
+        if let Some(ed) = &self.zap_amount_editor {
+            ed.update(cx, |e, cx| e.set_text(amount_sats.to_string(), window, cx));
+        }
+        self.fetch_zap_wallet_status(cx);
+        cx.notify();
+    }
+
     pub(crate) fn toggle(
         &mut self,
         event_id: String,

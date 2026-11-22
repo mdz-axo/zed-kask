@@ -58,9 +58,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::nostr_composer::{
-    HighlightContext, PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL, PUBLISH_LIST_TOOL,
-    PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext, ReplyContext,
-    WALLET_RECEIVE_ECASH_TOOL, sanitize_untrusted_text,
+    AutoZapTracker, HighlightContext, PUBLISH_DELETION_TOOL, PUBLISH_FOLLOWS_TOOL,
+    PUBLISH_LIST_TOOL, PUBLISH_REACTION_TOOL, PUBLISH_REPOST_TOOL, QUICK_REACTIONS, QuoteContext,
+    ReplyContext, WALLET_RECEIVE_ECASH_TOOL, sanitize_untrusted_text,
 };
 use crate::nostr_composer_view::{NostrComposerView, NotePublished};
 use crate::nostr_dm_view::NostrDmView;
@@ -69,8 +69,8 @@ use crate::nostr_zap_view::{NostrZapView, ZapSettled};
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
 use gpui::{
-    Context, DefiniteLength, Entity, EventEmitter, Render, ScrollHandle, SharedString, Task,
-    WeakEntity, Window, px,
+    Context, DefiniteLength, Entity, EventEmitter, Focusable as _, Render, ScrollHandle,
+    SharedString, Task, WeakEntity, Window, px,
 };
 use gpui::{ImageSource, ObjectFit, RenderImage, img};
 use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media_path};
@@ -98,6 +98,9 @@ const THREAD_TOOL: &str = "nostr_thread";
 pub(crate) const FETCH_TOOL: &str = "nostr_fetch_events";
 const NOTIFICATIONS_TOOL: &str = "nostr_notifications";
 pub(crate) const ACCOUNT_TOOL: &str = "nostr_account";
+pub(crate) const DECODE_TOOL: &str = "nostr_decode";
+pub(crate) const BLOSSOM_ARCHIVE_TOOL: &str = "nostr_blossom_archive";
+pub(crate) const BLOSSOM_MIRROR_TOOL: &str = "nostr_blossom_mirror";
 pub(crate) const BLOSSOM_STATUS_TOOL: &str = "nostr_blossom_status";
 /// A labelled click in the detail pane: the network is contacted only
 /// there.
@@ -124,6 +127,72 @@ pub enum ViewerTab {
     Conversation,
     Relay,
     Messages,
+}
+
+/// Decoded output of `nostr_decode` (pure local, zero network).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DecodedIdentifier {
+    pub(crate) kind_label: String,
+    pub(crate) public_key_hex: Option<String>,
+    pub(crate) npub: Option<String>,
+    pub(crate) event_id_hex: Option<String>,
+    pub(crate) note: Option<String>,
+    pub(crate) hex: Option<String>,
+    pub(crate) event_kind: Option<u64>,
+    pub(crate) identifier: Option<String>,
+    pub(crate) relay_hints: Vec<String>,
+}
+
+pub(crate) fn parse_decode_result(content: &Value) -> Result<DecodedIdentifier, String> {
+    let kind_label = content
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nostr_decode returned no type field".to_string())?
+        .to_string();
+    let str_at = |key: &str| {
+        content
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let relay_hints = content
+        .get("relay_hints")
+        .and_then(|h| h.get("addresses"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let public_key_hex = str_at("public_key_hex").or_else(|| str_at("author_hex"));
+    let npub = str_at("npub").or_else(|| {
+        content
+            .get("as_public_key")
+            .and_then(|v| v.get("npub"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    let note = str_at("note").or_else(|| {
+        content
+            .get("as_event_id")
+            .and_then(|v| v.get("note"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    Ok(DecodedIdentifier {
+        kind_label,
+        public_key_hex,
+        npub,
+        event_id_hex: str_at("event_id_hex"),
+        note,
+        hex: str_at("hex"),
+        event_kind: content.get("kind").and_then(Value::as_u64),
+        identifier: str_at("identifier"),
+        relay_hints,
+    })
 }
 
 pub struct NostrViewer {
@@ -186,6 +255,11 @@ pub struct NostrViewer {
     search_editor: Option<Entity<editor::Editor>>,
     search_feed: Option<Feed>,
     search_request: Request,
+    /// Collapsible local `nostr_decode` identifier inspector drawer.
+    decode_open: bool,
+    decode_editor: Option<Entity<editor::Editor>>,
+    decode_result: Option<Result<DecodedIdentifier, String>>,
+    decode_in_flight: bool,
     /// Latest assistant reply text from the Steer pane for one-click draft handoff.
     latest_steer_reply: Option<String>,
     /// Each note's resolved media attachment, keyed by note id.
@@ -234,6 +308,11 @@ pub struct NostrViewer {
     reaction_in_flight: Option<String>,
     reaction_feedback: Option<(String, bool, String)>,
     _reaction_task: Option<Task<()>>,
+    /// Opt-in 15s auto-refresh timer over the local loopback relay only (off by default).
+    auto_refresh_enabled: bool,
+    _auto_refresh_task: Option<Task<()>>,
+    /// Fail-closed daily budget tracker for opt-in Like (`+`) auto-zaps.
+    auto_zap_tracker: AutoZapTracker,
     /// Editor-only NIP-17 encrypted DMs view (SQLCipher-backed, never in Steer/MCP).
     dm_view: Option<Entity<NostrDmView>>,
 }
@@ -501,6 +580,10 @@ impl NostrViewer {
             search_editor: None,
             search_feed: None,
             search_request: Request::new(),
+            decode_open: false,
+            decode_editor: None,
+            decode_result: None,
+            decode_in_flight: false,
             latest_steer_reply: None,
             media_attachments: BTreeMap::new(),
             media_previews: BTreeMap::new(),
@@ -526,6 +609,9 @@ impl NostrViewer {
             reaction_in_flight: None,
             reaction_feedback: None,
             _reaction_task: None,
+            auto_refresh_enabled: false,
+            _auto_refresh_task: None,
+            auto_zap_tracker: AutoZapTracker::new(),
             dm_view: None,
         }
     }
@@ -944,6 +1030,48 @@ impl NostrViewer {
                 self.mark_alerts_read();
             }
         }
+        cx.notify();
+    }
+
+    /// Toggle opt-in 15s auto-refresh over the local loopback relay only.
+    /// Contacts no public relay; dropping or toggling off cancels immediately.
+    fn toggle_auto_refresh(&mut self, cx: &mut Context<Self>) {
+        self.auto_refresh_enabled = !self.auto_refresh_enabled;
+        if !self.auto_refresh_enabled {
+            self._auto_refresh_task = None;
+            cx.notify();
+            return;
+        }
+        self._auto_refresh_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(15))
+                    .await;
+                let keep_going = this
+                    .update(cx, |this, cx| {
+                        if !this.auto_refresh_enabled {
+                            return false;
+                        }
+                        match this.tab {
+                            ViewerTab::Timeline
+                                if this.timeline_filter != TimelineFilter::Following =>
+                            {
+                                this.load_archive(cx);
+                            }
+                            ViewerTab::Relay => {
+                                let relay_view = this.ensure_relay_view(cx);
+                                relay_view.update(cx, |view, cx| view.load_relay(cx));
+                            }
+                            _ => {}
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    break;
+                }
+            }
+        }));
         cx.notify();
     }
 
@@ -1889,6 +2017,230 @@ impl NostrViewer {
         .detach();
     }
 
+    /// Archive NIP-92 `imeta` media blobs referenced by one verified event
+    /// into the local Blossom sidecar (`nostr_blossom_archive`).
+    fn archive_event_media(&mut self, event_id: String, cx: &mut Context<Self>) {
+        self.reaction_feedback = Some((
+            event_id.clone(),
+            true,
+            "Archiving event imeta media to local Blossom sidecar…".to_string(),
+        ));
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            BLOSSOM_ARCHIVE_TOOL,
+            json!({ "ids": [event_id] }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(BLOSSOM_ARCHIVE_TOOL, task.await);
+            this.update(cx, |this, cx| {
+                this.reaction_feedback = Some(match result {
+                    Ok(content) => {
+                        let archived = content.get("archived").and_then(Value::as_u64).unwrap_or(0);
+                        (
+                            event_id,
+                            true,
+                            format!("Archived {archived} media blob(s) to local Blossom sidecar."),
+                        )
+                    }
+                    Err(err) => (event_id, false, err),
+                });
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn ensure_decode_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(existing) = &self.decode_editor {
+            return existing.clone();
+        }
+        let ed = cx.new(|cx| {
+            let mut e = editor::Editor::single_line(window, cx);
+            e.set_placeholder_text(
+                "Paste npub, nprofile, note, nevent, naddr, or 64-hex (local)…",
+                window,
+                cx,
+            );
+            e
+        });
+        self.decode_editor = Some(ed.clone());
+        ed
+    }
+
+    fn run_decode(&mut self, cx: &mut Context<Self>) {
+        let Some(ed) = &self.decode_editor else {
+            return;
+        };
+        let input = ed.read(cx).text(cx).trim().to_string();
+        if input.is_empty() {
+            self.decode_result = Some(Err("Paste a Nostr identifier to decode.".to_string()));
+            cx.notify();
+            return;
+        }
+        self.decode_in_flight = true;
+        cx.notify();
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            DECODE_TOOL,
+            json!({ "identifier": input }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.decode_in_flight = false;
+                self.decode_result = Some(Err(err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = content_of(DECODE_TOOL, task.await).and_then(|c| parse_decode_result(&c));
+            this.update(cx, |this, cx| {
+                this.decode_in_flight = false;
+                this.decode_result = Some(result);
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn render_decode_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let editor = self.ensure_decode_editor(window, cx);
+        let in_flight = self.decode_in_flight;
+        let mut container = v_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .flex_shrink_0()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(editor),
+                    )
+                    .child(
+                        ui::Button::new("nostr-decode-run", if in_flight { "…" } else { "Decode" })
+                            .style(ui::ButtonStyle::Filled)
+                            .label_size(LabelSize::XSmall)
+                            .disabled(in_flight)
+                            .tooltip(ui::Tooltip::text(
+                                "Decode locally via nostr_decode (contacts no relay; refuses nsec)",
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| this.run_decode(cx))),
+                    )
+                    .child(
+                        ui::IconButton::new("nostr-decode-close", ui::IconName::Close)
+                            .icon_size(ui::IconSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.decode_open = false;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        if let Some(res) = self.decode_result.clone() {
+            match res {
+                Ok(decoded) => {
+                    let mut summary_lines: Vec<String> =
+                        vec![format!("Type: {}", decoded.kind_label)];
+                    if let Some(hex) = &decoded.hex {
+                        summary_lines.push(format!("Hex: {hex}"));
+                    }
+                    if let Some(pk) = &decoded.public_key_hex {
+                        summary_lines.push(format!("Pubkey: {pk}"));
+                    }
+                    if let Some(npub) = &decoded.npub {
+                        summary_lines.push(format!("npub: {npub}"));
+                    }
+                    if let Some(ev) = &decoded.event_id_hex {
+                        summary_lines.push(format!("Event ID: {ev}"));
+                    }
+                    if let Some(note) = &decoded.note {
+                        summary_lines.push(format!("note: {note}"));
+                    }
+                    if let Some(k) = decoded.event_kind {
+                        let d = decoded.identifier.as_deref().unwrap_or("");
+                        summary_lines.push(format!("Kind: {k} · d: {d}"));
+                    }
+                    if !decoded.relay_hints.is_empty() {
+                        summary_lines.push(format!(
+                            "Uncontacted relay hints ({}): {}",
+                            decoded.relay_hints.len(),
+                            decoded.relay_hints.join(", ")
+                        ));
+                    }
+                    for line in summary_lines {
+                        container = container.child(Self::line(display_text(&line), Color::Muted));
+                    }
+                    let copy_hex = decoded
+                        .event_id_hex
+                        .clone()
+                        .or_else(|| decoded.public_key_hex.clone())
+                        .or_else(|| decoded.hex.clone());
+                    let thread_id = decoded.event_id_hex.clone().or_else(|| decoded.hex.clone());
+                    container = container.child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .flex_wrap()
+                            .when_some(thread_id, |row, id| {
+                                row.child(
+                                    ui::Button::new("nostr-decode-open-thread", "Open thread")
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.decode_open = false;
+                                            this.read_conversation(id.clone(), cx);
+                                        })),
+                                )
+                            })
+                            .when_some(copy_hex, |row, hex| {
+                                row.child(
+                                    ui::Button::new("nostr-decode-copy-hex", "Copy hex")
+                                        .label_size(LabelSize::XSmall)
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                hex.clone(),
+                                            ));
+                                        })),
+                                )
+                            }),
+                    );
+                }
+                Err(err) => {
+                    container = container.child(Self::line(display_text(&err), Color::Error));
+                }
+            }
+        }
+        container.into_any_element()
+    }
+
     /// Redeem an inbound NIP-61 `kind: 9321` nutzap event via `wallet_receive_ecash`.
     fn redeem_nutzap(&mut self, event_id: String, payload: NutzapPayload, cx: &mut Context<Self>) {
         if self.reaction_in_flight.is_some() {
@@ -2662,12 +3014,18 @@ impl NostrViewer {
                                 } else {
                                     "Like (NIP-25 kind:7 '+')"
                                 }))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
                                     this.send_reaction(
                                         like_id.clone(),
                                         like_author.clone(),
                                         "+".to_string(),
+                                        cx,
+                                    );
+                                    this.maybe_trigger_auto_zap(
+                                        like_id.clone(),
+                                        like_author.clone(),
+                                        window,
                                         cx,
                                     );
                                 })),
@@ -3197,6 +3555,11 @@ impl NostrViewer {
                         let bm_event_id = event.id.clone();
                         let mute_event_id = event.id.clone();
                         let mute_author_hex = event.author.clone();
+                        let has_imeta = event
+                            .tags
+                            .iter()
+                            .any(|t| t.first().map(String::as_str) == Some("imeta"));
+                        let archive_ev_id = event.id.clone();
                         let meta_expanded = self.detail_meta_expanded;
                         PopoverMenu::new("nostr-detail-more-menu")
                             .trigger_with_tooltip(
@@ -3220,9 +3583,25 @@ impl NostrViewer {
                                 let highlight_excerpt = highlight_excerpt.clone();
                                 let quote_target = quote_target.clone();
                                 let bm_event_id = bm_event_id.clone();
+                                let archive_ev_id = archive_ev_id.clone();
                                 let mute_event_id = mute_event_id.clone();
                                 let mute_author_hex = mute_author_hex.clone();
                                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    if has_imeta {
+                                        let viewer = viewer.clone();
+                                        let ev_id = archive_ev_id.clone();
+                                        menu = menu.entry(
+                                            "Archive media to local Blossom",
+                                            None,
+                                            move |_, cx| {
+                                                viewer
+                                                    .update(cx, |this, cx| {
+                                                        this.archive_event_media(ev_id.clone(), cx);
+                                                    })
+                                                    .log_err();
+                                            },
+                                        );
+                                    }
                                     if let Some(nip05) = nip05_claimed.clone() {
                                         let viewer = viewer.clone();
                                         let ev_id = verify_nip05_event_id.clone();
@@ -4608,6 +4987,52 @@ impl NostrViewer {
         cx.notify();
     }
 
+    /// If opt-in `kask.nostr.auto_zap_enabled` is turned on, enforce per-zap
+    /// and daily satoshi caps and open the zap strip pre-filled with the bounded
+    /// amount (preserving wallet-level approval and allowlist enforcement).
+    fn maybe_trigger_auto_zap(
+        &mut self,
+        event_id: String,
+        author_hex: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cfg = &KaskSettings::get_global(cx).nostr;
+        if !cfg.auto_zap_enabled {
+            return;
+        }
+        let now_day = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86_400)
+            .unwrap_or(0);
+        match self.auto_zap_tracker.check_and_reserve(
+            now_day,
+            cfg.auto_zap_enabled,
+            cfg.auto_zap_sats,
+            cfg.auto_zap_max_sats,
+            cfg.auto_zap_daily_cap_sats,
+        ) {
+            Ok((sats, spent, cap)) => {
+                let label = short_hex(&author_hex);
+                let zap_view = self.ensure_zap_view(cx);
+                zap_view.update(cx, |view, cx| {
+                    view.open_with_amount(event_id.clone(), author_hex, label, sats, window, cx);
+                });
+                self.reaction_feedback = Some((
+                    event_id,
+                    true,
+                    format!("Auto-zap ready: {sats} sats (daily {spent}/{cap} sats)"),
+                ));
+                cx.notify();
+            }
+            Err(reason) => {
+                self.reaction_feedback =
+                    Some((event_id, false, format!("Auto-zap skipped: {reason}")));
+                cx.notify();
+            }
+        }
+    }
+
     /// Dispatch a NIP-25 `kind: 7` reaction (`nostr_publish_reaction`), or
     /// unreact via NIP-09 `kind: 5` deletion if the operator already published
     /// this reaction on `event_id`.
@@ -5133,6 +5558,44 @@ impl Render for NostrViewer {
                             .min_w(px(32.))
                             .justify_center()
                             .child(
+                                ui::IconButton::new(
+                                    "nostr-viewer-live",
+                                    if self.auto_refresh_enabled {
+                                        ui::IconName::BoltFilled
+                                    } else {
+                                        ui::IconName::BoltOutlined
+                                    },
+                                )
+                                    .icon_size(ui::IconSize::Small)
+                                    .toggle_state(self.auto_refresh_enabled)
+                                    .tooltip(ui::Tooltip::text(if self.auto_refresh_enabled {
+                                        "Live local auto-refresh ON (polls local relay every 15s; click to stop)."
+                                    } else {
+                                        "Enable live local auto-refresh (polls local relay every 15s; contacts no public relay)."
+                                    }))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.toggle_auto_refresh(cx);
+                                    })),
+                            )
+                            .child(
+                                ui::IconButton::new("nostr-viewer-decode", ui::IconName::Info)
+                                    .icon_size(ui::IconSize::Small)
+                                    .toggle_state(self.decode_open)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Decode a Nostr identifier (npub, nprofile, note, nevent, naddr, hex). Local; contacts no relay.",
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.decode_open = !this.decode_open;
+                                        if this.decode_open {
+                                            let ed = this.ensure_decode_editor(window, cx);
+                                            ed.update(cx, |e, cx| {
+                                                window.focus(&e.focus_handle(cx), cx);
+                                            });
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
                                 ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
                                     .icon_size(ui::IconSize::Small)
                                 .tooltip(ui::Tooltip::text(match self.tab {
@@ -5157,6 +5620,9 @@ impl Render for NostrViewer {
                         ),
                     ),
             )
+            .when(self.decode_open, |this| {
+                this.child(self.render_decode_bar(window, cx))
+            })
             .when_some(composer_view, |this, view| this.child(view))
             .child(
                 v_flex()
@@ -5269,6 +5735,9 @@ mod tests {
         assert!(CLIENT_TOOL_NAMES.contains(&FETCH_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&NOTIFICATIONS_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&ACCOUNT_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&DECODE_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&BLOSSOM_ARCHIVE_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&BLOSSOM_MIRROR_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PUBLISH_TOOL));
         assert!(hkask_types::nostr_wire::BLOSSOM_TOOL_NAMES.contains(&BLOSSOM_STATUS_TOOL));
         assert!(
@@ -5276,6 +5745,49 @@ mod tests {
                 && !RELAY_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL),
             "the fetch tool belongs to the media server, not a nostr server"
         );
+    }
+
+    #[test]
+    fn parse_decode_result_handles_npub_nevent_naddr_and_hex() {
+        let nevent = parse_decode_result(&json!({
+            "type": "nevent",
+            "event_id_hex": "aa".repeat(32),
+            "note": "note1abc",
+            "author_hex": "bb".repeat(32),
+            "kind": 1,
+            "relay_hints": { "addresses": ["wss://nos.lol"], "contacted": false }
+        }))
+        .expect("nevent parses");
+        assert_eq!(nevent.kind_label, "nevent");
+        assert_eq!(
+            nevent.event_id_hex.as_deref(),
+            Some("aa".repeat(32).as_str())
+        );
+        assert_eq!(
+            nevent.public_key_hex.as_deref(),
+            Some("bb".repeat(32).as_str())
+        );
+        assert_eq!(nevent.relay_hints, vec!["wss://nos.lol"]);
+
+        let hex = parse_decode_result(&json!({
+            "type": "hex",
+            "hex": "cc".repeat(32),
+            "as_event_id": { "note": "note1cc" },
+            "as_public_key": { "npub": "npub1cc" }
+        }))
+        .expect("hex parses");
+        assert_eq!(hex.kind_label, "hex");
+        assert_eq!(hex.note.as_deref(), Some("note1cc"));
+        assert_eq!(hex.npub.as_deref(), Some("npub1cc"));
+
+        assert!(parse_decode_result(&json!({})).is_err());
+    }
+
+    #[test]
+    fn auto_refresh_defaults_off() {
+        let viewer = NostrViewer::new();
+        assert!(!viewer.auto_refresh_enabled);
+        assert!(viewer._auto_refresh_task.is_none());
     }
 
     /// expect: the archive query's result reads as the local archive feed,

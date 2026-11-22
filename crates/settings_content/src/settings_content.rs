@@ -1774,6 +1774,30 @@ pub struct KaskNostrSettingsContent {
     /// to no MCP server.
     #[serde(default)]
     pub autopublish: Option<bool>,
+    /// Sign via a NIP-46 remote bunker (`"kask.nostr.use_remote_bunker"`) using
+    /// the `bunker://` URI stored in the OS keychain (`kask://credentials/nostr_bunker_uri`)
+    /// instead of a local NIP-49 `ncryptsec`. Off by default; runs behind the
+    /// same native editor approval prompt and never reaches any MCP server.
+    #[serde(default)]
+    pub use_remote_bunker: Option<bool>,
+    /// Opt-in bounded auto-zap when liking (`+`) a note in the Nostr Panel
+    /// (`"kask.nostr.auto_zap_enabled"`). Off by default; strictly bounded by
+    /// `auto_zap_max_sats` (ceiling 1,000) and `auto_zap_daily_cap_sats`
+    /// (ceiling 10,000), and still subject to wallet approval/allowlists.
+    #[serde(default)]
+    pub auto_zap_enabled: Option<bool>,
+    /// Amount in satoshis for each opt-in auto-zap (`"kask.nostr.auto_zap_sats"`,
+    /// default 21). Clamped/refused against `auto_zap_max_sats`.
+    #[serde(default)]
+    pub auto_zap_sats: Option<u64>,
+    /// Maximum satoshis permitted for any single auto-zap
+    /// (`"kask.nostr.auto_zap_max_sats"`, default 21, hard ceiling 1,000).
+    #[serde(default)]
+    pub auto_zap_max_sats: Option<u64>,
+    /// Maximum cumulative satoshis permitted for auto-zaps per UTC day
+    /// (`"kask.nostr.auto_zap_daily_cap_sats"`, default 210, hard ceiling 10,000).
+    #[serde(default)]
+    pub auto_zap_daily_cap_sats: Option<u64>,
     /// The local relay server's policy (`"kask.nostr.relay"`).
     #[serde(default)]
     pub relay: Option<KaskNostrRelaySettingsContent>,

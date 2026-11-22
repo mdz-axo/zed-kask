@@ -51,6 +51,7 @@ mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
+mod nostr_bunker;
 pub mod nostr_dm;
 mod nostr_signing;
 mod nwc_rail;
@@ -142,8 +143,8 @@ pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 // startup purges of the removed ABW and Reduct.cloud keys (D5) — called once
 // from zed's app init.
 pub use credentials::{
-    KASK_CREDENTIAL_NAMESPACE, NOSTR_NCRYPTSEC_CREDENTIAL_URL, NOSTR_PASSWORD_CREDENTIAL_URL,
-    WALLET_DB_PASSPHRASE_CREDENTIAL_URL, WALLET_MAINNET_CONSENT_CREDENTIAL_URL,
-    WALLET_NWC_URI_CREDENTIAL_URL, WALLET_SEED_MNEMONIC_CREDENTIAL_URL, purge_removed_abw_api_key,
-    purge_removed_reduct_api_key,
+    KASK_CREDENTIAL_NAMESPACE, NOSTR_BUNKER_URI_CREDENTIAL_URL, NOSTR_NCRYPTSEC_CREDENTIAL_URL,
+    NOSTR_PASSWORD_CREDENTIAL_URL, WALLET_DB_PASSPHRASE_CREDENTIAL_URL,
+    WALLET_MAINNET_CONSENT_CREDENTIAL_URL, WALLET_NWC_URI_CREDENTIAL_URL,
+    WALLET_SEED_MNEMONIC_CREDENTIAL_URL, purge_removed_abw_api_key, purge_removed_reduct_api_key,
 };

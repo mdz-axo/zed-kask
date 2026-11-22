@@ -784,6 +784,20 @@ pub(crate) fn sign_operation_with_slots(
             "the saved key is not the identity set in kask.nostr.npub; nothing was signed",
         ));
     }
+    let event = sign_operation_with_key(&key, operation)?;
+    drop(key);
+    serde_json::from_str(&event.to_json()).map_err(|error| {
+        refusal(
+            "Json",
+            format!("the signed event did not serialize: {error}"),
+        )
+    })
+}
+
+fn sign_operation_with_key(
+    key: &hkask_nostr_signer::SecretKey,
+    operation: &NostrSignOperation,
+) -> Result<hkask_nostr_core::Event, InferenceErrorPayload> {
     let event = match operation {
         NostrSignOperation::Note {
             content,
@@ -971,7 +985,7 @@ pub(crate) fn sign_operation_with_slots(
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
             }
             _ => hkask_nostr_signer::sign_list_with_preserved(
-                &key,
+                key,
                 list.created_at,
                 list.kind,
                 &list.event_ids_hex,
@@ -982,13 +996,7 @@ pub(crate) fn sign_operation_with_slots(
             .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
         },
     };
-    drop(key);
-    serde_json::from_str(&event.to_json()).map_err(|error| {
-        refusal(
-            "Json",
-            format!("the signed event did not serialize: {error}"),
-        )
-    })
+    Ok(event)
 }
 
 /// Handle one admitted request on the GPUI side. Reads the setting, asks
@@ -1406,6 +1414,71 @@ pub(crate) async fn sign_operation_after_approval(
             }
         }
     };
+    let use_remote_bunker = cx.update(|cx| {
+        cx.has_global::<settings::SettingsStore>()
+            && KaskSettings::get_global(cx).nostr.use_remote_bunker
+    });
+    if use_remote_bunker {
+        let bunker_uri = match provider
+            .read_credentials(crate::NOSTR_BUNKER_URI_CREDENTIAL_URL, cx)
+            .await
+        {
+            Ok(Some((_, bytes))) if !bytes.is_empty() => {
+                Zeroizing::new(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            Ok(_) => {
+                return Err(refusal(
+                    "NotConfigured",
+                    "use_remote_bunker is enabled, but no NIP-46 bunker URI is saved in keychain slot kask://credentials/nostr_bunker_uri",
+                ));
+            }
+            Err(error) => {
+                return Err(refusal(
+                    "Unavailable",
+                    format!("the keychain could not be read: {error}"),
+                ));
+            }
+        };
+        let pubkey_bytes = hkask_nostr_core::decode_npub(configured_npub.trim()).map_err(|_| {
+            refusal(
+                "InvalidArgument",
+                "kask.nostr.npub must be a valid npub when use_remote_bunker is enabled",
+            )
+        })?;
+        let pubkey_hex: String = pubkey_bytes.iter().map(|b| format!("{b:02x}")).collect();
+        // Reuse hkask_nostr_signer's full validation & tag construction with a
+        // throwaway ephemeral key, then send the exact validated unsigned payload
+        // to the NIP-46 bunker and verify the returned signature & fields.
+        let ephemeral = nostr_sdk::prelude::Keys::generate();
+        let ephemeral_nsec = Zeroizing::new(
+            nostr_sdk::prelude::ToBech32::to_bech32(ephemeral.secret_key()).map_err(|error| {
+                refusal("Generation", format!("ephemeral nsec failed: {error}"))
+            })?,
+        );
+        let ephemeral_key = hkask_nostr_signer::SecretKey::from_nsec(&ephemeral_nsec)
+            .map_err(|error| refusal("Generation", format!("ephemeral key failed: {error}")))?;
+        let template = sign_operation_with_key(&ephemeral_key, &operation)?;
+        drop(ephemeral_key);
+        let approved = crate::nostr_bunker::UnsignedApprovedEvent {
+            pubkey_hex,
+            created_at: template.created_at(),
+            kind: template.kind(),
+            tags: template.tags().to_vec(),
+            content: template.content().to_string(),
+        };
+        let signed = gpui_tokio::Tokio::spawn(cx, async move {
+            crate::nostr_bunker::sign_event_via_bunker(&bunker_uri, &approved).await
+        })
+        .await
+        .map_err(|error| refusal("Unavailable", format!("bunker task failed: {error}")))?
+        .map_err(|error| refusal("Unavailable", error))?;
+        return serde_json::from_str(&signed.to_json()).map_err(|error| {
+            refusal(
+                "Json",
+                format!("the bunker-signed event did not serialize: {error}"),
+            )
+        });
+    }
     let ncryptsec = read(crate::NOSTR_NCRYPTSEC_CREDENTIAL_URL).await?;
     let password = read(crate::NOSTR_PASSWORD_CREDENTIAL_URL).await?;
     let configured_npub = configured_npub.to_string();

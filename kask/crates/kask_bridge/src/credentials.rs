@@ -26,6 +26,12 @@ pub const NOSTR_NCRYPTSEC_CREDENTIAL_URL: &str = "kask://credentials/nostr_ncryp
 /// and what opens it are separable entries and a reset removes both by name.
 pub const NOSTR_PASSWORD_CREDENTIAL_URL: &str = "kask://credentials/nostr_password";
 
+/// The keychain slot for an optional NIP-46 remote bunker connection URI
+/// (`bunker://<pubkey>?relay=wss://...&secret=...`). Held exclusively by the
+/// editor (`kask_bridge`) behind the same native approval prompt; never enters
+/// `settings.json`, `DATA_SERVICES`, or `credential_urls_for_mcp()`.
+pub const NOSTR_BUNKER_URI_CREDENTIAL_URL: &str = "kask://credentials/nostr_bunker_uri";
+
 /// The keychain slot for the operator's BIP-39 12/24-word Cashu NUT-13 seed
 /// mnemonic (D110). Held exclusively by the editor (`kask_bridge`); never
 /// enters `DATA_SERVICES` or `credential_urls_for_mcp()`.
@@ -154,6 +160,7 @@ mod tests {
         for url in [
             NOSTR_NCRYPTSEC_CREDENTIAL_URL,
             NOSTR_PASSWORD_CREDENTIAL_URL,
+            NOSTR_BUNKER_URI_CREDENTIAL_URL,
         ] {
             assert!(url.starts_with(KASK_CREDENTIAL_NAMESPACE), "{url}");
         }
@@ -173,6 +180,7 @@ mod tests {
         for url in [
             NOSTR_NCRYPTSEC_CREDENTIAL_URL,
             NOSTR_PASSWORD_CREDENTIAL_URL,
+            NOSTR_BUNKER_URI_CREDENTIAL_URL,
         ] {
             assert!(
                 !delivered.iter().any(|(_, slot)| slot == url),
@@ -183,6 +191,7 @@ mod tests {
         for url in [
             NOSTR_NCRYPTSEC_CREDENTIAL_URL,
             NOSTR_PASSWORD_CREDENTIAL_URL,
+            NOSTR_BUNKER_URI_CREDENTIAL_URL,
         ] {
             assert!(
                 !prefetched.iter().any(|(_, slot)| slot == url),
