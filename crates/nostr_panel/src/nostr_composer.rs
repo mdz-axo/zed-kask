@@ -484,6 +484,9 @@ impl ZapDraftState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HighlightContext {
     pub(crate) source_event_id: String,
+    /// Optional NIP-33/NIP-84 addressable coordinate (`30023:<pubkey>:<d-tag>`)
+    /// when highlighting an addressable long-form article.
+    pub(crate) source_address: Option<String>,
     pub(crate) source_author: String,
     pub(crate) target_label: String,
 }

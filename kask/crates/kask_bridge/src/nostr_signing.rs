@@ -938,6 +938,7 @@ pub(crate) fn sign_operation_with_slots(
         NostrSignOperation::Highlight(hl) => {
             let draft = hkask_nostr_signer::HighlightDraft {
                 source_event_id_hex: hl.source_event_id_hex.clone(),
+                source_address: hl.source_address.clone(),
                 source_author_hex: hl.source_author_hex.clone(),
                 source_url: hl.source_url.clone(),
                 comment: hl.comment.clone(),
@@ -1253,8 +1254,9 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 (
                     "Publish NIP-84 highlight (kind:9802)?".to_string(),
                     format!(
-                        "Quoted text:\n{preview}\n\nComment: {}\nSource URL: {}\nRelays: {}",
+                        "Quoted text:\n{preview}\n\nComment: {}\nSource address: {}\nSource URL: {}\nRelays: {}",
                         hl.comment.as_deref().unwrap_or("<none>"),
+                        hl.source_address.as_deref().unwrap_or("<none>"),
                         hl.source_url.as_deref().unwrap_or("<none>"),
                         hl.relays.join(", ")
                     ),

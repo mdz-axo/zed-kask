@@ -315,6 +315,8 @@ pub struct NostrHighlightWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_event_id_hex: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_author_hex: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,

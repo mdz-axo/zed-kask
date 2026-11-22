@@ -19,7 +19,8 @@ pub use nip19::{IdentifierError, decode_note, decode_npub, encode_note, encode_n
 pub use zaps::{
     NUTZAP_INFO_KIND, NUTZAP_KIND, ParsedNutzap, ParsedNutzapInfo, ParsedZapReceipt,
     ZAP_RECEIPT_KIND, ZAP_REQUEST_KIND, ZapParseError, parse_nutzap, parse_nutzap_info,
-    parse_zap_receipt, validate_nip61_p2pk_pubkey, verify_bolt11_zap_invoice,
+    parse_nutzap_info_tags, parse_zap_receipt, validate_nip61_p2pk_pubkey,
+    verify_bolt11_zap_invoice,
 };
 
 use k256::schnorr::{Signature, VerifyingKey};

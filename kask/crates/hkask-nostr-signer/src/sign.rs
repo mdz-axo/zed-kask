@@ -376,14 +376,35 @@ pub fn sign_profile(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HighlightDraft {
     pub source_event_id_hex: Option<String>,
+    /// Optional NIP-33 / NIP-84 addressable coordinate (`<kind>:<64-hex-pubkey>:<d-tag>`,
+    /// e.g. `30023:<hex>:<slug>`) emitted as an `a` tag.
+    pub source_address: Option<String>,
     pub source_author_hex: Option<String>,
     pub source_url: Option<String>,
     pub comment: Option<String>,
 }
 
+fn is_valid_addressable_coord(coord: &str) -> bool {
+    let mut parts = coord.splitn(3, ':');
+    let (Some(kind_str), Some(pubkey), Some(d_tag)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let Ok(kind) = kind_str.parse::<u16>() else {
+        return false;
+    };
+    if !(30_000..=39_999).contains(&kind) {
+        return false;
+    }
+    if !is_lower_sha256_hex(pubkey) {
+        return false;
+    }
+    !d_tag.is_empty() && d_tag.chars().count() <= 256 && !d_tag.chars().any(char::is_control)
+}
+
 /// Sign a NIP-84 `kind: 9802` highlight event carrying a quoted passage and
-/// optional source event (`e`), source author (`p`), source URL (`r`), and
-/// commentary (`comment`).
+/// optional source event (`e`), addressable coordinate (`a`), source author
+/// (`p`), source URL (`r`), and commentary (`comment`).
 pub fn sign_highlight(
     key: &SecretKey,
     created_at: u64,
@@ -409,6 +430,19 @@ pub fn sign_highlight(
             });
         }
         tags.push(vec!["e".to_string(), ev_id.to_string()]);
+    }
+    if let Some(addr) = draft
+        .source_address
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !is_valid_addressable_coord(addr) {
+            return Err(SignError::InvalidHighlight {
+                reason: "source_address must be <kind(30000-39999)>:<64-char-lower-hex-pubkey>:<d-tag>",
+            });
+        }
+        tags.push(vec!["a".to_string(), addr.to_string()]);
     }
     if let Some(author) = draft
         .source_author_hex
@@ -1653,12 +1687,14 @@ mod tests {
         let key = SecretKey::from_bytes(&[14u8; 32]).expect("valid test key");
         let ev_id = "aa".repeat(32);
         let author = "bb".repeat(32);
+        let addr = format!("30023:{author}:cybernetics-essay");
         let ev = sign_highlight(
             &key,
             1_700_000_000,
             "Every good regulator of a system must be a model of that system.",
             &HighlightDraft {
                 source_event_id_hex: Some(ev_id.clone()),
+                source_address: Some(addr.clone()),
                 source_author_hex: Some(author.clone()),
                 source_url: Some("https://example.com/conant-ashby".into()),
                 comment: Some("Core cybernetics axiom".into()),
@@ -1668,9 +1704,10 @@ mod tests {
         assert_eq!(ev.kind(), HIGHLIGHT_KIND);
         Event::from_json(&ev.to_json()).expect("9802 verifies");
         assert!(ev.tags().contains(&vec!["e".to_string(), ev_id]));
+        assert!(ev.tags().contains(&vec!["a".to_string(), addr]));
         assert!(ev.tags().contains(&vec![
             "p".to_string(),
-            author,
+            author.clone(),
             String::new(),
             "author".to_string(),
         ]));
@@ -1682,6 +1719,25 @@ mod tests {
             sign_highlight(&key, 1_700_000_000, "   ", &HighlightDraft::default()),
             Err(SignError::InvalidHighlight { .. })
         ));
+        // Reject malformed addressable coordinates (non-addressable kind, bad pubkey, empty d-tag)
+        for bad_addr in [
+            format!("1:{author}:slug"),
+            "30023:nothex:slug".to_string(),
+            format!("30023:{author}:"),
+        ] {
+            assert!(matches!(
+                sign_highlight(
+                    &key,
+                    1_700_000_000,
+                    "Quoted excerpt",
+                    &HighlightDraft {
+                        source_address: Some(bad_addr),
+                        ..HighlightDraft::default()
+                    },
+                ),
+                Err(SignError::InvalidHighlight { .. })
+            ));
+        }
     }
 
     #[test]

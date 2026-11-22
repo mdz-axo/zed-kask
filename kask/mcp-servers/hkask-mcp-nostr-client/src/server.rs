@@ -133,6 +133,9 @@ pub struct PublishHighlightRequest {
     /// Optional source Nostr event id (`note`, `nevent`, or 64-char hex) for `e` tag.
     #[serde(default)]
     pub source_event_id: Option<String>,
+    /// Optional addressable event coordinate (`<kind>:<pubkey-hex>:<d-tag>`, e.g. `30023:<hex>:<slug>`) for `a` tag.
+    #[serde(default)]
+    pub source_address: Option<String>,
     /// Optional source author (`npub`, `nprofile`, or 64-char hex) for `p` tag.
     #[serde(default)]
     pub source_author: Option<String>,
@@ -2488,6 +2491,7 @@ impl NostrClientServer {
                 ),
                 _ => None,
             };
+            let source_address = request.source_address;
             let source_url = request.source_url;
             let comment = request.comment;
             self.publish_signed_event("highlight", |ipc, now_secs, targets| async move {
@@ -2495,6 +2499,7 @@ impl NostrClientServer {
                     created_at: now_secs,
                     quoted_text,
                     source_event_id_hex,
+                    source_address,
                     source_author_hex,
                     source_url,
                     comment,

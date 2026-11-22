@@ -66,55 +66,40 @@ pub(crate) fn parse_nutzap_info_from_events(
                 .to_string(),
         );
     };
-    let tags = ev
+    let raw_tags = ev
         .get("tags")
         .and_then(Value::as_array)
         .ok_or_else(|| "Recipient kind:10019 event has no tags.".to_string())?;
+    let tags: Vec<Vec<String>> = raw_tags
+        .iter()
+        .filter_map(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .collect();
+    let author = ev
+        .get("author")
+        .or_else(|| ev.get("pubkey"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let parsed =
+        hkask_nostr_core::parse_nutzap_info_tags(author, hkask_nostr_core::NUTZAP_INFO_KIND, &tags)
+            .map_err(|err| format!("Recipient kind:10019 nutzap info is invalid: {err}"))?;
 
-    let mut raw_pubkey: Option<String> = None;
-    let mut recipient_mints: Vec<String> = Vec::new();
-    for tag in tags {
-        let Some(arr) = tag.as_array() else {
-            continue;
-        };
-        let Some(name) = arr.first().and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(val) = arr.get(1).and_then(Value::as_str).map(str::trim) else {
-            continue;
-        };
-        if name == "pubkey" && !val.is_empty() && raw_pubkey.is_none() {
-            raw_pubkey = Some(val.to_ascii_lowercase());
-        } else if name == "mint" && val.starts_with("https://") {
-            recipient_mints.push(val.to_string());
-        }
-    }
-
-    let raw_pk = raw_pubkey.ok_or_else(|| {
-        "Recipient kind:10019 nutzap info is missing a P2PK pubkey tag; refusing to send."
-            .to_string()
-    })?;
-    let p2pk_pubkey = if raw_pk.len() == 64 && raw_pk.chars().all(|c| c.is_ascii_hexdigit()) {
-        format!("02{raw_pk}")
-    } else if raw_pk.len() == 66
-        && raw_pk.starts_with("02")
-        && raw_pk.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        raw_pk
-    } else {
-        return Err(
-            "Recipient kind:10019 P2PK pubkey is malformed (expected 64-char hex or 02-prefixed 66-char compressed pubkey)."
-                .to_string(),
-        );
-    };
-
-    let matched_mint = recipient_mints.iter().find_map(|rm| {
-        let norm_r = normalize_mint_url(rm);
-        allowed_mints
-            .iter()
-            .find(|am| normalize_mint_url(am) == norm_r)
-            .cloned()
-    });
+    let matched_mint = parsed
+        .mints
+        .iter()
+        .filter(|rm| rm.starts_with("https://"))
+        .find_map(|rm| {
+            let norm_r = normalize_mint_url(rm);
+            allowed_mints
+                .iter()
+                .find(|am| normalize_mint_url(am) == norm_r)
+                .cloned()
+        });
     let Some(mint_url) = matched_mint else {
         return Err(
             "No overlapping Cashu mint between your allowed mints and recipient's kind:10019 nutzap info."
@@ -124,7 +109,7 @@ pub(crate) fn parse_nutzap_info_from_events(
 
     Ok(ValidatedNutzapTarget {
         mint_url,
-        p2pk_pubkey,
+        p2pk_pubkey: parsed.p2pk_pubkey,
     })
 }
 

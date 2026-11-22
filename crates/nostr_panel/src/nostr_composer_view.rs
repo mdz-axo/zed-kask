@@ -449,6 +449,9 @@ impl NostrComposerView {
                 "source_event_id": hl.source_event_id,
                 "source_author": hl.source_author,
             });
+            if let Some(addr) = hl.source_address {
+                hl_args["source_address"] = json!(addr);
+            }
             if let Some(comment) = comment {
                 hl_args["comment"] = json!(comment);
             }

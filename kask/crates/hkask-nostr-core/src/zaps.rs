@@ -74,14 +74,18 @@ pub struct ParsedNutzapInfo {
     pub relays: Vec<String>,
 }
 
-fn first_tag_value<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
-    event.tags().iter().find_map(|tag| {
+fn first_tag_value_in<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a str> {
+    tags.iter().find_map(|tag| {
         if tag.first().map(String::as_str) == Some(name) {
-            tag.get(1).map(String::as_str).filter(|v| !v.is_empty())
+            tag.get(1).map(|v| v.trim()).filter(|v| !v.is_empty())
         } else {
             None
         }
     })
+}
+
+fn first_tag_value<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
+    first_tag_value_in(event.tags(), name)
 }
 
 /// Validate NIP-61's `02`-prefixed 66-char compressed P2PK pubkey rule.
@@ -171,18 +175,23 @@ pub fn parse_nutzap(event: &Event) -> Result<ParsedNutzap, ZapParseError> {
     })
 }
 
-/// Parse a NIP-61 `kind: 10019` nutzap preference list.
+/// Parse a NIP-61 `kind: 10019` nutzap preference list from already-verified
+/// event parts (for example, a `WireEvent` returned by `nostr_fetch_events`).
 ///
 /// Surfaces mint URLs as untrusted data; callers MUST intersect with the
 /// operator's `kask.wallet.allowed_mints` before trusting any mint.
-pub fn parse_nutzap_info(event: &Event) -> Result<ParsedNutzapInfo, ZapParseError> {
-    if event.kind() != NUTZAP_INFO_KIND {
+pub fn parse_nutzap_info_tags(
+    author_pubkey: &str,
+    kind: u16,
+    tags: &[Vec<String>],
+) -> Result<ParsedNutzapInfo, ZapParseError> {
+    if kind != NUTZAP_INFO_KIND {
         return Err(ZapParseError::WrongKind {
             expected: NUTZAP_INFO_KIND,
-            actual: event.kind(),
+            actual: kind,
         });
     }
-    let raw_pk = first_tag_value(event, "pubkey").ok_or(ZapParseError::MissingTag("pubkey"))?;
+    let raw_pk = first_tag_value_in(tags, "pubkey").ok_or(ZapParseError::MissingTag("pubkey"))?;
     let trimmed_pk = raw_pk.trim().to_ascii_lowercase();
     let p2pk_pubkey = if trimmed_pk.len() == 64 && trimmed_pk.bytes().all(|b| b.is_ascii_hexdigit())
     {
@@ -190,27 +199,33 @@ pub fn parse_nutzap_info(event: &Event) -> Result<ParsedNutzapInfo, ZapParseErro
     } else {
         validate_nip61_p2pk_pubkey(&trimmed_pk)?
     };
-    let mints: Vec<String> = event
-        .tags()
+    let mints: Vec<String> = tags
         .iter()
         .filter(|tag| tag.first().map(String::as_str) == Some("mint"))
-        .filter_map(|tag| tag.get(1).cloned())
+        .filter_map(|tag| tag.get(1).map(|v| v.trim().to_string()))
         .filter(|v| !v.is_empty())
         .collect();
-    let relays: Vec<String> = event
-        .tags()
+    let relays: Vec<String> = tags
         .iter()
         .filter(|tag| tag.first().map(String::as_str) == Some("relay"))
-        .filter_map(|tag| tag.get(1).cloned())
+        .filter_map(|tag| tag.get(1).map(|v| v.trim().to_string()))
         .filter(|v| !v.is_empty())
         .collect();
 
     Ok(ParsedNutzapInfo {
-        author_pubkey: hex::encode(event.pubkey()),
+        author_pubkey: author_pubkey.to_string(),
         p2pk_pubkey,
         mints,
         relays,
     })
+}
+
+/// Parse a NIP-61 `kind: 10019` nutzap preference list.
+///
+/// Surfaces mint URLs as untrusted data; callers MUST intersect with the
+/// operator's `kask.wallet.allowed_mints` before trusting any mint.
+pub fn parse_nutzap_info(event: &Event) -> Result<ParsedNutzapInfo, ZapParseError> {
+    parse_nutzap_info_tags(&hex::encode(event.pubkey()), event.kind(), event.tags())
 }
 
 /// Parse BOLT11 HRP amount in millisatoshis without `secp256k1`.
