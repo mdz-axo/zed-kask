@@ -198,7 +198,7 @@ status: VERIFIED
 | `MemoryStore`                | `hkask-memory`  | Wraps `HMemStore` + `EmbeddingStore`; `store`, `query_deduped`, `search_similar` (`kask/crates/hkask-memory/src/memory_store.rs:290@MemoryStore`) |
 | `MemoryConsolidator`         | `hkask-memory`  | Confidence-floor cleanup (`kask/crates/hkask-memory/src/consolidation_service.rs`) |
 | `HMemStore`                  | `hkask-storage` | Relational EAV table (`hmems`, `kask/crates/hkask-storage/src/hmem.rs:135`)                 |
-| `EmbeddingStore`             | `hkask-storage` | Vector metadata + `vec_embeddings` int8 virtual table via `sqlite-vec` (single-transaction `publish_corpus_batch` with O(1) `vec0` delete at `kask/crates/hkask-storage/src/embeddings.rs:419@EmbeddingStore::publish_corpus_batch`) |
+| `EmbeddingStore`             | `hkask-storage` | Vector metadata + `vec_embeddings` int8 virtual table via `sqlite-vec` (single-transaction `publish_corpus_batch` with O(1) `vec0` delete at `kask/crates/hkask-storage/src/embeddings.rs:464@EmbeddingStore::publish_corpus_batch`) |
 | `LanguageModelEmbeddingPort` | `kask_bridge`   | OpenAI-compatible `/embeddings` HTTP client (cloud + loopback local Ollama port; 60s timeout; OpenRouter `qwen/` pinned to `only: ["DeepInfra"]`; Qwen3 asymmetric query formatting per `arXiv:2506.05176`; legacy `embed` wrapper removed) |
 
 ## 3. Storage schema
