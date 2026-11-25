@@ -1497,24 +1497,23 @@ impl Default for McpRuntime {
 // `tool_allowlist` on the inference IPC dispatch and the per-server MCP
 // env/credential allowlists.
 
-impl crate::tool_port::ToolPort for McpRuntime {
-    fn invoke<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
+impl McpRuntime {
+    /// Invoke a tool on behalf of `agent` (un-provenanced entry).
+    ///
+    /// `agent` identifies who to charge and attribute the call to — it is a
+    /// meter reading, not a capability. Every non-thread-routed caller (panel
+    /// paths, IPC dispatch) keeps the pre-M5 wire form: no `_meta` stamp,
+    /// which the child read side treats as public (fail-closed for recall).
+    pub async fn invoke(
+        &self,
+        server: &str,
+        tool: &str,
         args: Value,
         agent: hkask_types::WebID,
-    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
-        // The un-provenanced entry: every non-thread-routed caller (the
-        // bridge's skill execution, panel paths, IPC dispatch) keeps the
-        // pre-M5 wire form — no `_meta` stamp, which the child read side
-        // treats as public (fail-closed for recall). A provenance stamp is
-        // a recall-routing signal, never a capability grant.
-        self.invoke_governed(server, tool, args, agent, None)
+    ) -> Result<Value, crate::tool_port::ToolPortError> {
+        self.invoke_governed(server, tool, args, agent, None).await
     }
-}
 
-impl McpRuntime {
     /// The M5 zed-side `_meta` write: agent-driven dispatch stamps the
     /// calling thread's D100 inference-provenance mark on the request
     /// envelope's `_meta` channel (SEP-1319) — parent-set, never
@@ -1524,153 +1523,152 @@ impl McpRuntime {
     /// `call_admits` filters admit the caller's own private rows — and
     /// only those. A stamp is a recall-routing signal, never a capability:
     /// it never widens what the call may do.
-    pub fn invoke_with_call_provenance<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
+    pub async fn invoke_with_call_provenance(
+        &self,
+        server: &str,
+        tool: &str,
         args: Value,
         agent: hkask_types::WebID,
         call_provenance: hkask_types::InferenceProvenance,
-    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
+    ) -> Result<Value, crate::tool_port::ToolPortError> {
         self.invoke_governed(server, tool, args, agent, Some(call_provenance))
+            .await
     }
 
     /// The governed dispatch body both entries share: metering, span emit,
     /// the call, and the ledger's outcome/variety feeds. `call_provenance`
     /// rides the request envelope's `_meta` only when the caller carried
     /// one — `None` is the un-provenanced pre-M5 wire form.
-    fn invoke_governed<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
+    async fn invoke_governed(
+        &self,
+        server: &str,
+        tool: &str,
         args: Value,
         agent: hkask_types::WebID,
         call_provenance: Option<hkask_types::InferenceProvenance>,
-    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
-        Box::pin(async move {
-            // Metering + span emit. Skipped when governance is not configured
-            // (tests, lightweight embedders).
-            if let Some(governance) = &self.governance {
-                let cyber = &governance.cybernetics;
-                // Clone the current sink out of the lock — the composition
-                // root can swap it post-construction (deferred DB upgrade).
-                let sink = governance
-                    .event_sink
-                    .read()
-                    .map(|guard| guard.clone())
-                    .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
+    ) -> Result<Value, crate::tool_port::ToolPortError> {
+        // Metering + span emit. Skipped when governance is not configured
+        // (tests, lightweight embedders).
+        if let Some(governance) = &self.governance {
+            let cyber = &governance.cybernetics;
+            // Clone the current sink out of the lock — the composition
+            // root can swap it post-construction (deferred DB upgrade).
+            let sink = governance
+                .event_sink
+                .read()
+                .map(|guard| guard.clone())
+                .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
 
-                // Runaway-loop breaker. The ceiling exists to stop an agent that
-                // has entered a non-terminating tool loop and to meter usage for
-                // later optimization — it is not a permission check, so an agent
-                // the composition root never registered is auto-registered at the
-                // default ceiling rather than denied. Denying would fail the call
-                // for a wiring omission (which is exactly what happened: the
-                // `kask-panel` and skill execution personas were never
-                // seeded, so every IPC and cascade tool call died here).
-                let cyber_lock = cyber.read().await;
-                match cyber_lock.charge_call_metered(&agent).await {
-                    hkask_regulation::CallMeterOutcome::Charged => {}
-                    hkask_regulation::CallMeterOutcome::AutoRegistered => {
-                        tracing::info!(
-                            target: "reg.mcp.cap",
-                            agent = ?agent,
-                            tool = %tool,
-                            ceiling = hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING,
-                            "no call ceiling registered for agent - auto-registered at the default runaway ceiling"
-                        );
-                    }
-                    hkask_regulation::CallMeterOutcome::CeilingReached { ceiling } => {
-                        // The only pre-dispatch refusal. A loop that has burned
-                        // its whole per-tick ceiling is almost certainly not
-                        // making progress; the cap resets next regulation tick.
-                        tracing::warn!(
-                            target: "reg.mcp.cap",
-                            agent = ?agent,
-                            tool = %tool,
-                            ceiling,
-                            "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
-                        );
-                        return Err(crate::tool_port::ToolPortError::EnergyBudgetExceeded(
-                            format!(
-                                "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
-                                 {ceiling} calls (tool {tool}); resets next regulation tick"
-                            ),
-                        ));
-                    }
-                }
-                drop(cyber_lock);
-
-                // Call the tool.
-                let result = self
-                    .call_tool_inner(server, tool, args, call_provenance)
-                    .await;
-
-                // Regulation: emit the call-settled span (best-effort,
-                // non-blocking) — EXCEPT the regulation loop's own board-sensing
-                // polls, which are 98% of this span's volume with no reader (the
-                // reliability/variety sensors feed from the in-process ledger
-                // below, never the journal). The loop's non-sensing
-                // interventions (card creates/comments/moves — the escalation
-                // audit trail) and every real-agent call still journal.
-                if !hkask_types::event::is_regulation_board_sensing_call(&agent, tool) {
-                    let status = if result.is_ok() { "success" } else { "failure" };
-                    use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
-                    let record = RegulationRecord::new(
-                        agent,
-                        Span::from_kind(SpanKind::ToolCompleted),
-                        CyclePhase::Act,
-                        serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
-                        0,
+            // Runaway-loop breaker. The ceiling exists to stop an agent that
+            // has entered a non-terminating tool loop and to meter usage for
+            // later optimization — it is not a permission check, so an agent
+            // the composition root never registered is auto-registered at the
+            // default ceiling rather than denied. Denying would fail the call
+            // for a wiring omission (which is exactly what happened: the
+            // `kask-panel` and skill execution personas were never
+            // seeded, so every IPC and cascade tool call died here).
+            let cyber_lock = cyber.read().await;
+            match cyber_lock.charge_call_metered(&agent).await {
+                hkask_regulation::CallMeterOutcome::Charged => {}
+                hkask_regulation::CallMeterOutcome::AutoRegistered => {
+                    tracing::info!(
+                        target: "reg.mcp.cap",
+                        agent = ?agent,
+                        tool = %tool,
+                        ceiling = hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING,
+                        "no call ceiling registered for agent - auto-registered at the default runaway ceiling"
                     );
-                    if let Err(e) = sink.persist(&record) {
-                        tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
-                    }
                 }
-
-                // Record the outcome in the RegulationLedger so the
-                // `ToolReliabilitySensor` can sense the aggregate success
-                // rate. The domain is the MCP server name (not the tool name)
-                // so reliability is tracked per-server — a single broken
-                // server surfaces as one degraded domain, not scattered across
-                // individual tools. The `record_outcome` call is best-effort:
-                // if the ledger is unavailable the outcome is simply not
-                // recorded, and the sensor stays silent (not 1.0 — the
-                // `.rules` `unwrap_or(0)` trap on sense inputs).
-                let error_kind = result.as_ref().err().map(|e| {
-                    // Extract the typed kind from the `[kind] `
-                    // marker (dispatch formats failed-tool details this way
-                    // from the server's `structured_content`) so the ledger's
-                    // per-kind breakdown classifies config gaps (unavailable /
-                    // permission_denied) instead of recording the full
-                    // message text as a "kind".
-                    hkask_types::tool_response::error_kind_from_display(&e.to_string())
-                });
-                let cyber_lock = cyber.read().await;
-                cyber_lock
-                    .record_outcome(server, result.is_ok(), error_kind.as_deref())
-                    .await;
-                // Variety feed: the tool name is the observed state — distinct
-                // tools exercised per server per window is the behavioral
-                // repertoire the VarietySensor regulates (Ashby). Beside
-                // record_outcome so reliability and variety share one domain
-                // registry. Fed on failure too: an agent hammering one failing
-                // tool is maximal rut, exactly what the sensor must see.
-                cyber_lock.record_variety(server, tool).await;
-                drop(cyber_lock);
-
-                result
-            } else {
-                // No governance configured: dispatch unmetered. Metering is an
-                // accounting and loop-breaking concern, not an authorization
-                // one, so its absence is not a reason to refuse the call — the
-                // prior fail-closed refusal here made `McpRuntime::new()`
-                // unusable for any embedder that did not also wire regulation.
-                // Production wires `with_governance` (see main.rs).
-                self.call_tool_inner(server, tool, args, call_provenance)
-                    .await
+                hkask_regulation::CallMeterOutcome::CeilingReached { ceiling } => {
+                    // The only pre-dispatch refusal. A loop that has burned
+                    // its whole per-tick ceiling is almost certainly not
+                    // making progress; the cap resets next regulation tick.
+                    tracing::warn!(
+                        target: "reg.mcp.cap",
+                        agent = ?agent,
+                        tool = %tool,
+                        ceiling,
+                        "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
+                    );
+                    return Err(crate::tool_port::ToolPortError::EnergyBudgetExceeded(
+                        format!(
+                            "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
+                                 {ceiling} calls (tool {tool}); resets next regulation tick"
+                        ),
+                    ));
+                }
             }
-        })
+            drop(cyber_lock);
+
+            // Call the tool.
+            let result = self
+                .call_tool_inner(server, tool, args, call_provenance)
+                .await;
+
+            // Regulation: emit the call-settled span (best-effort,
+            // non-blocking) — EXCEPT the regulation loop's own board-sensing
+            // polls, which are 98% of this span's volume with no reader (the
+            // reliability/variety sensors feed from the in-process ledger
+            // below, never the journal). The loop's non-sensing
+            // interventions (card creates/comments/moves — the escalation
+            // audit trail) and every real-agent call still journal.
+            if !hkask_types::event::is_regulation_board_sensing_call(&agent, tool) {
+                let status = if result.is_ok() { "success" } else { "failure" };
+                use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
+                let record = RegulationRecord::new(
+                    agent,
+                    Span::from_kind(SpanKind::ToolCompleted),
+                    CyclePhase::Act,
+                    serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
+                    0,
+                );
+                if let Err(e) = sink.persist(&record) {
+                    tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
+                }
+            }
+
+            // Record the outcome in the RegulationLedger so the
+            // `ToolReliabilitySensor` can sense the aggregate success
+            // rate. The domain is the MCP server name (not the tool name)
+            // so reliability is tracked per-server — a single broken
+            // server surfaces as one degraded domain, not scattered across
+            // individual tools. The `record_outcome` call is best-effort:
+            // if the ledger is unavailable the outcome is simply not
+            // recorded, and the sensor stays silent (not 1.0 — the
+            // `.rules` `unwrap_or(0)` trap on sense inputs).
+            let error_kind = result.as_ref().err().map(|e| {
+                // Extract the typed kind from the `[kind] `
+                // marker (dispatch formats failed-tool details this way
+                // from the server's `structured_content`) so the ledger's
+                // per-kind breakdown classifies config gaps (unavailable /
+                // permission_denied) instead of recording the full
+                // message text as a "kind".
+                hkask_types::tool_response::error_kind_from_display(&e.to_string())
+            });
+            let cyber_lock = cyber.read().await;
+            cyber_lock
+                .record_outcome(server, result.is_ok(), error_kind.as_deref())
+                .await;
+            // Variety feed: the tool name is the observed state — distinct
+            // tools exercised per server per window is the behavioral
+            // repertoire the VarietySensor regulates (Ashby). Beside
+            // record_outcome so reliability and variety share one domain
+            // registry. Fed on failure too: an agent hammering one failing
+            // tool is maximal rut, exactly what the sensor must see.
+            cyber_lock.record_variety(server, tool).await;
+            drop(cyber_lock);
+
+            result
+        } else {
+            // No governance configured: dispatch unmetered. Metering is an
+            // accounting and loop-breaking concern, not an authorization
+            // one, so its absence is not a reason to refuse the call — the
+            // prior fail-closed refusal here made `McpRuntime::new()`
+            // unusable for any embedder that did not also wire regulation.
+            // Production wires `with_governance` (see main.rs).
+            self.call_tool_inner(server, tool, args, call_provenance)
+                .await
+        }
     }
 
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
@@ -2484,7 +2482,7 @@ mod tool_identity_tests {
 #[cfg(test)]
 mod metering_tests {
     use super::*;
-    use crate::tool_port::{ToolPort, ToolPortError};
+    use crate::tool_port::ToolPortError;
     use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
     use hkask_types::WebID;
     use std::sync::Arc;

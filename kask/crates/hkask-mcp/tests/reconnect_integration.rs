@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use hkask_mcp::McpRuntime;
-use hkask_mcp::{ToolPort, ToolPortError};
+use hkask_mcp::ToolPortError;
 use hkask_types::WebID;
 use tempfile::TempDir;
 

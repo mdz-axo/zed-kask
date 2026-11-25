@@ -4083,7 +4083,6 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
         tool: &str,
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
-        use hkask_mcp::ToolPort;
         use hkask_tool_invoker::InvokeError;
         use hkask_types::WebID;
 
@@ -4104,7 +4103,8 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
             // MCP server as a permanent failure. `Interrupted` is kept separate
             // from both: its outcome is unknown, so a panel must re-read state
             // rather than retry (which could duplicate a side effect).
-            let result = ToolPort::invoke(&*tool_port, &server, &tool, args, webid)
+            let result = tool_port
+                .invoke(&server, &tool, args, webid)
                 .await
                 .map_err(|error| {
                     let message = error.to_string();

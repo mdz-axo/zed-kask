@@ -17,10 +17,8 @@
 //!
 //! # Essential Subloops
 //!
-//! - 6.1 Access Guard (GUARD) — OCAP verification + sovereignty enforcement
 //! - 6.3 Variety Sensing (SENSE) — measure variety across domains
 //! - 6.4 Algedonic Regulation (ADAPT) — deficit → threshold → escalate
-//! - 6.6 Revocation (WITHDRAW) — persistent deny-future
 //!
 //! Energy homeostasis is NOT a subloop — it is expressed as set-points
 //! in `SetPoints` + regulation actions via `InferenceRegulation`.

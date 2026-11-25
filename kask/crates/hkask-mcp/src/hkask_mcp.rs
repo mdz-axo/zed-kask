@@ -14,6 +14,6 @@ pub mod runtime;
 pub mod tool_port;
 
 pub use runtime::{McpRuntime, McpTool, set_spawn_runtime};
-pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
+pub use tool_port::{ToolInfo, ToolPortError};
 
 // ── Canonical MCP server registry ─────────────────────────────────────────
