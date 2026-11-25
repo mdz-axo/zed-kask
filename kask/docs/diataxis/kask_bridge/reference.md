@@ -109,9 +109,9 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:276-296@KaskCondenserSettings` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:309-330@KaskCorpusSettings` |
 | `KaskNostrSettings` | empty `npub`, `seed_relays`, `blossom_servers`; `autopublish: false`; `relay` (`port: 0`, empty allowlist/sync relays); `blossom` (`port: 0`, `max_bytes: 10 GiB`, empty `public_base_url`) | `kask/crates/kask_bridge/src/settings.rs:355-421@KaskNostrSettings` |
-| `KaskMediaSettings` | STT, cross-check STT fleet, vision, and role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:460-495@KaskMediaSettings` |
-| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR from `DEFAULT_OCR_MODEL` (`RunPod/kask-ocr`); reranker from `DEFAULT_RERANK_MODEL`; decision from `DEFAULT_DECISION_MODEL` (`OpenRouter/typesafe/jev-1.14`) | `kask/crates/kask_bridge/src/settings.rs:527-614@KaskModelsSettings` |
-| `KaskPrivateInferenceSettings` | private-thread disabled servers `media`, `corpus`, `nostr-relay`, `nostr-client`, `nostr-blossom`; local private-memory models `ollama/qwen3-embedding:0.6b`, `ollama/qwen3.5:4b`, `ollama/qwen3-reranker-4b:latest` | `kask/crates/kask_bridge/src/settings.rs:653-705@KaskPrivateInferenceSettings` |
+| `KaskMediaSettings` | STT, cross-check STT fleet, vision, and role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:507-542@KaskMediaSettings` |
+| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR from `DEFAULT_OCR_MODEL` (`RunPod/kask-ocr`); reranker from `DEFAULT_RERANK_MODEL`; decision from `DEFAULT_DECISION_MODEL` (`OpenRouter/typesafe/jev-1.14`) | `kask/crates/kask_bridge/src/settings.rs:579-666@KaskModelsSettings` |
+| `KaskPrivateInferenceSettings` | private-thread disabled servers `media`, `corpus`, `nostr-relay`, `nostr-client`, `nostr-blossom`; local private-memory models `ollama/qwen3-embedding:0.6b`, `ollama/qwen3.5:4b`, `ollama/qwen3-reranker-4b:latest` | `kask/crates/kask_bridge/src/settings.rs:705-757@KaskPrivateInferenceSettings` |
 
 ## Built-in MCP registry
 
@@ -252,7 +252,7 @@ Add an allowlist-alignment test beside the existing per-server tests, such as
 #### 3. Declare the non-secret configuration boundary
 
 Set `config_env` to `&[]` or an exact list of non-secret variables emitted
-by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:799@KaskSettings::mcp_env`). The
+by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:851@KaskSettings::mcp_env`). The
 config filter also fails closed for unknown IDs
 (`kask/crates/kask_bridge/src/mcp_servers/env.rs:633@filter_config_env_for_server`). Do not place database
 passphrases or API keys in this list.

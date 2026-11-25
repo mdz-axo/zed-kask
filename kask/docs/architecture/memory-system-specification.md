@@ -182,7 +182,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-ARCH
 verified_date: 2026-11-18
-verified_against: kask/crates/kask_bridge/src/memory.rs:73-375; kask/crates/kask_bridge/src/memory/ingest.rs:211-555; kask/crates/hkask-memory/src/memory_store.rs:290; kask/crates/kask_bridge/src/settings.rs:765@KaskSettings::effective_embedding_model; kask/crates/hkask-storage/src/core/sql/schema.sql:1-8
+verified_against: kask/crates/kask_bridge/src/memory.rs:73-375; kask/crates/kask_bridge/src/memory/ingest.rs:211-555; kask/crates/hkask-memory/src/memory_store.rs:290; kask/crates/kask_bridge/src/settings.rs:817@KaskSettings::effective_embedding_model; kask/crates/hkask-storage/src/core/sql/schema.sql:1-8
 status: VERIFIED
 -->
 
@@ -1377,8 +1377,8 @@ already exposes this field; no UI omission is intended.
 | Variable                          | Default                               | Description                            |
 | --------------------------------- | ------------------------------------- | -------------------------------------- |
 | `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`kask/crates/kask_bridge/src/memory.rs:388-420@parse_ingest_concurrency`) |
-| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:765@KaskSettings::effective_embedding_model`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback |
-| `HKASK_PRIVATE_EMBEDDING_MODEL`    | `ollama/qwen3-embedding:0.6b`         | Private-lane local Ollama embedding model (`kask.private_inference.embedding_model`, `kask/crates/kask_bridge/src/settings.rs:653-705@KaskPrivateInferenceSettings`) |
+| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:817@KaskSettings::effective_embedding_model`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback |
+| `HKASK_PRIVATE_EMBEDDING_MODEL`    | `ollama/qwen3-embedding:0.6b`         | Private-lane local Ollama embedding model (`kask.private_inference.embedding_model`, `kask/crates/kask_bridge/src/settings.rs:705-757@KaskPrivateInferenceSettings`) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension — the width embed requests ask MRL models for (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Public Curator DB path override (`kask/crates/hkask-memory/src/curator_store.rs:63-68`) |
 | `HKASK_CURATOR_PRIVATE_DB`        | `agents/curator/curator-private.db` under data dir | Private Curator DB path override (`kask/crates/hkask-memory/src/curator_store.rs:70-76`) |

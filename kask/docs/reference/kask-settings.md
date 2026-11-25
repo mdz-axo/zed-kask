@@ -369,7 +369,7 @@ down there is no file, and `nostr_account` reports the local relay as
 `not_announced`. Relays named inside events (an author's relay list, the hints
 in an identifier) are reported and never contacted.
 
-Two subsections, `relay` (`KaskNostrRelaySettings`, `kask/crates/kask_bridge/src/settings.rs:414-421@KaskNostrRelaySettings`) and `blossom` (`KaskNostrBlossomSettings`, `kask/crates/kask_bridge/src/settings.rs:386-403@KaskNostrBlossomSettings`), configure the local relay and Blossom media sidecar policies. The operator sets them here or on Settings > Kask > Nostr; no agent tool can change them, and a change restarts the affected server.
+Two subsections, `relay` (`KaskNostrRelaySettings`, `kask/crates/kask_bridge/src/settings.rs:461-468@KaskNostrRelaySettings`) and `blossom` (`KaskNostrBlossomSettings`, `kask/crates/kask_bridge/src/settings.rs:433-450@KaskNostrBlossomSettings`), configure the local relay and Blossom media sidecar policies. The operator sets them here or on Settings > Kask > Nostr; no agent tool can change them, and a change restarts the affected server.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
@@ -482,12 +482,12 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, OCR, rerank, and decision defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:527-614@KaskModelsSettings`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value (`kask/crates/hkask-inference/src/model_constants.rs:350-458`).
+children). The general/chat, embedding, classifier, QA-generation, OCR, rerank, and decision defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:579-666@KaskModelsSettings`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value (`kask/crates/hkask-inference/src/model_constants.rs:350-458`).
 
 ## Private Inference (`KaskPrivateInferenceSettings`)
 
 The private-thread policy (D9, D100)
-(`kask/crates/kask_bridge/src/settings.rs:653-705@KaskPrivateInferenceSettings`). Private inference is
+(`kask/crates/kask_bridge/src/settings.rs:705-757@KaskPrivateInferenceSettings`). Private inference is
 served by the local Ollama or llama.cpp install through the editor's
 built-in providers: kask launches no model server, registers no provider and
 fetches no weights. Install and serve models with Ollama or llama.cpp, and
@@ -640,7 +640,7 @@ action) until the next startup applies it
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
-environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:799-862@KaskSettings::mcp_env` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
+environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:851-914@KaskSettings::mcp_env` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
 `HKASK_CURATOR_WEBID` → `HKASK_WEBID` when set in the parent environment.
 
 ### Storage
