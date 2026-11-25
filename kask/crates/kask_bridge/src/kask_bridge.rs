@@ -47,6 +47,7 @@ mod inference_embedding;
 mod inference_ipc_server;
 mod inference_providers;
 mod inference_socket;
+mod llama_serve;
 mod mcp_env;
 mod mcp_servers;
 mod memory;
@@ -86,6 +87,10 @@ pub use inference_resilience::InferenceResilienceConfig;
 pub use inference_socket::{
     get_inference_socket_path, get_inference_timeout_secs, set_inference_socket_path,
     set_inference_timeout_secs,
+};
+pub use llama_serve::{
+    EnsureOutcome, LlamaServeSpec, LlamaServeSupervisor, parse_loopback_endpoint,
+    resolve_llama_binary,
 };
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BuiltinMcpServer, CredentialSweep, build_mcp_server_env,

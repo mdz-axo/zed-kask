@@ -845,6 +845,8 @@ fn main() {
             hkask_mcp::McpRuntime::new()
                 .with_governance(cybernetics_loop, event_sink),
         );
+        let llama_serve_supervisor =
+            std::sync::Arc::new(kask_bridge::LlamaServeSupervisor::new());
         // The runtime's on-demand reconnect (`call_tool_inner → try_reconnect`)
         // spawns a child process, which requires a tokio reactor. Callers on
         // the tokio runtime carry one; a caller on a GPUI executor does not
@@ -853,7 +855,7 @@ fn main() {
         // Wiring the GPUI-global tokio handle lets the reconnect hop onto it
         // from any executor.
         hkask_mcp::set_spawn_runtime(gpui_tokio::Tokio::handle(&*cx));
-        wire_kask_mcp_shutdown(mcp_runtime.clone(), cx);
+        wire_kask_mcp_shutdown(mcp_runtime.clone(), llama_serve_supervisor.clone(), cx);
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
         // zed-kask: agent-path MCP tool outcome recording. The
@@ -2796,6 +2798,14 @@ fn main() {
             cx,
         );
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        sync_kask_llama_serve(llama_serve_supervisor.clone(), cx);
+        {
+            let llama_serve_for_observer = llama_serve_supervisor.clone();
+            cx.observe_global::<SettingsStore>(move |cx| {
+                sync_kask_llama_serve(llama_serve_for_observer.clone(), cx);
+            })
+            .detach();
+        }
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);
@@ -3663,16 +3673,67 @@ fn changed_env_keys(
 }
 
 // zed-kask: D51 — process exit skips destructors, so explicitly stop the
-// session's MCP runtime while its tokio reactor is still available.
-fn wire_kask_mcp_shutdown(runtime: std::sync::Arc<hkask_mcp::McpRuntime>, cx: &mut gpui::App) {
+// session's MCP runtime and managed `llama serve` while the tokio reactor is
+// still available.
+fn wire_kask_mcp_shutdown(
+    runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    llama_serve: std::sync::Arc<kask_bridge::LlamaServeSupervisor>,
+    cx: &mut gpui::App,
+) {
     let handle = gpui_tokio::Tokio::handle(cx);
     cx.on_app_quit(move |_| {
         let runtime = runtime.clone();
+        let llama_serve = llama_serve.clone();
         let handle = handle.clone();
         async move {
-            // Quit-only: this future uses tokio locks, never GPUI re-entry.
-            handle.block_on(runtime.shutdown_all());
-            log::info!("hKask MCP runtime shut down for session exit");
+            // Quit-only: these futures use tokio locks, never GPUI re-entry.
+            handle.block_on(async {
+                runtime.shutdown_all().await;
+                llama_serve.shutdown().await;
+            });
+            log::info!("hKask MCP runtime and managed llama serve shut down for session exit");
+        }
+    })
+    .detach();
+}
+
+/// Reconcile the managed local `llama serve` process against Zed's existing
+/// `language_models["llama.cpp"]` settings (`auto_discover` + `api_url`).
+/// When a local server starts or is adopted, refresh the built-in `llama.cpp`
+/// provider so it loads the available models reported by `/v1/models` and arms
+/// `/models/sse`.
+fn sync_kask_llama_serve(
+    supervisor: std::sync::Arc<kask_bridge::LlamaServeSupervisor>,
+    cx: &mut gpui::App,
+) {
+    let llama_cpp = &language_models::AllLanguageModelSettings::get_global(cx).llama_cpp;
+    let spec = kask_bridge::LlamaServeSpec {
+        enabled: llama_cpp.auto_discover,
+        api_url: llama_cpp.api_url.clone(),
+        binary_path: None,
+        extra_args: Vec::new(),
+    };
+    let tokio_handle = gpui_tokio::Tokio::handle(cx);
+    cx.spawn(async move |cx| {
+        let outcome = match tokio_handle
+            .spawn(async move { supervisor.ensure_running(spec).await })
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                log::warn!("managed llama serve supervisor task failed: {error}");
+                return;
+            }
+        };
+        if outcome.should_refresh_provider() {
+            cx.update(|cx| {
+                if let Some(registry) = language_model::LanguageModelRegistry::try_read_global(cx)
+                    && let Some(provider) = registry
+                        .provider(&language_model::LanguageModelProviderId::new("llama.cpp"))
+                {
+                    provider.refresh_models(cx);
+                }
+            });
         }
     })
     .detach();
@@ -5982,7 +6043,14 @@ mod tests {
 
     #[test]
     fn kask_wiring_symbols_exist() {
-        let _ = wire_kask_mcp_shutdown as fn(std::sync::Arc<hkask_mcp::McpRuntime>, &mut gpui::App);
+        let _ = wire_kask_mcp_shutdown
+            as fn(
+                std::sync::Arc<hkask_mcp::McpRuntime>,
+                std::sync::Arc<kask_bridge::LlamaServeSupervisor>,
+                &mut gpui::App,
+            );
+        let _ = sync_kask_llama_serve
+            as fn(std::sync::Arc<kask_bridge::LlamaServeSupervisor>, &mut gpui::App);
         // F22: binary resolution now lives in the runtime's own
         // `resolve_mcp_binary` (spawn time) — the per-project descriptor path
         // that used main.rs's copy was deleted with the single-authority
