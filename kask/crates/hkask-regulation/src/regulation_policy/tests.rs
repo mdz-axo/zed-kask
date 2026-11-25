@@ -27,8 +27,6 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
             | AlgedonicLogApproachingCap
             | PendingEscalations
             | ConsolidationCandidates
-            | GoalStaleCount
-            | GoalExpiredCount
             | MetacognitionCriticalAlerts
             | ExperimentationStuckExperiments
             | NativeFirstRate
@@ -45,8 +43,6 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
                 AlgedonicLogApproachingCap,
                 PendingEscalations,
                 ConsolidationCandidates,
-                GoalStaleCount,
-                GoalExpiredCount,
                 MetacognitionCriticalAlerts,
                 ExperimentationStuckExperiments,
                 NativeFirstRate,
@@ -75,6 +71,33 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
             covered,
             "{metric:?} has a producer but no policy rule — a deviation it emits \
              would be sensed and then silently dropped by decide()"
+        );
+    }
+
+    // Bidirectional Ashby-closure check (REF-01): every active policy rule
+    // must reference a SignalMetric variant that appears in a production
+    // sensor/loop file under `hkask-regulation/src/` (excluding `loops/signals.rs`
+    // and `regulation_policy.rs` themselves), preventing phantom rules with
+    // zero afferent sensors from passing CI.
+    let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut prod_sources = String::new();
+    for rel in [
+        "cybernetics_loop.rs",
+        "cybernetics_loop/cycle.rs",
+        "sensor_provider.rs",
+        "runtime.rs",
+    ] {
+        let content = std::fs::read_to_string(src_root.join(rel))
+            .unwrap_or_else(|e| panic!("failed to read {rel}: {e}"));
+        prod_sources.push_str(&content);
+        prod_sources.push('\n');
+    }
+    for rule in policy.rules {
+        let variant_name = format!("{:?}", rule.metric);
+        assert!(
+            prod_sources.contains(&variant_name),
+            "Policy rule for SignalMetric::{variant_name} has no live sensor/producer \
+             in cybernetics_loop/sensor_provider/runtime — wire a real sensor or delete the rule"
         );
     }
 }

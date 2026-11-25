@@ -558,8 +558,6 @@ fn build_regulation_action_produces_action_for_all_new_reasons() {
             // Category B: Meta-regulatory (Escalate, AboveSetPoint)
             (AlgedonicEvents, AboveSetPoint, 1.0, 0.0),
             (AlgedonicLogApproachingCap, AboveSetPoint, 1.0, 0.0),
-            (GoalStaleCount, AboveSetPoint, 1.0, 0.0),
-            (GoalExpiredCount, AboveSetPoint, 1.0, 0.0),
             (MetacognitionCriticalAlerts, AboveSetPoint, 1.0, 0.0),
             // Category C: Domain-specific
             (MemoryLife, BelowSetPoint, 0.0, 1.0),

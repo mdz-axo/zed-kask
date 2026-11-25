@@ -59,10 +59,6 @@ pub enum SignalMetric {
     PendingEscalations,
     /// Consolidation candidate count (Memory consolidation bridge)
     ConsolidationCandidates,
-    /// Stale goal count (Curation Loop 5)
-    GoalStaleCount,
-    /// Expired goal count (Curation Loop 5)
-    GoalExpiredCount,
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
     /// Stuck experimentation-registry experiment count (Cybernetics Loop 6; §P8.9 step 1).
@@ -124,8 +120,6 @@ impl SignalMetric {
             SignalMetric::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             SignalMetric::PendingEscalations => "pending_escalations",
             SignalMetric::ConsolidationCandidates => "consolidation_candidates",
-            SignalMetric::GoalStaleCount => "goal_stale_count",
-            SignalMetric::GoalExpiredCount => "goal_expired_count",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
             SignalMetric::ExperimentationStuckExperiments => "experimentation_stuck_experiments",
             SignalMetric::ToolReliability => "tool_reliability",
@@ -150,8 +144,6 @@ impl SignalMetric {
             SignalMetric::AlgedonicLogApproachingCap,
             SignalMetric::PendingEscalations,
             SignalMetric::ConsolidationCandidates,
-            SignalMetric::GoalStaleCount,
-            SignalMetric::GoalExpiredCount,
             SignalMetric::MetacognitionCriticalAlerts,
             SignalMetric::ExperimentationStuckExperiments,
             SignalMetric::ToolReliability,
@@ -259,8 +251,6 @@ impl Deviation {
             | SignalMetric::AlgedonicEvents
             | SignalMetric::AlgedonicLogApproachingCap
             | SignalMetric::PendingEscalations
-            | SignalMetric::GoalStaleCount
-            | SignalMetric::GoalExpiredCount
             | SignalMetric::MetacognitionCriticalAlerts
             | SignalMetric::ExperimentationStuckExperiments
             | SignalMetric::NativeFirstRate

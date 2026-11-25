@@ -47,9 +47,6 @@ const DEFAULT_VARIETY_DEFICIT_THRESHOLD: u64 = 100;
 /// Default critical alert count threshold for escalation.
 const DEFAULT_CRITICAL_ALERT_THRESHOLD: usize = 3;
 
-/// Default observation acceptance floor (below → self-calibrate).
-const DEFAULT_ACCEPTANCE_FLOOR: f64 = 0.5;
-
 /// A user-facing alert event forwarded by the metacognition loop.
 ///
 /// The metacognition loop produces `EscalationAlert`s in its `compare`
@@ -91,7 +88,6 @@ pub struct HealthSnapshot {
     pub regulation_health: RegulationHealth,
     pub variety_deficit: u64,
     pub critical_alerts: usize,
-    pub regulation_acceptance_rate: Option<f64>,
     /// Number of escalation alerts produced by the most recent `compare`
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
@@ -124,7 +120,6 @@ pub(crate) struct EscalationAlert {
 pub(crate) enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
-    LowAcceptance,
     /// Operator feedback acceptance rate for a skill is declining over
     /// the rolling window — the skill's outputs may be drifting.
     FeedbackDrift {
@@ -138,7 +133,6 @@ pub struct MetacognitionConfig {
     pub tick_interval: Duration,
     pub variety_deficit_threshold: u64,
     pub critical_alert_threshold: usize,
-    pub acceptance_floor: f64,
     /// Minimum number of outcome spans a skill must have before drift
     /// detection runs. Below this, there isn't enough data to trend.
     pub feedback_drift_min_samples: usize,
@@ -157,7 +151,6 @@ impl Default for MetacognitionConfig {
             tick_interval: DEFAULT_TICK_INTERVAL,
             variety_deficit_threshold: DEFAULT_VARIETY_DEFICIT_THRESHOLD,
             critical_alert_threshold: DEFAULT_CRITICAL_ALERT_THRESHOLD,
-            acceptance_floor: DEFAULT_ACCEPTANCE_FLOOR,
             feedback_drift_min_samples: 10,
             feedback_drift_window: 10,
             feedback_drift_decline_ratio: 0.8,
@@ -215,6 +208,15 @@ impl MetacognitionLoop {
             alert_sink: None,
             stage_actions: crate::loops::StageActions::new(),
         }
+    }
+
+    /// Align this loop's homeostatic thresholds with the shared `SetPoints`
+    /// used by `CyberneticsLoop` (REF-03 — single source of truth across VSM
+    /// S3/S4 loops).
+    pub fn with_set_points(mut self, set_points: &crate::set_points::SetPoints) -> Self {
+        self.config.variety_deficit_threshold =
+            set_points.variety_max_deficit.round().max(0.0) as u64;
+        self
     }
 
     /// Wire a channel to receive alerts FROM the CyberneticsLoop.
@@ -338,7 +340,6 @@ impl MetacognitionLoop {
             timestamp: chrono::Utc::now(),
             variety_deficit: ledger_health.overall_deficit,
             critical_alerts: ledger_health.critical_count,
-            regulation_acceptance_rate: regulation_health.acceptance_rate(),
             loop_view: Self::compute_loop_view(&regulation_health),
             ledger_health,
             regulation_health,
@@ -493,24 +494,6 @@ impl MetacognitionLoop {
             });
         }
 
-        // Only measured acceptance contributes; absent samples remain unknown.
-        if let Some(rate) = snapshot
-            .regulation_acceptance_rate
-            .filter(|rate| *rate < self.config.acceptance_floor)
-        {
-            alerts.push(EscalationAlert {
-                trigger: EscalationTrigger::LowAcceptance,
-                severity: EscalationSeverity::Warning,
-                value: rate,
-                threshold: self.config.acceptance_floor,
-                message: format!(
-                    "Regulation observation acceptance {:.1}% below floor {:.1}%",
-                    rate * 100.0,
-                    self.config.acceptance_floor * 100.0
-                ),
-            });
-        }
-
         alerts
     }
 
@@ -525,7 +508,6 @@ impl MetacognitionLoop {
             target: "reg.curator.metacognition",
             variety_deficit = snapshot.variety_deficit,
             critical_alerts = snapshot.critical_alerts,
-            acceptance_rate = ?snapshot.regulation_acceptance_rate,
             healthy = snapshot.ledger_health.healthy,
             alerts = alerts.len(),
             "Curator metacognition tick"

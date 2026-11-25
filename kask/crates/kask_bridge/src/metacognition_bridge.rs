@@ -65,13 +65,10 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "timestamp": s.timestamp.to_rfc3339(),
                 "variety_deficit": s.variety_deficit,
                 "critical_alerts": s.critical_alerts,
-                "regulation_acceptance_rate": s.regulation_acceptance_rate,
+                "regulation_acceptance_rate": serde_json::Value::Null,
                 "escalation_count": s.escalation_count,
                 "healthy": s.ledger_health.healthy,
                 "total_cycles": s.regulation_health.total_cycles,
-                "accepted": s.regulation_health.accepted,
-                "staged": s.regulation_health.staged,
-                "blocked": s.regulation_health.blocked,
                 // Alert log cap status is an observation for backlog review;
                 // the in-memory log self-evicts. This is not authorization to
                 // clear it as part of algedonic-review.

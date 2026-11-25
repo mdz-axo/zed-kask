@@ -43,26 +43,19 @@ pub struct LedgerHealth {
     pub alert_log_approaching_cap: bool,
 }
 
-/// Regulation loop health — observation acceptance, not causal effectiveness.
+/// Regulation loop health — cycle count and latest-cycle deviation demand.
 ///
-/// The accepted/staged/blocked counters aggregated the retired
-/// rollout-impact pathway's verdicts; with that pathway gone (2026-10-31)
-/// they are structurally zero and `acceptance_rate()` is `None` — which the
-/// metacognition status surface reports as "impact unverified". Live
-/// fields: `total_cycles` (one per completed cycle) and the latest cycle's
-/// deviation/disposition outcome (`last_cycle_deviations`,
-/// `last_cycle_undispositioned`) — the demand signal the LoopView assembly
-/// reads to distinguish healthy homeostasis from a live defect.
+/// The former `accepted`/`staged`/`blocked` counters aggregated the retired
+/// rollout-impact pathway's verdicts and were deleted (REF-02, P5.5) once that
+/// pathway retired (2026-10-31, D79). Live fields: `total_cycles` (one per
+/// completed cycle) and the latest cycle's deviation/disposition outcome
+/// (`last_cycle_deviations`, `last_cycle_undispositioned`) — the demand signal
+/// the LoopView assembly reads to distinguish healthy homeostasis from a live
+/// defect.
 #[derive(Debug, Clone, Default)]
 pub struct RegulationHealth {
     /// Total regulation cycles recorded.
     pub total_cycles: u64,
-    /// Observations accepted (improved or within noise tolerance).
-    pub accepted: u64,
-    /// Observations staged for review (moderate worsening).
-    pub staged: u64,
-    /// Observations triggering a block (severe worsening).
-    pub blocked: u64,
     /// Deviations detected on the most recent completed cycle — the live
     /// demand signal. `total_cycles` is history; this is the current state.
     pub last_cycle_deviations: u64,
@@ -72,14 +65,6 @@ pub struct RegulationHealth {
     /// there were none. Positive is a live defect: the sensed-but-dropped
     /// class the LoopView assembly must read as Broken, never Unobserved.
     pub last_cycle_undispositioned: u64,
-}
-
-impl RegulationHealth {
-    /// Ratio of acceptable observations to total. None if no observations exist; not causal efficacy.
-    pub fn acceptance_rate(&self) -> Option<f64> {
-        let total = self.accepted + self.staged + self.blocked;
-        (total > 0).then(|| self.accepted as f64 / total as f64)
-    }
 }
 
 // ── RegulationSpan — Core Regulation Span Identifiers ────────────────────────────────────

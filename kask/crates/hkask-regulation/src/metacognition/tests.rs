@@ -1,22 +1,31 @@
 use super::*;
 
-/// expect: "No samples stay unknown and accepted advice never becomes causally trusted" [P9]
+/// expect: "Cycle activity without causal verification stays OutcomeTrust::Unverified" [P9]
 #[test]
-fn acceptance_is_not_causal_trust() {
+fn loop_cycles_stay_outcome_unverified() {
     let empty = RegulationHealth::default();
-    assert_eq!(empty.acceptance_rate(), None);
-    let accepted = RegulationHealth {
+    let active = RegulationHealth {
         total_cycles: 10,
-        accepted: 10,
         ..Default::default()
     };
-    assert_eq!(accepted.acceptance_rate(), Some(1.0));
-    for health in [empty, accepted] {
+    for health in [empty, active] {
         assert_eq!(
             MetacognitionLoop::compute_loop_view(&health).outcome_trust,
             crate::loops::OutcomeTrust::Unverified
         );
     }
+}
+
+/// expect: "MetacognitionLoop::with_set_points adopts SetPoints::variety_max_deficit (REF-03)" [P0]
+#[test]
+fn with_set_points_syncs_variety_deficit_threshold() {
+    let ledger = Arc::new(TokioRwLock::new(RegulationLedger::with_threshold(100)));
+    let sp = crate::set_points::SetPoints {
+        variety_max_deficit: 42.0,
+        ..Default::default()
+    };
+    let loop_ = MetacognitionLoop::new(ledger).with_set_points(&sp);
+    assert_eq!(loop_.config.variety_deficit_threshold, 42);
 }
 
 /// The LoopView reads the live cycle demand: cycles with all deviations

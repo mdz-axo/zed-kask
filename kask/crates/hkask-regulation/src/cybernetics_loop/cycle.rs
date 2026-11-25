@@ -822,8 +822,6 @@ impl super::CyberneticsLoop {
             //    These carry NoData when no quantitative variant exists.
             RegulationReason::AlgedonicEventsExceeded
             | RegulationReason::AlgedonicLogApproachingCap
-            | RegulationReason::GoalsStale
-            | RegulationReason::GoalsExpired
             | RegulationReason::MetacognitionCriticalAlerts
             | RegulationReason::MemoryLifeLow
             | RegulationReason::MemoryStoreGrowth

@@ -37,8 +37,6 @@ pub(crate) enum RegulationReason {
     /// (or the `algedonic-review` skill) should review and clear reviewed
     /// entries before they are evicted unread.
     AlgedonicLogApproachingCap,
-    GoalsStale,
-    GoalsExpired,
     MetacognitionCriticalAlerts,
     MemoryLifeLow,
     CircuitBreakerOpen,
@@ -61,8 +59,6 @@ impl RegulationReason {
             Self::PendingEscalationsObserved => "pending_escalations_observed",
             Self::AlgedonicEventsExceeded => "algedonic_events_exceeded",
             Self::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
-            Self::GoalsStale => "goals_stale",
-            Self::GoalsExpired => "goals_expired",
             Self::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
             Self::MemoryLifeLow => "memory_life_low",
             Self::CircuitBreakerOpen => "circuit_breaker_open",
@@ -223,24 +219,6 @@ impl RegulationPolicy {
                         target: Curation,
                         action_type: Escalate,
                         reason: RegulationReason::AlgedonicLogApproachingCap,
-                    }],
-                },
-                RegulationRule {
-                    metric: GoalStaleCount,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: GoalsStale,
-                    }],
-                },
-                RegulationRule {
-                    metric: GoalExpiredCount,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: GoalsExpired,
                     }],
                 },
                 RegulationRule {

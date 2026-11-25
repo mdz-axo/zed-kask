@@ -37,8 +37,6 @@ fn metric_name_round_trips() {
         "algedonic_log_approaching_cap",
         "pending_escalations",
         "consolidation_candidates",
-        "goal_stale_count",
-        "goal_expired_count",
         "metacognition_critical_alerts",
         "experimentation_stuck_experiments",
         "tool_reliability",

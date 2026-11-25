@@ -195,6 +195,12 @@ impl CyberneticsLoop {
         Self::build(ledger, set_points)
     }
 
+    /// Borrow the loop's homeostatic set-points so sibling loops
+    /// (`MetacognitionLoop`) share the same calibrated thresholds (REF-03).
+    pub fn set_points(&self) -> &SetPoints {
+        &self.set_points
+    }
+
     fn build(ledger: Arc<RwLock<RegulationLedger>>, set_points: SetPoints) -> Self {
         let dampener = Arc::new(Dampener::with_windows(
             std::time::Duration::from_secs(set_points.dampen_window_secs),

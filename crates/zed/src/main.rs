@@ -1104,8 +1104,14 @@ fn main() {
             tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
         spawn_alert_toast_drainer(alert_sink_rx, cx);
         let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
+        let shared_set_points = cybernetics_loop_for_tick
+            .try_read()
+            .expect("cybernetics loop uncontended at startup")
+            .set_points()
+            .clone();
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
+                .with_set_points(&shared_set_points)
                 .with_alert_receiver(alert_rx)
                 .with_alert_sink(alert_sink)
                 .with_stage_actions({
