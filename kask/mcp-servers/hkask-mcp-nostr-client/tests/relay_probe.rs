@@ -5,8 +5,6 @@
 //! connect to loopback. Nothing here leaves the machine, and no identity is
 //! written into this file.
 
-#![cfg(feature = "test-fixture")]
-
 use std::sync::Arc;
 
 use hkask_mcp_nostr_client::config::Config;

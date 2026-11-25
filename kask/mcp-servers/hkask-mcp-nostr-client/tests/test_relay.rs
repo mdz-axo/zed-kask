@@ -5,8 +5,6 @@
 //! Compiled only with the `test-fixture` feature. Nothing here leaves the
 //! machine, and every key is generated inside the test.
 
-#![cfg(feature = "test-fixture")]
-
 use std::time::Duration;
 
 use hkask_mcp_nostr_client::test_support::{HandshakeFailingRelay, TestRelay, stopped_relay_url};

@@ -6,8 +6,6 @@
 //! step is the editor's (pinned in `kask_bridge`), so the session's send
 //! and read-back are driven with a key the test itself generates.
 
-#![cfg(feature = "test-fixture")]
-
 use std::sync::Arc;
 
 use hkask_mcp_nostr_client::config::Config;

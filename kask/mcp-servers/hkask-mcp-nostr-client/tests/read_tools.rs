@@ -1,11 +1,9 @@
 //! The read tools, called through their public `Parameters<T>` seam against
 //! relays started inside the test.
 //!
-//! Compiled only with the `test-fixture` feature, the one build that will
-//! connect to a seed relay on loopback. Nothing here leaves the machine, and
-//! every key is generated inside the test.
-
-#![cfg(feature = "test-fixture")]
+//! Compiled only with the `test-fixture` feature (`required-features` in
+//! `Cargo.toml`), the one build that will connect to a seed relay on loopback.
+//! Nothing here leaves the machine, and every key is generated inside the test.
 
 use std::sync::Arc;
 
@@ -790,6 +788,7 @@ async fn a_profile_is_the_authors_newest_and_its_nip05_is_reported_as_a_claim() 
         nostr_profile,
         ProfileRequest {
             authors: vec![npub(&named), npub(&silent), broken.public_key().to_hex()],
+            verify_nip05: None,
         }
     );
     assert_eq!(response["asked"], 3);

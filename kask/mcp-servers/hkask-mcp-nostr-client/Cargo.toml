@@ -70,3 +70,23 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "tim
 
 [lints]
 workspace = true
+
+[[test]]
+name = "publish"
+path = "tests/publish.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "read_tools"
+path = "tests/read_tools.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "relay_probe"
+path = "tests/relay_probe.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "test_relay"
+path = "tests/test_relay.rs"
+required-features = ["test-fixture"]
