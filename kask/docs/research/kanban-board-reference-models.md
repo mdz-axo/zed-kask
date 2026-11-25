@@ -48,7 +48,7 @@ reference-model alignment audit found the live kanban tool descriptions
 citations remained. On restoration every citation mechanically re-verified in
 range (check-docs-citations gate: 0 rotted, 36 resolved), and the R1/R6
 name-cap contract re-verified against the live tree
-(`KANBAN_BOARD_NAME_MAX_CHARS` at `kask/crates/hkask-types/src/kanban_wire.rs:36`,
+(`KANBAN_BOARD_NAME_MAX_CHARS` at `kask/crates/hkask-ipc-wire/src/kanban_wire.rs:36`,
 pinned by the service and panel tests). The rotted link to the deleted
 chunking-for-rag-research.md pattern note was removed in the same restoration.
 

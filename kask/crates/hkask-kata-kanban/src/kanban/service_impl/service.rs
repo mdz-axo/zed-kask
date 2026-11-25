@@ -28,13 +28,13 @@
 //!   kanban:task  → {task_id}  → JSON Task
 //!   kanban:board_tasks:{board_id} → {task_id} → task_id (index)
 
+use hkask_ipc_wire::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use hkask_storage::{HMem, HMemError, HMemStore, TxnReads};
 use hkask_types::Dimension;
 use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::id::{BoardId, TaskId};
-use hkask_ipc_wire::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use serde_json::Value;
 
 use super::types::{BoardFault, BoardListReport, KanbanError, TaskIndexFault, TaskListReport};

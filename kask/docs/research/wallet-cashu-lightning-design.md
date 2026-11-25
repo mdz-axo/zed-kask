@@ -177,7 +177,7 @@ stateDiagram-v2
 
 ## 6. MCP Tool Surface & Wire Contract
 
-Create `kask/crates/hkask-types/src/wallet_wire.rs` (mirroring `nostr_wire.rs`) exporting `WALLET_SERVER_ID = "wallet"` and `WALLET_TOOL_NAMES` pinned by `tool_surface_pin!` in `hkask-mcp-wallet`. All tools carry dual-axis P5.4 ontology annotations (`hkask_mcp_server::dual_axis_annotate!`).
+Create `kask/crates/hkask-ipc-wire/src/wallet_wire.rs` (mirroring `nostr_wire.rs`) exporting `WALLET_SERVER_ID = "wallet"` and `WALLET_TOOL_NAMES` pinned by `tool_surface_pin!` in `hkask-mcp-wallet`. All tools carry dual-axis P5.4 ontology annotations (`hkask_mcp_server::dual_axis_annotate!`).
 
 ### 6.1 `hkask-mcp-wallet` Tools (10 tools)
 
@@ -208,7 +208,7 @@ Each phase is a vertical slice with hard verification gates. **Do not advance to
 ### Phase 1 — Core Types, Validators & Editor Approval Seam
 - **Deliverables:**
   - `kask/crates/hkask-wallet-core`: `Satoshis`, `Millisatoshis`, `WalletNetwork`, `SpendIntent`, BOLT11 decoder (`lightning-invoice`), SSRF-safe URL validator, zeroizing helpers.
-  - `kask/crates/hkask-types/src/wallet_wire.rs` + `inference_ipc.rs` additions (`WALLET_DB_UNLOCK`, `WALLET_SPEND_APPROVE`, `NOSTR_ZAP_SIGN`).
+  - `kask/crates/hkask-ipc-wire/src/wallet_wire.rs` + `inference_ipc.rs` additions (`WALLET_DB_UNLOCK`, `WALLET_SPEND_APPROVE`, `NOSTR_ZAP_SIGN`).
   - `kask/crates/kask_bridge/src/{credentials.rs, delegation_grants.rs, settings.rs, wallet_approval.rs}` + `crates/settings_content` + `crates/settings_ui/src/pages/kask_page/wallet.rs` (Settings → Kask → Wallet UI: network selector, mainnet consent toggle, per-tx/daily caps, mint allowlist, seed setup/backup, NWC URI masked entry).
   - Register `"wallet"` in `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`.
 - **Verification Gate:**

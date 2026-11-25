@@ -31,12 +31,12 @@ use gpui::{
     WeakEntity, Window, actions,
 };
 use gpui_util::ResultExt;
+use hkask_ipc_wire::kanban_wire::{KANBAN_BOARD_NAME_MAX_CHARS, KANBAN_SERVER_NAME};
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
 use hkask_kanban_widget::view::KanbanWidget;
 use hkask_steer::{SteerContext, SteerSurface};
 use hkask_tool_invoker::shared_tool_invoker;
 use hkask_types::BlockProvenance;
-use hkask_ipc_wire::kanban_wire::{KANBAN_BOARD_NAME_MAX_CHARS, KANBAN_SERVER_NAME};
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;

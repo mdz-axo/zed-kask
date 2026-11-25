@@ -717,10 +717,12 @@ mod tests {
             id: "zeros".to_string(),
             score: 0.0,
             level_probabilities: (0..10)
-                .map(|lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
-                    level: lvl,
-                    probability: 0.0,
-                })
+                .map(
+                    |lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
+                        level: lvl,
+                        probability: 0.0,
+                    },
+                )
                 .collect(),
             confidence: 0.0,
         };
@@ -730,10 +732,12 @@ mod tests {
             id: "nans".to_string(),
             score: f64::NAN,
             level_probabilities: (0..10)
-                .map(|lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
-                    level: lvl,
-                    probability: f64::NAN,
-                })
+                .map(
+                    |lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
+                        level: lvl,
+                        probability: f64::NAN,
+                    },
+                )
                 .collect(),
             confidence: 0.0,
         };

@@ -678,7 +678,9 @@ mod tests {
             .and_then(|m| m.delegated_tools.as_ref())
             .and_then(|d| d.get(hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID))
             .expect("wallet grants present");
-        assert!(grants.contains(&hkask_ipc_wire::inference_ipc::WALLET_DB_UNLOCK_GRANT.to_string()));
+        assert!(
+            grants.contains(&hkask_ipc_wire::inference_ipc::WALLET_DB_UNLOCK_GRANT.to_string())
+        );
         assert!(
             grants.contains(&hkask_ipc_wire::inference_ipc::WALLET_SPEND_APPROVE_GRANT.to_string())
         );

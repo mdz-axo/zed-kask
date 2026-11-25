@@ -16,6 +16,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use hkask_ipc_wire::nostr_wire::WireEvent;
 use hkask_mcp_nostr_client::config::Config;
 use hkask_mcp_nostr_client::server::{
     AccountRequest, FetchEventsRequest, NostrClientServer, ThreadRequest,
@@ -26,7 +27,6 @@ use hkask_mcp_nostr_relay::server::{
 };
 use hkask_mcp_test_support::invoke_tool;
 use hkask_types::WebID;
-use hkask_ipc_wire::nostr_wire::WireEvent;
 use nostr_sdk::prelude::*;
 
 fn note(keys: &Keys, at: u64, text: &str, tags: &[&[&str]]) -> Event {

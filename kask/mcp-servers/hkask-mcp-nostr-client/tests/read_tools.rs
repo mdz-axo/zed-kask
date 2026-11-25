@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, WireEvent};
 use hkask_mcp_nostr_client::config::Config;
 use hkask_mcp_nostr_client::server::{
     AuthorRelaysRequest, DecodeRequest, FetchEventsRequest, NostrClientServer,
@@ -14,7 +15,6 @@ use hkask_mcp_nostr_client::server::{
 };
 use hkask_mcp_nostr_client::test_support::{TestRelay, stopped_relay_url};
 use hkask_mcp_test_support::{Parameters, invoke_tool};
-use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, WireEvent};
 use hkask_types::{McpErrorKind, WebID};
 use nostr_sdk::prelude::*;
 use serde_json::Value;

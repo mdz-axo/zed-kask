@@ -19,9 +19,9 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{FocusHandle, Focusable, Hsla};
+use hkask_ipc_wire::kanban_wire;
 use hkask_types::BlockProvenance;
 use hkask_types::TaskStatus;
-use hkask_ipc_wire::kanban_wire;
 use theme::ActiveTheme;
 use ui::Tooltip;
 use ui::prelude::*;

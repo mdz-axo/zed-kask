@@ -37,13 +37,13 @@ use cdk_common::{
 };
 use cdk_fake_wallet::FakeWallet;
 use cdk_sql_common::SQLMintDatabase;
+use hkask_ipc_wire::wallet_wire::{
+    WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
+};
 use hkask_mcp_wallet::approval::{ApprovalError, ApprovalPort};
 use hkask_mcp_wallet::config::WalletConfig;
 use hkask_mcp_wallet::engine::{ConnectorFactory, WalletEngine, WalletError};
 use hkask_mcp_wallet::storage::{SqlcipherConfig, SqlcipherConnectionManager};
-use hkask_ipc_wire::wallet_wire::{
-    WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
-};
 use hkask_wallet_core::WalletNetwork;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;

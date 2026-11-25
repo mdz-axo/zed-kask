@@ -32,7 +32,7 @@ boundary has a contract shaped by how drift or failure would appear:
   (`kask/crates/hkask-types/src/event.rs:15-28,258-330,359-515`;
   `kask/crates/hkask-types/src/regulation.rs:25-155`).
 - `inference_ipc` defines the newline-delimited request/response protocol used by
-  MCP child processes (`kask/crates/hkask-types/src/inference_ipc.rs:1-47,53-120,122-250`).
+  MCP child processes (`kask/crates/hkask-ipc-wire/src/inference_ipc.rs:1-47,53-120,122-250`).
 - `agent_paths` centralizes internal-data and user-artifact path resolution
   (`kask/crates/hkask-types/src/agent_paths.rs:12-26,63-265`).
 - `closed_vocab`, `ocr_health`, `server_env`, and `process_global` encode shared
@@ -131,13 +131,13 @@ observed-recovery kinds at `kask/crates/hkask-types/src/event.rs:411-459`.
 `InferenceRequest` pairs a correlation ID, `InferenceMethod`, and
 `InferenceParams`; `InferenceResponse` pairs the same ID with an untagged
 `InferenceOutcome`
-(`kask/crates/hkask-types/src/inference_ipc.rs:87-156,159-345`). Current methods
+(`kask/crates/hkask-ipc-wire/src/inference_ipc.rs:87-156,159-345`). Current methods
 cover generation, messages, vision, embedding, model listing, worktree-thread creation, reranking, System One decisions, and editor-side Nostr/Blossom signing. Current
 outcomes cover a generation result, embeddings, model list, worktree thread, rerank scores, decision answers, signed Nostr event, or a typed error.
 
 The protocol uses no separate batch envelope. Embedding already carries multiple
 input texts in `InferenceParams::embed_texts`
-(`kask/crates/hkask-types/src/inference_ipc.rs:134-137`), while each IPC envelope
+(`kask/crates/hkask-ipc-wire/src/inference_ipc.rs:134-137`), while each IPC envelope
 retains one correlation identity.
 
 ## See also

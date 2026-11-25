@@ -114,7 +114,7 @@ items are re-exported; `sql_impls` is feature-gated
 | `hmem_ontology` | `HMemOntology` | `kask/crates/hkask-types/src/hmem_ontology.rs:35-75` |
 | `id` | sealed `Id<T>` aliases and `WebID` | `kask/crates/hkask-types/src/id/core.rs:8-183`; `kask/crates/hkask-types/src/id/webid.rs:9-107` |
 | `json_extract` | balanced JSON extraction from model output; property tests and Kani proofs (2026-09-16) cover the extraction core | `kask/crates/hkask-types/src/json_extract.rs:47,187-269` |
-| `kanban_status` / `kanban_wire` / `media_wire` / `nostr_wire` | task lifecycle and server/tool wire constants for panels | `kask/crates/hkask-types/src/kanban_status.rs:11-71`; `kask/crates/hkask-types/src/kanban_wire.rs:17-36`; `kask/crates/hkask-types/src/media_wire.rs:1-15`; `kask/crates/hkask-types/src/nostr_wire.rs:1-45` |
+| `kanban_status` / `kanban_wire` / `media_wire` / `nostr_wire` | task lifecycle and server/tool wire constants for panels | `kask/crates/hkask-types/src/kanban_status.rs:11-71`; `kask/crates/hkask-ipc-wire/src/kanban_wire.rs:17-36`; `kask/crates/hkask-ipc-wire/src/media_wire.rs:1-15`; `kask/crates/hkask-ipc-wire/src/nostr_wire.rs:1-45` |
 | `maybe_string` | numeric-string-tolerant serde deserializers for `Option<u64>`, `Option<u32>`, `Option<f64>` | `kask/crates/hkask-types/src/maybe_string.rs:20,47,74` |
 | `model_names` | `strip_provider_prefix` and provider-qualified model-name helpers | `kask/crates/hkask-types/src/model_names.rs:1-40` |
 | `secret` | `SecretRef` — declarative env/keychain secret-source reference | `kask/crates/hkask-types/src/secret.rs:14-35` |
@@ -212,7 +212,7 @@ status: VERIFIED
 ## Inference IPC surface
 
 The protocol is newline-delimited JSON between MCP child processes and the Zed
-inference bridge (`kask/crates/hkask-types/src/inference_ipc.rs:1-47`).
+inference bridge (`kask/crates/hkask-ipc-wire/src/inference_ipc.rs:1-47`).
 
 ```mermaid
 sequenceDiagram
@@ -229,24 +229,24 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-010
 verified_date: 2026-11-18
-verified_against: kask/crates/hkask-types/src/inference_ipc.rs:1-47,87-345
+verified_against: kask/crates/hkask-ipc-wire/src/inference_ipc.rs:1-47,87-345
 status: VERIFIED
 -->
 
 | Surface | Current members | Evidence |
 |---|---|---|
-| Environment | `INFERENCE_SOCKET_ENV`, `TOOL_GRANT_ENV`, `INFERENCE_TIMEOUT_ENV` | `kask/crates/hkask-types/src/inference_ipc.rs:53-73` |
-| Request envelope | `InferenceRequest { id, method, params }` | `kask/crates/hkask-types/src/inference_ipc.rs:87-94` |
-| Methods | Generate, GenerateWithModel, GenerateWithMessages, GenerateVision, Embed, ListModels, CreateWorktreeThread, Rerank, Decision, SignNostrNote, SignBlossomUpload | `kask/crates/hkask-types/src/inference_ipc.rs:99-156` |
-| Parameters | prompts/messages/images/model/tools, embedding (model, texts, and the MRL `embed_dimensions` width), worktree, rerank, decision, and Nostr/Blossom signing fields | `kask/crates/hkask-types/src/inference_ipc.rs:159-253` |
-| Response envelope | `InferenceResponse { id, outcome }` | `kask/crates/hkask-types/src/inference_ipc.rs:255-264` |
-| Outcomes | Result, Embeddings, ModelList, WorktreeThread, RerankScores, DecisionAnswers, NostrSignedEvent, Error | `kask/crates/hkask-types/src/inference_ipc.rs:266-345` |
-| Auxiliary payloads | `RerankScoreEntry`, `ModelListEntry`, `WorktreeThreadInfo`, `InferenceErrorPayload` | `kask/crates/hkask-types/src/inference_ipc.rs:254-298` |
+| Environment | `INFERENCE_SOCKET_ENV`, `TOOL_GRANT_ENV`, `INFERENCE_TIMEOUT_ENV` | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:53-73` |
+| Request envelope | `InferenceRequest { id, method, params }` | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:87-94` |
+| Methods | Generate, GenerateWithModel, GenerateWithMessages, GenerateVision, Embed, ListModels, CreateWorktreeThread, Rerank, Decision, SignNostrNote, SignBlossomUpload | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:99-156` |
+| Parameters | prompts/messages/images/model/tools, embedding (model, texts, and the MRL `embed_dimensions` width), worktree, rerank, decision, and Nostr/Blossom signing fields | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:159-253` |
+| Response envelope | `InferenceResponse { id, outcome }` | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:255-264` |
+| Outcomes | Result, Embeddings, ModelList, WorktreeThread, RerankScores, DecisionAnswers, NostrSignedEvent, Error | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:266-345` |
+| Auxiliary payloads | `RerankScoreEntry`, `ModelListEntry`, `WorktreeThreadInfo`, `InferenceErrorPayload` | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:254-298` |
 
 There are no batch companion envelopes in the current IPC surface. Multi-text
 embedding and multi-document reranking are fields on `InferenceParams`, preserving
 one correlation identity per request
-(`kask/crates/hkask-types/src/inference_ipc.rs:134-137,170-180`).
+(`kask/crates/hkask-ipc-wire/src/inference_ipc.rs:134-137,170-180`).
 
 ## Filesystem path model
 
@@ -296,7 +296,7 @@ ports and adapters pattern at the workspace boundary.[^hexagonal]
 |---|---|---|
 | Relative data/artifact path | `agent_paths` | `kask/crates/hkask-types/src/agent_paths.rs:157-235` |
 | Infrastructure behavior contract | `ports` | `kask/crates/hkask-types/src/ports.rs:7-23` |
-| Parent/child inference wire shape | `inference_ipc` | `kask/crates/hkask-types/src/inference_ipc.rs:77-298` |
+| Parent/child inference wire shape | `inference_ipc` | `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:77-298` |
 | Regulation event shape | `event` / `regulation` | `kask/crates/hkask-types/src/event.rs:15-28,258-515` |
 | Closed vocabulary normalization | `closed_vocab` | `kask/crates/hkask-types/src/closed_vocab.rs:1-40` |
 | Cross-process OCR health | `ocr_health` | `kask/crates/hkask-types/src/ocr_health.rs:11-71` |
@@ -376,13 +376,13 @@ status: VERIFIED
 
 1. Update both sides of the boundary in the same change. For inference IPC, the
    request side is `InferenceRequest` / `InferenceMethod` / `InferenceParams` at
-   `kask/crates/hkask-types/src/inference_ipc.rs:87-253`; the response side is
+   `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:87-253`; the response side is
    `InferenceResponse` / `InferenceOutcome` and auxiliary payloads at
-   `kask/crates/hkask-types/src/inference_ipc.rs:255-430`.
+   `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:255-430`.
 2. Preserve one request correlation ID and one response correlation ID. Do not add
    removed batch companion envelopes; multi-item operation inputs belong in the
    method parameters, as `embed_texts` and `rerank_documents` do at
-   `kask/crates/hkask-types/src/inference_ipc.rs:134-137,170-180`.
+   `kask/crates/hkask-ipc-wire/src/inference_ipc.rs:134-137,170-180`.
 3. For Regulation events, construct a validated namespace and add a `SpanKind`
    only when a canonical pair is reused across emitters
    (`kask/crates/hkask-types/src/event.rs:60-65,359-459`).
