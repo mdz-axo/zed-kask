@@ -1454,24 +1454,28 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
     let project = project.read(cx);
 
     if cd == "." || cd.is_empty() {
-        let mut worktrees = project.worktrees(cx);
+        // Skip single-file worktrees: a file can't be a working directory
+        // (matching the explicit-`cd` branch below; therapy 2026-11-25, P1).
+        let mut dir_worktrees = project.worktrees(cx).filter_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let root_dir = worktree.root_dir()?;
+            Some((worktree.root_name_str().to_string(), root_dir.to_path_buf()))
+        });
 
-        match worktrees.next() {
-            Some(worktree) => {
+        match dir_worktrees.next() {
+            Some((first_name, first_dir)) => {
                 // zed-kask teaching error (therapy 2026-11-16, P3): the bare
                 // refusal made agents retry the same `cd` shape (nine live
                 // receipts 2026-11-10..13) — name the roots so the retry
                 // carries the valid inputs. Resolution semantics unchanged.
-                let mut root_names = vec![worktree.read(cx).root_name_str().to_string()];
-                root_names.extend(
-                    worktrees.map(|worktree| worktree.read(cx).root_name_str().to_string()),
-                );
+                let mut root_names = vec![first_name];
+                root_names.extend(dir_worktrees.map(|(name, _)| name));
                 anyhow::ensure!(
                     root_names.len() == 1,
                     "'.' is ambiguous in multi-root workspaces — name one of the roots explicitly: {}",
                     root_names.join(", "),
                 );
-                Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
+                Ok(Some(first_dir))
             }
             None => Ok(None),
         }
@@ -1603,6 +1607,58 @@ mod tests {
             .unwrap()
             .expect("bare cd resolves in a single-root project");
         assert_eq!(by_dot, Path::new("/solo"));
+    }
+
+    /// zed-kask (therapy 2026-11-25, P1): single-file worktrees (e.g. scratch
+    /// JSON files opened outside the repo) cannot be working directories and
+    /// must not make bare `cd` ("." / "") ambiguous.
+    #[gpui::test]
+    async fn test_bare_cd_ignores_single_file_worktrees(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/solo", serde_json::json!({"README.md": "hi"}))
+            .await;
+        fs.insert_tree("/scratch", serde_json::json!({"classify-out.json": "{}"}))
+            .await;
+        let project = project::Project::test(
+            fs.clone(),
+            ["/solo".as_ref(), "/scratch/classify-out.json".as_ref()],
+            cx,
+        )
+        .await;
+
+        let by_dot = cx
+            .update(|cx| working_dir(".", &project, cx))
+            .unwrap()
+            .expect("bare '.' resolves to the sole directory worktree");
+        assert_eq!(by_dot, Path::new("/solo"));
+
+        let by_empty = cx
+            .update(|cx| working_dir("", &project, cx))
+            .unwrap()
+            .expect("empty cd resolves to the sole directory worktree");
+        assert_eq!(by_empty, Path::new("/solo"));
+
+        // With two directory worktrees plus a single-file worktree, ambiguity
+        // names only the directory roots, not the file.
+        fs.insert_tree("/beta", serde_json::json!({})).await;
+        let multi = project::Project::test(
+            fs.clone(),
+            [
+                "/solo".as_ref(),
+                "/beta".as_ref(),
+                "/scratch/classify-out.json".as_ref(),
+            ],
+            cx,
+        )
+        .await;
+        let err = cx.update(|cx| working_dir(".", &multi, cx)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("'.' is ambiguous"), "{msg}");
+        assert!(msg.contains("solo"), "{msg}");
+        assert!(msg.contains("beta"), "{msg}");
+        assert!(!msg.contains("classify-out.json"), "{msg}");
     }
 
     #[test]
