@@ -98,7 +98,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.3 MCP load set (11 on disk)
 
-**11 servers on disk** (243 registered tools): `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-blossom`, `nostr-client`, `nostr-relay`, `prediction-markets`, `research`, `scenarios`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` is authoritative; `builtin_mcp_server_ids()` (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:450@builtin_mcp_server_ids`) derives the ID list.[^anthropic-mcp]
+**11 servers on disk** (243 registered tools): `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-blossom`, `nostr-client`, `nostr-relay`, `prediction-markets`, `research`, `scenarios`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` is authoritative; `builtin_mcp_server_ids()` (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:454@builtin_mcp_server_ids`) derives the ID list.[^anthropic-mcp]
 
 | On disk (11) |
 | --- |

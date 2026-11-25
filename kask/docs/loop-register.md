@@ -609,7 +609,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Phase 1 scoped graph (IS):** organize validates and persists the active gallery after scan/reconcile (`tools/gallery.rs:159-199`); refresh rescans to detect missing/changed assets (`:542-558`), analyzes a bounded set (`:567-581`), and returns explicit scan/analysis/errors and pending counts (`:622-665`). `gallery_search` (`:250`) reads the updated index; the media panel is an L7 consumer, separate from L11 job state. Five properties: closed across a repeated refresh/search, timely explicit-call/bounded-analysis, accurate/complete conditional on scan and analysis status, actionable from returned errors/pending. No full-gallery refresh was executed here and no evidenced deletion candidate survives the behavior-preservation test.
 - **Closure (2026-09-27):** graph verified, no deletion candidate. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
 
-- **Pass 3 layer classification (2026-09-30):** primary **A** (scan/reconcile — deterministic); secondary B (explicit calls, surfaced errors/pending counts). Sense→report→actuate: sense scan (`kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:402-406@MediaServer::gallery_organize`) → report scan/analysis/errors/pending counts (`kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:844@MediaServer::gallery_refresh`) → actuate reconcile/persist. Five properties stand; no impedance. Grill: primary-B fails — the counts are surfaced but reconciliation is deterministic. Alignment: INV4 held (explicit errors/pending); INV2 absent.
+- **Pass 3 layer classification (2026-09-30):** primary **A** (scan/reconcile — deterministic); secondary B (explicit calls, surfaced errors/pending counts). Sense→report→actuate: sense scan (`kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:402-406@MediaServer::gallery_organize`) → report scan/analysis/errors/pending counts (`kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs:848@MediaServer::gallery_refresh`) → actuate reconcile/persist. Five properties stand; no impedance. Grill: primary-B fails — the counts are surfaced but reconciliation is deterministic. Alignment: INV4 held (explicit errors/pending); INV2 absent.
 
 ### L23 — Research-provider selection / observed-performance cycle — degraded-status contract landed (S4, 2026-09-30)
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-research/src/research/{providers,performance}.rs`
@@ -1427,7 +1427,7 @@ exactly that lag), not evidence of absence.)
   framework review completed:** all 46 fn items across the six
   hkask-mcp-server framework files mapped (transport, error, credentials,
   context, tool_span, validation) — zero `.rules` violations; the F4 TOCTOU
-  window located at `canonicalize_lenient` (`kask/crates/hkask-mcp-server/src/server/validation.rs:279-306@canonicalize_lenient`) plus
+  window located at `canonicalize_lenient` (`kask/crates/hkask-mcp-server/src/server/validation.rs:284-311@canonicalize_lenient`) plus
   the caller's non-atomic write; a per-server review item extracted for
   S1–S12 (DB-path credential declared required vs optional-with-surfaced-
   degradation, checked against the then-existing generic in-memory fallback; persistence is now server-specific). **E1

@@ -62,7 +62,7 @@ queued or running work and releases capacity.
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
 The 11 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`,
-IDs via `builtin_mcp_server_ids()` at `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:450@builtin_mcp_server_ids`):
+IDs via `builtin_mcp_server_ids()` at `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:454@builtin_mcp_server_ids`):
 `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-blossom`, `nostr-client`,
 `nostr-relay`, `prediction-markets`, `research`, `scenarios`. The crates live under
 `kask/mcp-servers/` (11 `hkask-mcp-*` crates).

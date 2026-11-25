@@ -74,11 +74,11 @@ status: VERIFIED
 
 ### Router composition
 
-`combined_router()` sums the research sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `models_router` + `jobs_router` + `educt_router` + `layers_router` + `voice_router` + `youtube_router` + `fetch_image_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:464-479@MediaServer::combined_router`). Three pieces must move in lockstep whenever a tool is added or removed: (1) the `#[tool]` handler inside its sub-router module, (2) the `build.rs`-generated `TOOL_NAMES` list (`tool_names_match_live_router` + `tool_surface_pin!`), and (3) the MovieLabs OMC mapping (`omc_mapping_covers_all_registered_tools`).
+`combined_router()` sums the research sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `models_router` + `jobs_router` + `educt_router` + `layers_router` + `voice_router` + `youtube_router` + `fetch_image_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:565-580@MediaServer::combined_router`). Three pieces must move in lockstep whenever a tool is added or removed: (1) the `#[tool]` handler inside its sub-router module, (2) the `build.rs`-generated `TOOL_NAMES` list (`tool_names_match_live_router` + `tool_surface_pin!`), and (3) the MovieLabs OMC mapping (`omc_mapping_covers_all_registered_tools`).
 
 ## Bootstrap and configuration
 
-**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:489@run` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:551`.
+**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:649@run` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:551`.
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB`. There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback would make an outage look like an empty gallery. The file DB is unencrypted and therefore does **not** use `HKASK_DB_PASSPHRASE` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:504-530`).
 
@@ -141,10 +141,10 @@ resolves its model per-call, then the tagging setting
 
 **System dependencies:**
 
-- **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `unavailable` naming the binary to install when it is absent — the kind the regulation ledger excludes from the success rate as an environment gap, so a machine without ffmpeg does not read as a degraded media domain (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:368-376@MediaServer::require_ffmpeg`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:928` (`video_info`)).
+- **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `unavailable` naming the binary to install when it is absent — the kind the regulation ledger excludes from the success rate as an environment gap, so a machine without ffmpeg does not read as a degraded media domain (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:469-477@MediaServer::require_ffmpeg`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:928` (`video_info`)).
 - **SerpApi** — required by `youtube_search` for structured discovery metadata. Search never invokes `yt-dlp`; missing credentials return `permission_denied` naming `HKASK_SERPAPI_API_KEY`.
 - **yt-dlp** — required only by `video_fetch` to retrieve media bytes for durable local publication from platform URLs (YouTube, Vimeo). It is not used for search or metadata. `require_yt_dlp` returns `unavailable` with install instructions when absent.
-- **Vision-capable provider** — required by describe/analyze/caption tools. `require_vision` resolves `HKASK_MEDIA_VISION_MODEL` (`kask.models.media_vision_model`) and returns `permission_denied` naming `HKASK_MEDIA_VISION_MODEL` when unset (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:387-395@MediaServer::require_vision`).
+- **Vision-capable provider** — required by describe/analyze/caption tools. `require_vision` resolves `HKASK_MEDIA_VISION_MODEL` (`kask.models.media_vision_model`) and returns `permission_denied` naming `HKASK_MEDIA_VISION_MODEL` when unset (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:488-496@MediaServer::require_vision`).
 
 **Image size cap:** gallery images larger than 32 MiB are rejected before base64 encoding to prevent OOM (`MAX_IMAGE_READ_BYTES`, `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:57@MAX_IMAGE_READ_BYTES`).
 

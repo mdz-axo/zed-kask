@@ -410,28 +410,39 @@ pub mod http_guard {
             .build()
     }
 
+    /// Error returned by [`read_response_bytes_bounded`].
+    #[derive(Debug, thiserror::Error)]
+    pub enum BoundedReadError {
+        #[error("response Content-Length {content_length} exceeds {max_bytes}-byte limit")]
+        ContentLengthExceeded {
+            content_length: u64,
+            max_bytes: usize,
+        },
+        #[error("response body exceeded {max_bytes}-byte limit")]
+        BodyExceeded { max_bytes: usize },
+        #[error("response body read failed: {0}")]
+        ReadFailed(#[source] reqwest::Error),
+    }
+
     /// Read a `reqwest::Response` body into memory up to `max_bytes`, failing
     /// before allocating unbounded buffers when `Content-Length` or streamed
     /// chunks exceed the cap.
     pub async fn read_response_bytes_bounded(
         mut resp: reqwest::Response,
         max_bytes: usize,
-    ) -> Result<Vec<u8>, String> {
-        if let Some(len) = resp.content_length()
-            && len > max_bytes as u64
+    ) -> Result<Vec<u8>, BoundedReadError> {
+        if let Some(content_length) = resp.content_length()
+            && content_length > max_bytes as u64
         {
-            return Err(format!(
-                "response Content-Length {len} exceeds {max_bytes}-byte limit"
-            ));
+            return Err(BoundedReadError::ContentLengthExceeded {
+                content_length,
+                max_bytes,
+            });
         }
         let mut out = Vec::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| format!("response body read failed: {e}"))?
-        {
+        while let Some(chunk) = resp.chunk().await.map_err(BoundedReadError::ReadFailed)? {
             if out.len().saturating_add(chunk.len()) > max_bytes {
-                return Err(format!("response body exceeded {max_bytes}-byte limit"));
+                return Err(BoundedReadError::BodyExceeded { max_bytes });
             }
             out.extend_from_slice(&chunk);
         }

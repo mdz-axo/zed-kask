@@ -35,7 +35,7 @@ Startup reads operator policy once via `Config::from_env` (`kask/mcp-servers/hka
 | `HKASK_DATA_DIR` | `kask.data_dir` | Resolves `mcp/nostr-relay/events` and `mcp/nostr-relay/listener.json` |
 | `HKASK_NOSTR_RELAY_PORT` | `kask.nostr.relay.port` | `0` (ephemeral loopback port) |
 | `HKASK_NOSTR_RELAY_AUTHORS` | `kask.nostr.relay.allowed_authors` | Comma-joined `npub` or 64-hex public keys; empty admits zero events |
-| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | `kask.nostr.relay.sync_relays` | Comma-joined public `wss://` relays (`validate_sync_relay` rejects `ws://`, `localhost`, and private/loopback/link-local IP literals, surfacing skipped entries in `configuration_warnings`, `kask/mcp-servers/hkask-mcp-nostr-relay/src/config.rs:131-150@validate_sync_relay`) |
+| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | `kask.nostr.relay.sync_relays` | Comma-joined public `wss://` relays (`validate_sync_relay` rejects `ws://`, `localhost`, and private/loopback/link-local IP literals, surfacing skipped entries in `configuration_warnings`, `kask/mcp-servers/hkask-mcp-nostr-relay/src/config.rs:95-114@validate_sync_relay`) |
 
 ## Tool catalog (4 tools)
 

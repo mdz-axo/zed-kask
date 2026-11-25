@@ -211,7 +211,7 @@ pub async fn fetch_lnurl_pay_metadata(
     let raw_bytes =
         hkask_mcp_server::http_guard::read_response_bytes_bounded(resp, MAX_LNURL_RESPONSE_BYTES)
             .await
-            .map_err(ZapClientError::MalformedResponse)?;
+            .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     let meta: LnurlPayMetadata = serde_json::from_slice(&raw_bytes)
         .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     if !meta.allows_nostr {
@@ -258,7 +258,7 @@ pub async fn fetch_and_verify_zap_invoice(
     let raw_bytes =
         hkask_mcp_server::http_guard::read_response_bytes_bounded(resp, MAX_LNURL_RESPONSE_BYTES)
             .await
-            .map_err(ZapClientError::MalformedResponse)?;
+            .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     let body: LnurlCallbackResponse = serde_json::from_slice(&raw_bytes)
         .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     let Some(pr) = body.pr.filter(|s| !s.trim().is_empty()) else {

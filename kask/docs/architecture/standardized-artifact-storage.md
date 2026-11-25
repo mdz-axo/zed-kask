@@ -72,12 +72,12 @@ review does not write a parallel filesystem worklist.
 **Enforcement.** `contain_for_write` confines an MCP server's writes into the
 artifacts tree to its own `{server}-mcp/` folder: `run_stdio_server` records
 the owner from the binary name via `set_artifact_owner`
-(`kask/crates/hkask-mcp-server/src/server/validation.rs:334@set_artifact_owner`), and a write to the
+(`kask/crates/hkask-mcp-server/src/server/validation.rs:350@set_artifact_owner`), and a write to the
 tree's top level or another server's folder is rejected
-(`contain_for_write`, `kask/crates/hkask-mcp-server/src/server/validation.rs:440-442@contain_for_write`). Reads may use the
+(`contain_for_write`, `kask/crates/hkask-mcp-server/src/server/validation.rs:456-458@contain_for_write`). Reads may use the
 whole tree (one server's output is another's input). Pinned by
 `artifact_writes_are_confined_to_the_owning_server`
-(`kask/crates/hkask-mcp-server/src/server/validation.rs:659@artifact_writes_are_confined_to_the_owning_server`). The built-in
+(`kask/crates/hkask-mcp-server/src/server/validation.rs:698@artifact_writes_are_confined_to_the_owning_server`). The built-in
 agent file tools (`read_file`, `list_directory`, `create_directory`, `write_file`,
 `edit_file`, `delete_path`, `copy_path`, `move_path`) resolve the visible
 artifacts root (`KASK_ARTIFACTS_DIR_OVERRIDE` / `kask_artifacts_dir`, wired from

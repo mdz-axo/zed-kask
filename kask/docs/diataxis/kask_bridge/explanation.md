@@ -84,7 +84,7 @@ server's credential allowlist, then adds the inference socket and timeout
 `build_mcp_server_env` is the fresh-sweep form for tests and single-call
 callers (`kask/crates/kask_bridge/src/mcp_servers/env.rs:284@build_mcp_server_env`). The ordering is
 load-bearing because configuration and credentials are disjoint key sets
-(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:1500@build_mcp_server_env_composed_path_credential_survives_config_filter`).
+(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:1501@build_mcp_server_env_composed_path_credential_survives_config_filter`).
 
 Every built-in descriptor carries explicit `credentials` and `config_env`
 allowlists. Unknown server IDs fail closed in both filters

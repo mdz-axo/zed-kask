@@ -118,7 +118,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 `BUILT_IN_MCP_SERVERS` contains 11 descriptors
 (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`). IDs and descriptions
 are derived from that registry
-(`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:450@builtin_mcp_server_ids,497@builtin_mcp_server_pairs`).
+(`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:454@builtin_mcp_server_ids,501@builtin_mcp_server_pairs`).
 
 ```mermaid
 classDiagram
@@ -234,7 +234,7 @@ Add one `BuiltinMcpServer` value to `BUILT_IN_MCP_SERVERS`. Supply a unique
 registry order is stable and used by the panel
 (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`). The ID and description
 views derive from the registry, so no companion list is maintained
-(`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:450@builtin_mcp_server_ids,497@builtin_mcp_server_pairs`).
+(`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:454@builtin_mcp_server_ids,501@builtin_mcp_server_pairs`).
 
 #### 2. Declare the credential boundary
 
@@ -247,7 +247,7 @@ non-optional, so every server declares its credential boundary explicitly
 unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers/env.rs:13@filter_credentials_for_server`).
 Add an allowlist-alignment test beside the existing per-server tests, such as
 `research_allowlist_matches_actual_reads`
-(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:676@research_allowlist_matches_actual_reads`).
+(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:677@research_allowlist_matches_actual_reads`).
 
 #### 3. Declare the non-secret configuration boundary
 
@@ -271,7 +271,7 @@ sub-structure and its `mcp_env` emitter, then add that exact environment name to
 the server descriptor. Defaults belong only in `Default` implementations
 (`kask/crates/kask_bridge/src/settings.rs:30-34`). The emitted-default seam is
 pinned by `mcp_env_emits_nothing_for_default_settings`
-(`kask/crates/kask_bridge/src/mcp_env.rs:536@mcp_env_emits_nothing_for_default_settings`).
+(`kask/crates/kask_bridge/src/mcp_env.rs:548@mcp_env_emits_nothing_for_default_settings`).
 
 Do not invent a batch-size control or a second database-passphrase setting. The
 general settings expose concurrency, timeout, and circuit-breaker controls
@@ -299,7 +299,7 @@ Run the focused server tests, the bridge allowlist tests, and then
 
 The composed-path regression test is
 `build_mcp_server_env_composition_respects_allowlists`
-(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:862@build_mcp_server_env_composition_respects_allowlists`).
+(`kask/crates/kask_bridge/src/mcp_servers/tests.rs:863@build_mcp_server_env_composition_respects_allowlists`).
 
 ## Further reading
 

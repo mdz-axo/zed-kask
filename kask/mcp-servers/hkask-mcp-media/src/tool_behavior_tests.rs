@@ -2666,7 +2666,8 @@ struct IsolatedArtifacts {
 impl IsolatedArtifacts {
     async fn new() -> Self {
         let lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = crate::test_support::contained_tempdir().expect("tempdir for artifacts isolation");
+        let temp =
+            crate::test_support::contained_tempdir().expect("tempdir for artifacts isolation");
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
         Self {
