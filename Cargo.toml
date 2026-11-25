@@ -275,6 +275,7 @@ members = [
     # See kask/docs/architecture/zed-host-architecture-plan.md
     #
     "kask/crates/hkask-types",
+    "kask/crates/hkask-ipc-wire",
     "kask/crates/kask_bridge",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
@@ -996,6 +997,7 @@ hkask-nostr-signer = { path = "kask/crates/hkask-nostr-signer" }
 # policy. Isolates `lightning-invoice` (`secp256k1`) from `hkask-nostr-core`
 # and `hkask-nostr-signer`.
 hkask-wallet-core = { path = "kask/crates/hkask-wallet-core" }
+hkask-ipc-wire = { path = "kask/crates/hkask-ipc-wire" }
 
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 

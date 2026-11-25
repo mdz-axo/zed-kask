@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use hkask_types::nostr_wire::{WireEvent, truncate_chars};
+use hkask_ipc_wire::nostr_wire::{WireEvent, truncate_chars};
 use nostr_sdk::prelude::*;
 use serde_json::{Value, json};
 

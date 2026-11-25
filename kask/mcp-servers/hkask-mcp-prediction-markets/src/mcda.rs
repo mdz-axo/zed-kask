@@ -257,8 +257,8 @@ fn build_decision_state(req: &WeightScoreRequest) -> String {
 /// corrupt the join.
 fn decision_questions(
     req: &WeightScoreRequest,
-) -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
-    use hkask_types::inference_ipc::DecisionQuestion;
+) -> Vec<hkask_ipc_wire::inference_ipc::DecisionQuestion> {
+    use hkask_ipc_wire::inference_ipc::DecisionQuestion;
     let mut questions = Vec::with_capacity(req.criteria.len() * (1 + req.alternatives.len()));
     for (i, criterion) in req.criteria.iter().enumerate() {
         let kind = match criterion.r#type {
@@ -311,7 +311,7 @@ fn decision_questions(
 /// the INDEX, not the level's number in the 1-10 rubric — `usable_level`
 /// owns that renumbering. Never a fabricated value: a levelless answer
 /// reads `None` and the caller refuses naming the question.
-fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u8> {
+fn answer_level(answer: &hkask_ipc_wire::inference_ipc::DecisionAnswer) -> Option<u8> {
     if answer.level_probabilities.is_empty()
         || answer
             .level_probabilities
@@ -545,16 +545,16 @@ mod tests {
     /// An answer whose argmax sits at the 0-based criteria INDEX
     /// `argmax_index` (the wire's keying), with a second calibrated level
     /// inside the ten-item list so the argmax is a real extraction.
-    fn answer(id: &str, argmax_index: u8) -> hkask_types::inference_ipc::DecisionAnswer {
-        hkask_types::inference_ipc::DecisionAnswer {
+    fn answer(id: &str, argmax_index: u8) -> hkask_ipc_wire::inference_ipc::DecisionAnswer {
+        hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: id.to_string(),
             score: argmax_index as f64,
             level_probabilities: vec![
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: argmax_index,
                     probability: 0.8,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: if argmax_index == 9 {
                         0
                     } else {
@@ -568,7 +568,7 @@ mod tests {
     }
 
     fn batch(
-        answers: Vec<hkask_types::inference_ipc::DecisionAnswer>,
+        answers: Vec<hkask_ipc_wire::inference_ipc::DecisionAnswer>,
     ) -> hkask_types::ports::DecisionBatch {
         hkask_types::ports::DecisionBatch {
             answers,
@@ -679,19 +679,19 @@ mod tests {
     fn answer_level_takes_the_most_probable_level() {
         // The documented Jev score shape (research run b1f1663057722f5d):
         // probabilities {0: 0.0, 1: 0.79, 2: 0.21} → the argmax level is 1.
-        let answered = hkask_types::inference_ipc::DecisionAnswer {
+        let answered = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "severity".to_string(),
             score: 1.21,
             level_probabilities: vec![
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 0,
                     probability: 0.0,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 1,
                     probability: 0.79,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 2,
                     probability: 0.21,
                 },
@@ -699,7 +699,7 @@ mod tests {
             confidence: 0.69,
         };
         assert_eq!(answer_level(&answered), Some(1));
-        let levelless = hkask_types::inference_ipc::DecisionAnswer {
+        let levelless = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "q".to_string(),
             score: 0.0,
             level_probabilities: Vec::new(),
@@ -713,11 +713,11 @@ mod tests {
 
         // S075-F03: all-zero, NaN, infinite, and negative distributions must return None,
         // never fabricating level 9 (rubric 10) via Iterator::max_by's last-element tie rule.
-        let all_zero = hkask_types::inference_ipc::DecisionAnswer {
+        let all_zero = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "zeros".to_string(),
             score: 0.0,
             level_probabilities: (0..10)
-                .map(|lvl| hkask_types::inference_ipc::DecisionLevelProbability {
+                .map(|lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: lvl,
                     probability: 0.0,
                 })
@@ -726,11 +726,11 @@ mod tests {
         };
         assert_eq!(answer_level(&all_zero), None);
 
-        let all_nan = hkask_types::inference_ipc::DecisionAnswer {
+        let all_nan = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "nans".to_string(),
             score: f64::NAN,
             level_probabilities: (0..10)
-                .map(|lvl| hkask_types::inference_ipc::DecisionLevelProbability {
+                .map(|lvl| hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: lvl,
                     probability: f64::NAN,
                 })
@@ -739,15 +739,15 @@ mod tests {
         };
         assert_eq!(answer_level(&all_nan), None);
 
-        let partial_nan = hkask_types::inference_ipc::DecisionAnswer {
+        let partial_nan = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "partial_nan".to_string(),
             score: 0.5,
             level_probabilities: vec![
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 2,
                     probability: 0.8,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 9,
                     probability: f64::NAN,
                 },
@@ -757,15 +757,15 @@ mod tests {
         assert_eq!(answer_level(&partial_nan), None);
 
         // Exact probability tie breaks deterministically toward lower level without upward bias to 9.
-        let tied = hkask_types::inference_ipc::DecisionAnswer {
+        let tied = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "tied".to_string(),
             score: 0.5,
             level_probabilities: vec![
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 3,
                     probability: 0.5,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 9,
                     probability: 0.5,
                 },
@@ -791,10 +791,10 @@ mod tests {
         );
         // An index outside the ten-item criteria list is unusable — never
         // a fabricated level 11.
-        let out_of_range = batch(vec![hkask_types::inference_ipc::DecisionAnswer {
+        let out_of_range = batch(vec![hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "w_out".to_string(),
             score: 0.0,
-            level_probabilities: vec![hkask_types::inference_ipc::DecisionLevelProbability {
+            level_probabilities: vec![hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                 level: 10,
                 probability: 1.0,
             }],
@@ -847,7 +847,7 @@ mod tests {
         // Wire indices are one below the judgments (index 7 answers
         // level 8) — the renumbering mapped end-to-end.
         let mut answers = vec![answer("w0", 7), answer("w1", 2), answer("s0_0", 5)];
-        answers.push(hkask_types::inference_ipc::DecisionAnswer {
+        answers.push(hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "s1_0".to_string(),
             score: 0.0,
             level_probabilities: Vec::new(),

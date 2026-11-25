@@ -34,7 +34,7 @@ use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::id::{BoardId, TaskId};
-use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
+use hkask_ipc_wire::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use serde_json::Value;
 
 use super::types::{BoardFault, BoardListReport, KanbanError, TaskIndexFault, TaskListReport};

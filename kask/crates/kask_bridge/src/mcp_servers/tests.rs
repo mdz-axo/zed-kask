@@ -892,11 +892,11 @@ fn build_mcp_server_env_composition_respects_allowlists() {
             }
         }
         env.insert(
-            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+            hkask_ipc_wire::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
             "/tmp/sock".to_string(),
         );
         env.insert(
-            hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
+            hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
             "300".to_string(),
         );
 
@@ -907,10 +907,10 @@ fn build_mcp_server_env_composition_respects_allowlists() {
                 .copied()
                 .chain(server.credentials.iter().copied())
                 .chain(std::iter::once(
-                    hkask_types::inference_ipc::INFERENCE_SOCKET_ENV,
+                    hkask_ipc_wire::inference_ipc::INFERENCE_SOCKET_ENV,
                 ))
                 .chain(std::iter::once(
-                    hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
+                    hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV,
                 )),
         );
 
@@ -1036,7 +1036,7 @@ async fn delegated_grants_follow_settings_and_launch_lifecycle() {
     assert!(schema["properties"]["delegated_tools"].is_object());
     let first = build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
     let token = first
-        .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+        .get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV)
         .expect("token")
         .to_string();
     // The granted ceiling: a granted tool survives the narrowing
@@ -1057,13 +1057,13 @@ async fn delegated_grants_follow_settings_and_launch_lifecycle() {
     );
     let again = build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
     assert_eq!(
-        again.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
+        again.get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV),
         Some(token.as_str())
     );
     let other = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
     assert!(
         other
-            .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+            .get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV)
             .is_none()
     );
     settings.mcp.overrides.insert("kata-kanban".into(), false);
@@ -1071,7 +1071,7 @@ async fn delegated_grants_follow_settings_and_launch_lifecycle() {
     let unloaded = build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
     assert!(
         unloaded
-            .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+            .get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV)
             .is_none(),
         "observer env diff must not remint an unloaded grant"
     );
@@ -1086,7 +1086,7 @@ async fn delegated_grants_follow_settings_and_launch_lifecycle() {
     settings.mcp.overrides.insert("kata-kanban".into(), true);
     let reloaded = build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
     assert_ne!(
-        reloaded.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
+        reloaded.get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV),
         Some(token.as_str())
     );
     settings
@@ -1096,7 +1096,7 @@ async fn delegated_grants_follow_settings_and_launch_lifecycle() {
     let invalid = build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
     assert!(
         invalid
-            .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+            .get(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV)
             .is_none()
     );
     crate::revoke_delegation_grant("kata-kanban");
@@ -1548,7 +1548,7 @@ async fn build_mcp_server_env_composed_path_credential_survives_config_filter() 
     // The inference socket must also be injected (it is added last,
     // outside both filters).
     assert_eq!(
-        env.get(hkask_types::inference_ipc::INFERENCE_SOCKET_ENV),
+        env.get(hkask_ipc_wire::inference_ipc::INFERENCE_SOCKET_ENV),
         Some("/tmp/sock"),
         "inference socket must be injected into the composed env"
     );
@@ -1559,7 +1559,7 @@ async fn build_mcp_server_env_composed_path_credential_survives_config_filter() 
     // slow-but-alive provider produces a `BrokenPipe` warn storm (client
     // times out first, server's later write hits EPIPE).
     assert_eq!(
-        env.get(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV),
+        env.get(hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV),
         Some("300"),
         "inference timeout must be injected into the composed env so IPC \
          clients can align their read deadline with the server's"

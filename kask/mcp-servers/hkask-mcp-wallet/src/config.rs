@@ -158,7 +158,7 @@ impl WalletConfig {
 /// Canonical D28 path: `<data_dir>/mcp/wallet/wallet.db`.
 pub fn default_db_path() -> PathBuf {
     hkask_types::agent_paths::resolve_under_data_dir(&hkask_types::agent_paths::mcp_server_subdir(
-        hkask_types::wallet_wire::WALLET_SERVER_ID,
+        hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID,
         "wallet.db",
     ))
 }

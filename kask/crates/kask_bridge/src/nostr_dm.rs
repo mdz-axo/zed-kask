@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{AppContext as _, AsyncApp, PromptLevel};
-use hkask_types::nostr_wire::MAX_CONTENT_CHARS;
+use hkask_ipc_wire::nostr_wire::MAX_CONTENT_CHARS;
 use nostr::event::{FinalizeEvent, FinalizeUnsignedEvent};
 use nostr::nips::nip59;
 use nostr_sdk::prelude::{

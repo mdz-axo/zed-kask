@@ -1,0 +1,17 @@
+[package]
+name = "hkask-ipc-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared IPC protocol and domain wire constants/types for hKask MCP servers, panels, and bridge (Slice S7 Shape A+)."
+
+[lib]
+path = "src/hkask_ipc_wire.rs"
+
+[dependencies]
+hkask-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

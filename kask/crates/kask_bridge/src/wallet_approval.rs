@@ -22,8 +22,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use credentials_provider::CredentialsProvider;
 use gpui::{AppContext as _, AsyncApp, PromptLevel};
-use hkask_types::inference_ipc::InferenceErrorPayload;
-use hkask_types::wallet_wire::{
+use hkask_ipc_wire::inference_ipc::InferenceErrorPayload;
+use hkask_ipc_wire::wallet_wire::{
     WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
 };
 use hkask_wallet_core::{

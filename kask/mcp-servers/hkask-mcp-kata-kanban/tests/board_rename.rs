@@ -16,7 +16,7 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::WebID;
-use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
+use hkask_ipc_wire::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 

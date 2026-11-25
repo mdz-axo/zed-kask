@@ -430,7 +430,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         &'a self,
         model: &str,
         state: &str,
-        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+        questions: &[hkask_ipc_wire::inference_ipc::DecisionQuestion],
     ) -> hkask_types::DecisionFuture<'a> {
         let model = model.to_string();
         let state = state.to_string();
@@ -970,7 +970,7 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
+    use hkask_ipc_wire::inference_ipc::INFERENCE_SOCKET_ENV;
 
     /// Source pin (the D31 register style): the per-call bridge attempts
     /// route through `bridge_client_or_warn` — a raw `Some(Ok(..))`

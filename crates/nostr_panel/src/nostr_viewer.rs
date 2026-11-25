@@ -75,9 +75,9 @@ use gpui::{
 use gpui::{ImageSource, ObjectFit, RenderImage, img};
 use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media_path};
 use hkask_tool_invoker::InvokeError;
-use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
-use hkask_types::nostr_wire::{NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
-use hkask_types::wallet_wire::WALLET_SERVER_ID;
+use hkask_ipc_wire::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
+use hkask_ipc_wire::nostr_wire::{NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
+use hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID;
 use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
@@ -5398,7 +5398,7 @@ impl NostrViewer {
     fn render_messages(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_dm_view(cx).into_any_element()
     }
-    fn selected_event(&self) -> Option<hkask_types::nostr_wire::WireEvent> {
+    fn selected_event(&self) -> Option<hkask_ipc_wire::nostr_wire::WireEvent> {
         let id = self.selected.as_deref()?;
         let rows: &[Row] = match self.tab {
             ViewerTab::Timeline => self.active_timeline_feed().map(|f| f.rows.as_slice())?,
@@ -5679,7 +5679,7 @@ mod tests {
     use super::*;
     use crate::nostr_composer::PUBLISH_TOOL;
     use gpui::{TestAppContext, size};
-    use hkask_types::nostr_wire::{CLIENT_TOOL_NAMES, RELAY_TOOL_NAMES};
+    use hkask_ipc_wire::nostr_wire::{CLIENT_TOOL_NAMES, RELAY_TOOL_NAMES};
     use image::Frame;
     use std::collections::BTreeSet;
 
@@ -5739,7 +5739,7 @@ mod tests {
         assert!(CLIENT_TOOL_NAMES.contains(&BLOSSOM_ARCHIVE_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&BLOSSOM_MIRROR_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PUBLISH_TOOL));
-        assert!(hkask_types::nostr_wire::BLOSSOM_TOOL_NAMES.contains(&BLOSSOM_STATUS_TOOL));
+        assert!(hkask_ipc_wire::nostr_wire::BLOSSOM_TOOL_NAMES.contains(&BLOSSOM_STATUS_TOOL));
         assert!(
             !CLIENT_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL)
                 && !RELAY_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL),

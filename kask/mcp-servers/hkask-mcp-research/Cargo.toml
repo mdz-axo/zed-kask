@@ -53,6 +53,7 @@ html5ever.workspace = true
 encoding_rs.workspace = true
 
 [dev-dependencies]
+hkask-ipc-wire.workspace = true
 # tool_behavior.rs drives the real tool surface through Parameters<T>:
 # web_ping happy path, web_* invalid-argument and credential-missing error
 # paths, and the research-run ledger on an in-memory database.

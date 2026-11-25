@@ -17,6 +17,7 @@ path = "src/main.rs"
 hkask-bridge-ontology.workspace = true
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
 serde.workspace = true

@@ -726,7 +726,7 @@ stub_inference_port! {
     ScoringInferencePort,
     generate_msg: "stub: generate unused in rerank tests",
     rerank(self, _model, _query, _documents): {
-        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = _documents
+        let scores: Vec<hkask_ipc_wire::inference_ipc::RerankScoreEntry> = _documents
             .iter()
             .enumerate()
             .map(|(index, document)| {
@@ -737,7 +737,7 @@ stub_inference_port! {
                 } else {
                     0.10
                 };
-                hkask_types::inference_ipc::RerankScoreEntry {
+                hkask_ipc_wire::inference_ipc::RerankScoreEntry {
                     index,
                     relevance_score,
                 }
@@ -1695,7 +1695,7 @@ stub_inference_port! {
             .lock()
             .expect("models mutex")
             .push(_model.to_string());
-        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = _documents
+        let scores: Vec<hkask_ipc_wire::inference_ipc::RerankScoreEntry> = _documents
             .iter()
             .enumerate()
             .map(|(index, document)| {
@@ -1706,7 +1706,7 @@ stub_inference_port! {
                 } else {
                     0.10
                 };
-                hkask_types::inference_ipc::RerankScoreEntry {
+                hkask_ipc_wire::inference_ipc::RerankScoreEntry {
                     index,
                     relevance_score,
                 }

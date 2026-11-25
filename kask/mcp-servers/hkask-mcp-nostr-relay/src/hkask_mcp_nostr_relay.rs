@@ -49,7 +49,7 @@ mod tool_surface_tests {
     fn wire_tool_names_match_the_generated_list() {
         let mut generated: Vec<&str> = TOOL_NAMES.to_vec();
         generated.sort_unstable();
-        assert_eq!(generated, hkask_types::nostr_wire::RELAY_TOOL_NAMES);
+        assert_eq!(generated, hkask_ipc_wire::nostr_wire::RELAY_TOOL_NAMES);
     }
 
     /// No tool changes the operator's policy or removes events. A tool added

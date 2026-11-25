@@ -29,7 +29,7 @@ use crate::relays::{
     validate_relay_address,
 };
 use crate::thread::{self, MAX_THREAD_EVENTS};
-use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_TAGS_PER_EVENT, truncate_chars};
+use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, MAX_TAGS_PER_EVENT, truncate_chars};
 
 /// Events returned when the caller sets no limit.
 pub const DEFAULT_EVENTS: usize = 20;
@@ -1480,7 +1480,7 @@ impl NostrClientServer {
                         .map_err(|error| refused("quote_event_id", error))?;
                     let pubkey = identifiers::parse_public_key(raw_pk)
                         .map_err(|error| refused("quote_pubkey", error))?;
-                    Some(hkask_types::nostr_wire::NostrQuoteWire {
+                    Some(hkask_ipc_wire::nostr_wire::NostrQuoteWire {
                         event_id_hex: event_id.to_hex(),
                         author_pubkey_hex: pubkey.to_hex(),
                         relay_hint: None,
@@ -1654,7 +1654,7 @@ impl NostrClientServer {
 
             let mut archived = 0usize;
             let mut results = Vec::new();
-            for cand_chunk in candidates.chunks(hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS) {
+            for cand_chunk in candidates.chunks(hkask_ipc_wire::nostr_wire::MAX_MEDIA_ATTACHMENTS) {
                 let mut prepared = Vec::with_capacity(cand_chunk.len());
                 for cand in cand_chunk {
                     match download_and_verify_blob(
@@ -1853,7 +1853,7 @@ impl NostrClientServer {
 
             let mut mirrored = 0usize;
             let mut results = Vec::new();
-            for hash_chunk in hashes.chunks(hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS) {
+            for hash_chunk in hashes.chunks(hkask_ipc_wire::nostr_wire::MAX_MEDIA_ATTACHMENTS) {
                 let mut prepared = Vec::with_capacity(hash_chunk.len());
                 for (sha, hint_mime) in hash_chunk {
                     let url = format!("{base_url}/{sha}");
@@ -2030,7 +2030,7 @@ impl NostrClientServer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let zap_wire = hkask_types::nostr_wire::NostrZapRequestWire {
+            let zap_wire = hkask_ipc_wire::nostr_wire::NostrZapRequestWire {
                 created_at: now_secs,
                 recipient_pubkey_hex: recipient_hex.clone(),
                 amount_msat,
@@ -2122,7 +2122,7 @@ impl NostrClientServer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let nutzap_wire = hkask_types::nostr_wire::NostrNutzapWire {
+            let nutzap_wire = hkask_ipc_wire::nostr_wire::NostrNutzapWire {
                 created_at: now_secs,
                 recipient_pubkey_hex: recipient_hex.clone(),
                 mint_url: mint_url.clone(),
@@ -2181,7 +2181,7 @@ impl NostrClientServer {
                 ));
             }
             self.publish_signed_event("reaction", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_reaction(hkask_types::nostr_wire::NostrReactionWire {
+                ipc.sign_nostr_reaction(hkask_ipc_wire::nostr_wire::NostrReactionWire {
                     created_at: now_secs,
                     target_event_id_hex,
                     target_pubkey_hex,
@@ -2236,7 +2236,7 @@ impl NostrClientServer {
             let explicit_ts = request.created_at;
             let content = request.content;
             self.publish_signed_event("reply", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_reply(hkask_types::nostr_wire::NostrReplyWire {
+                ipc.sign_nostr_reply(hkask_ipc_wire::nostr_wire::NostrReplyWire {
                     created_at: explicit_ts.unwrap_or(now_secs),
                     root_event_id_hex,
                     reply_to_event_id_hex,
@@ -2287,7 +2287,7 @@ impl NostrClientServer {
             }
             let target_kind = request.target_kind;
             self.publish_signed_event("deletion request", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_deletion(hkask_types::nostr_wire::NostrDeletionWire {
+                ipc.sign_nostr_deletion(hkask_ipc_wire::nostr_wire::NostrDeletionWire {
                     created_at: now_secs,
                     target_event_ids,
                     target_kind,
@@ -2323,7 +2323,7 @@ impl NostrClientServer {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
             self.publish_signed_event("repost", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_repost(hkask_types::nostr_wire::NostrRepostWire {
+                ipc.sign_nostr_repost(hkask_ipc_wire::nostr_wire::NostrRepostWire {
                     created_at: now_secs,
                     target_event_id_hex,
                     target_pubkey_hex,
@@ -2361,7 +2361,7 @@ impl NostrClientServer {
                 }
             }
             self.publish_signed_event("follow list", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_follows(hkask_types::nostr_wire::NostrFollowsWire {
+                ipc.sign_nostr_follows(hkask_ipc_wire::nostr_wire::NostrFollowsWire {
                     created_at: now_secs,
                     followed_pubkeys_hex,
                     relays: targets,
@@ -2397,7 +2397,7 @@ impl NostrClientServer {
             let hashtags = request.hashtags.unwrap_or_default();
             let content = request.content;
             self.publish_signed_event("article", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_article(hkask_types::nostr_wire::NostrArticleWire {
+                ipc.sign_nostr_article(hkask_ipc_wire::nostr_wire::NostrArticleWire {
                     created_at: now_secs,
                     slug,
                     title,
@@ -2441,7 +2441,7 @@ impl NostrClientServer {
                 ));
             }
             self.publish_signed_event("profile", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_profile(hkask_types::nostr_wire::NostrProfileWire {
+                ipc.sign_nostr_profile(hkask_ipc_wire::nostr_wire::NostrProfileWire {
                     created_at: now_secs,
                     name: request.name,
                     display_name: request.display_name,
@@ -2495,7 +2495,7 @@ impl NostrClientServer {
             let source_url = request.source_url;
             let comment = request.comment;
             self.publish_signed_event("highlight", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_highlight(hkask_types::nostr_wire::NostrHighlightWire {
+                ipc.sign_nostr_highlight(hkask_ipc_wire::nostr_wire::NostrHighlightWire {
                     created_at: now_secs,
                     quoted_text,
                     source_event_id_hex,
@@ -2574,7 +2574,7 @@ impl NostrClientServer {
             }
             let kind = request.kind;
             self.publish_signed_event("replaceable list", |ipc, now_secs, targets| async move {
-                ipc.sign_nostr_list(hkask_types::nostr_wire::NostrListWire {
+                ipc.sign_nostr_list(hkask_ipc_wire::nostr_wire::NostrListWire {
                     created_at: now_secs,
                     kind,
                     event_ids_hex,

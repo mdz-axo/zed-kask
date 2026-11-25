@@ -31,7 +31,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hkask_types::inference_ipc::{
+use hkask_ipc_wire::inference_ipc::{
     InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
     ModelListEntry, WorktreeThreadInfo,
 };
@@ -1554,7 +1554,7 @@ async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::inference_ipc::InferenceParams;
+    use hkask_ipc_wire::inference_ipc::InferenceParams;
     use hkask_types::{
         ChatMessage, ChatToolDefinition, InferenceResult, InferenceUsage, LLMParameters,
     };

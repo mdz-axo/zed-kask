@@ -61,10 +61,10 @@ fn set_wallet_grants(settings: &mut settings::SettingsContent, enabled: bool) {
         .mcp
         .get_or_insert_default();
     let delegated = mcp.delegated_tools.get_or_insert_default();
-    let server_key = hkask_types::wallet_wire::WALLET_SERVER_ID.to_string();
+    let server_key = hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID.to_string();
     let grants = [
-        hkask_types::inference_ipc::WALLET_DB_UNLOCK_GRANT,
-        hkask_types::inference_ipc::WALLET_SPEND_APPROVE_GRANT,
+        hkask_ipc_wire::inference_ipc::WALLET_DB_UNLOCK_GRANT,
+        hkask_ipc_wire::inference_ipc::WALLET_SPEND_APPROVE_GRANT,
     ];
     if enabled {
         let list = delegated.entry(server_key).or_default();
@@ -676,11 +676,11 @@ mod tests {
             .as_ref()
             .and_then(|k| k.mcp.as_ref())
             .and_then(|m| m.delegated_tools.as_ref())
-            .and_then(|d| d.get(hkask_types::wallet_wire::WALLET_SERVER_ID))
+            .and_then(|d| d.get(hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID))
             .expect("wallet grants present");
-        assert!(grants.contains(&hkask_types::inference_ipc::WALLET_DB_UNLOCK_GRANT.to_string()));
+        assert!(grants.contains(&hkask_ipc_wire::inference_ipc::WALLET_DB_UNLOCK_GRANT.to_string()));
         assert!(
-            grants.contains(&hkask_types::inference_ipc::WALLET_SPEND_APPROVE_GRANT.to_string())
+            grants.contains(&hkask_ipc_wire::inference_ipc::WALLET_SPEND_APPROVE_GRANT.to_string())
         );
 
         set_wallet_grants(&mut settings, false);
@@ -689,7 +689,7 @@ mod tests {
             .as_ref()
             .and_then(|k| k.mcp.as_ref())
             .and_then(|m| m.delegated_tools.as_ref())
-            .and_then(|d| d.get(hkask_types::wallet_wire::WALLET_SERVER_ID));
+            .and_then(|d| d.get(hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID));
         assert!(after.is_none(), "reset removes wallet grants cleanly");
     }
 

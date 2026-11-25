@@ -18,6 +18,7 @@ serde.workspace = true
 serde_json.workspace = true
 hkask_tool_invoker.workspace = true
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 ui.workspace = true
 tracing.workspace = true
 

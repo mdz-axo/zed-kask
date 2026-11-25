@@ -30,7 +30,7 @@
 //!   sort.
 
 use futures_util::StreamExt;
-use hkask_types::inference_ipc::RerankScoreEntry;
+use hkask_ipc_wire::inference_ipc::RerankScoreEntry;
 
 static RERANK_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 

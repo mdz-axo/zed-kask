@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use hkask_mcp_wallet::approval::{ApprovalError, ApprovalPort};
 use hkask_mcp_wallet::config::WalletConfig;
 use hkask_mcp_wallet::engine::{HttpConnectorFactory, WalletEngine, WalletError};
-use hkask_types::wallet_wire::{
+use hkask_ipc_wire::wallet_wire::{
     WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
 };
 use hkask_wallet_core::{WalletNetwork, decode_bolt11, sha256_hex};

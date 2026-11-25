@@ -13,7 +13,7 @@
 //! for the operator's approval, removed only by the operator's own
 //! autopublish switch (off by default). No key reaches this panel or
 //! either server. The panel links neither server. Their ids, tool names
-//! and event shape come from `hkask_types::nostr_wire`, pinned against
+//! and event shape come from `hkask_ipc_wire::nostr_wire`, pinned against
 //! each server's own list by a test in that server.
 //!
 //! Both servers are refused on privacy-marked threads by default, so a
@@ -33,7 +33,7 @@ use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Task, WeakEntity,
     Window, actions,
 };
-use hkask_types::nostr_wire::{BLOSSOM_TOOL_NAMES, CLIENT_TOOL_NAMES, RELAY_TOOL_NAMES};
+use hkask_ipc_wire::nostr_wire::{BLOSSOM_TOOL_NAMES, CLIENT_TOOL_NAMES, RELAY_TOOL_NAMES};
 use ui::{Icon, IconName, prelude::*};
 use util::ResultExt as _;
 use workspace::{

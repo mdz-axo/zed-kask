@@ -53,6 +53,7 @@ hkask-nostr-signer.workspace = true
 hkask-wallet-core.workspace = true
 # The sign grant's name and the client server's id, written by the Key block.
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 zeroize.workspace = true
 language.workspace = true
 language_model.workspace = true

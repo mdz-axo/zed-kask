@@ -41,7 +41,7 @@ use hkask_mcp_wallet::approval::{ApprovalError, ApprovalPort};
 use hkask_mcp_wallet::config::WalletConfig;
 use hkask_mcp_wallet::engine::{ConnectorFactory, WalletEngine, WalletError};
 use hkask_mcp_wallet::storage::{SqlcipherConfig, SqlcipherConnectionManager};
-use hkask_types::wallet_wire::{
+use hkask_ipc_wire::wallet_wire::{
     WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
 };
 use hkask_wallet_core::WalletNetwork;

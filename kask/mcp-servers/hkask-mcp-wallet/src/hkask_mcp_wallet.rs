@@ -77,7 +77,7 @@ mod tool_surface_tests {
     fn wire_tool_names_match_the_generated_list() {
         assert_eq!(
             TOOL_NAMES,
-            hkask_types::wallet_wire::WALLET_TOOL_NAMES,
+            hkask_ipc_wire::wallet_wire::WALLET_TOOL_NAMES,
             "hkask-types::wallet_wire::WALLET_TOOL_NAMES must match the generated TOOL_NAMES"
         );
     }

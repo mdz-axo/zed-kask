@@ -26,7 +26,7 @@ use cdk::wallet::{
 };
 use cdk_common::database::WalletDatabase;
 use cdk_common::nut00::KnownMethod;
-use hkask_types::wallet_wire::{
+use hkask_ipc_wire::wallet_wire::{
     WalletNwcOperationWire, WalletNwcResultWire, WalletSpendRequestWire,
 };
 use hkask_wallet_core::{

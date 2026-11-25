@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use hkask_types::nostr_wire::NOSTR_BLOSSOM_SERVER;
+use hkask_ipc_wire::nostr_wire::NOSTR_BLOSSOM_SERVER;
 use serde::Serialize;
 
 /// Default disk quota for local Blossom blobs: 10 GiB. `0` disables the quota.

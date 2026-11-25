@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 use credentials_provider::CredentialsProvider;
 use gpui::{AppContext as _, AsyncApp, PromptLevel};
-use hkask_types::inference_ipc::InferenceErrorPayload;
-use hkask_types::nostr_wire::{
+use hkask_ipc_wire::inference_ipc::InferenceErrorPayload;
+use hkask_ipc_wire::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
     NostrArticleWire, NostrDeletionWire, NostrFollowsWire, NostrHighlightWire, NostrListWire,
     NostrMediaAttachment, NostrNutzapWire, NostrProfileWire, NostrQuoteWire, NostrReactionWire,
@@ -1749,7 +1749,7 @@ mod tests {
             expiration: 1_700_000_300,
             server_domains: vec!["blossom.primal.net".to_string()],
             server_urls: vec!["https://blossom.primal.net".to_string()],
-            blobs: vec![hkask_types::nostr_wire::BlossomBlobSummary {
+            blobs: vec![hkask_ipc_wire::nostr_wire::BlossomBlobSummary {
                 path: "/tmp/clip.mp4".to_string(),
                 mime_type: "video/mp4".to_string(),
                 sha256: "a".repeat(64),

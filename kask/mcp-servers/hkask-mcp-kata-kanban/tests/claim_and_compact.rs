@@ -534,7 +534,7 @@ async fn board_list_shows_which_boards_gate_done_behind_verification() {
     create_board(&server, "ordinary", false).await;
     for (name, gate) in [
         ("gated", Some(true)),
-        (hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME, None),
+        (hkask_ipc_wire::kanban_wire::ALGEDONIC_BOARD_NAME, None),
     ] {
         server
             .kanban_board_create(Parameters(BoardCreateRequest {
@@ -565,7 +565,7 @@ async fn board_list_shows_which_boards_gate_done_behind_verification() {
     assert_eq!(gate_of("ordinary"), None, "{listed}");
     assert_eq!(gate_of("gated"), Some(serde_json::Value::Bool(true)));
     assert_eq!(
-        gate_of(hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME),
+        gate_of(hkask_ipc_wire::kanban_wire::ALGEDONIC_BOARD_NAME),
         Some(serde_json::Value::Bool(true))
     );
 }

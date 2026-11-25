@@ -53,7 +53,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, LLMParameters};
+use hkask_types::{
+    ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, LLMParameters,
+};
 
 /// Environment variable name for the Unix socket path.
 pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
@@ -401,7 +403,7 @@ pub enum InferenceOutcome {
         /// Exact model identity returned by the provider, when present.
         actual_model: Option<String>,
         /// Token usage the provider reported for the embedding call.
-        usage: crate::ports::InferenceUsage,
+        usage: hkask_types::ports::InferenceUsage,
     },
     /// Model list from `InferenceMethod::ListModels`.
     ModelList {
@@ -420,7 +422,7 @@ pub enum InferenceOutcome {
         #[serde(rename = "rerank_scores")]
         scores: Vec<RerankScoreEntry>,
         /// Token usage the provider reported for the rerank call.
-        usage: crate::ports::InferenceUsage,
+        usage: hkask_types::ports::InferenceUsage,
     },
     /// Typed answers from `InferenceMethod::Decision`. One entry per
     /// question the provider answered, keyed by the caller's question id.
@@ -432,7 +434,7 @@ pub enum InferenceOutcome {
         #[serde(rename = "decision_model")]
         model: String,
         /// Token usage the provider reported for the decision call.
-        usage: crate::ports::InferenceUsage,
+        usage: hkask_types::ports::InferenceUsage,
     },
     /// The signed event from `InferenceMethod::SignNostrNote`: the NIP-01
     /// event object (`id`, `pubkey`, `created_at`, `kind`, `tags`,
@@ -468,60 +470,9 @@ pub enum InferenceOutcome {
     },
 }
 
-/// A single reranked document's score — the provider's native relevance
-/// judgment, not a parsed LLM generation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RerankScoreEntry {
-    /// Index of the document in the original input list.
-    pub index: usize,
-    /// Relevance score of the document to the query (provider-scaled,
-    /// typically 0.0-1.0).
-    pub relevance_score: f64,
-}
-
-/// A typed score question for `InferenceMethod::Decision` — the Jev-class
-/// "Score" primitive: an instruction plus an ordered array of level
-/// descriptions (least to most), answered with a probability distribution
-/// over the levels plus a confidence. The question id is never sent to the
-/// model (the provider's contract — all meaning lives in the instructions
-/// and the level descriptions).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DecisionQuestion {
-    /// Caller-side question key — the answer returns under this key.
-    pub id: String,
-    /// The question text, including any criteria context the levels need.
-    pub instructions: String,
-    /// Ordered level descriptions, least to most (the score scale).
-    pub criteria: Vec<String>,
-}
-
-/// One level's probability from a decision answer — the parsed form of the
-/// provider's string-keyed `probabilities` map (`{"0": 0.79, ...}`),
-/// decoded once at the zed side (the one decode home).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DecisionLevelProbability {
-    /// The level's index into the question's `criteria`.
-    pub level: u8,
-    /// The calibrated probability the model assigns to that level.
-    pub probability: f64,
-}
-
-/// A typed answer to one `DecisionQuestion` — the provider's native
-/// judgment (a probability distribution over the caller's own levels),
-/// not a parsed LLM generation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DecisionAnswer {
-    /// The question key the answer belongs to.
-    pub id: String,
-    /// The probability-weighted score over the levels (the provider's
-    /// `score` field — e.g. 1.21 for mostly-level-1 with some level-2).
-    pub score: f64,
-    /// The probability distribution over the question's criteria levels.
-    pub level_probabilities: Vec<DecisionLevelProbability>,
-    /// The concentration of the distribution (0.0-1.0) — how unambiguous
-    /// the model's judgment is (not its correctness).
-    pub confidence: f64,
-}
+pub use hkask_types::ports::{
+    DecisionAnswer, DecisionLevelProbability, DecisionQuestion, RerankScoreEntry,
+};
 
 /// A model entry in a `ListModels` response — a serializable subset of
 /// zed's `LanguageModel` trait surface, carrying the fields the corpus

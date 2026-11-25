@@ -402,9 +402,9 @@ pub const LOCAL_RELAY_ANNOUNCEMENT_FILE: &str = "listener.json";
 
 /// Where the relay announces its listener, relative to the data directory:
 /// `mcp/nostr-relay/listener.json`. Resolve it with
-/// [`crate::agent_paths::resolve_under_data_dir`].
+/// [`hkask_types::agent_paths::resolve_under_data_dir`].
 pub fn local_relay_announcement_path() -> PathBuf {
-    crate::agent_paths::mcp_server_subdir(NOSTR_RELAY_SERVER, LOCAL_RELAY_ANNOUNCEMENT_FILE)
+    hkask_types::agent_paths::mcp_server_subdir(NOSTR_RELAY_SERVER, LOCAL_RELAY_ANNOUNCEMENT_FILE)
 }
 
 /// What the relay writes when its listener is up. The client does not trust
@@ -418,9 +418,9 @@ pub struct LocalRelayAnnouncement {
 
 /// Where the Blossom sidecar announces its listener, relative to the data
 /// directory: `mcp/nostr-blossom/listener.json`. Resolve it with
-/// [`crate::agent_paths::resolve_under_data_dir`].
+/// [`hkask_types::agent_paths::resolve_under_data_dir`].
 pub fn local_blossom_announcement_path() -> PathBuf {
-    crate::agent_paths::mcp_server_subdir(NOSTR_BLOSSOM_SERVER, LOCAL_RELAY_ANNOUNCEMENT_FILE)
+    hkask_types::agent_paths::mcp_server_subdir(NOSTR_BLOSSOM_SERVER, LOCAL_RELAY_ANNOUNCEMENT_FILE)
 }
 
 /// What the Blossom sidecar writes when its listener is up. The client

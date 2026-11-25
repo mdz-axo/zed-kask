@@ -9,7 +9,7 @@
 use gpui::{
     AnyElement, Context, Entity, EventEmitter, Focusable, IntoElement, Render, Task, Window,
 };
-use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, NOSTR_CLIENT_SERVER};
+use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, NOSTR_CLIENT_SERVER};
 use kask_bridge::KaskSettings;
 use serde_json::json;
 use settings::Settings as _;

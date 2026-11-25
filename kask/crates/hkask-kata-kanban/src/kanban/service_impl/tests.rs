@@ -7,7 +7,7 @@ use crate::kanban::{
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
-use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
+use hkask_ipc_wire::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 
 use super::kata::KataStateUpdate;
 use super::types::KanbanError;

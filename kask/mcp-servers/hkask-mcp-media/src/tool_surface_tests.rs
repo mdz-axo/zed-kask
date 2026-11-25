@@ -25,7 +25,7 @@ hkask_mcp_server::tool_surface_pin!(
 /// server. That name must be this server's own.
 #[test]
 fn wire_tool_name_is_the_servers_own() {
-    assert!(TOOL_NAMES.contains(&hkask_types::media_wire::MEDIA_FETCH_IMAGE_TOOL));
+    assert!(TOOL_NAMES.contains(&hkask_ipc_wire::media_wire::MEDIA_FETCH_IMAGE_TOOL));
 }
 
 /// `media_panel` reads `hkask_media::wire::MEDIA_TOOL_NAMES` so it does not
@@ -52,7 +52,7 @@ fn the_fetch_description_states_the_network_contact() {
     let tool = router
         .list_all()
         .into_iter()
-        .find(|tool| tool.name == hkask_types::media_wire::MEDIA_FETCH_IMAGE_TOOL)
+        .find(|tool| tool.name == hkask_ipc_wire::media_wire::MEDIA_FETCH_IMAGE_TOOL)
         .expect("media_fetch_image is registered");
     assert!(
         tool.description

@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use hkask_types::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
+use hkask_ipc_wire::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
 use http_body::{Body, Frame};
 use hyper::body::Incoming;
 use hyper::header::{

@@ -15,7 +15,7 @@ use hkask_mcp_nostr_blossom::start_with;
 use hkask_mcp_nostr_blossom::storage::BlobStore;
 use hkask_mcp_test_support::{Parameters, parse_envelope};
 use hkask_nostr_core::encode_npub;
-use hkask_types::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
+use hkask_ipc_wire::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
 use hkask_types::{McpErrorKind, WebID};
 use sha2::{Digest, Sha256};
 

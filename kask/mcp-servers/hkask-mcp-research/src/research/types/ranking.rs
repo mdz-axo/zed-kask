@@ -441,7 +441,7 @@ pub(crate) async fn llm_rerank(
 mod rerank_tests {
     use super::*;
     use hkask_types::RerankFuture;
-    use hkask_types::inference_ipc::RerankScoreEntry;
+    use hkask_ipc_wire::inference_ipc::RerankScoreEntry;
     use hkask_types::{InferenceError, InferencePort, InferenceResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -6,7 +6,7 @@
 //! the inference IPC wire (`kask_bridge/src/nostr_signing.rs`) for operator
 //! approval before touching the keychain.
 
-use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, WireEvent};
+use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS, WireEvent};
 use serde_json::Value;
 
 /// The MCP tool on `hkask-mcp-nostr-client` that publishes a `kind: 1` note
@@ -929,8 +929,8 @@ impl ComposerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::nostr_wire::CLIENT_TOOL_NAMES;
-    use hkask_types::wallet_wire::WALLET_TOOL_NAMES;
+    use hkask_ipc_wire::nostr_wire::CLIENT_TOOL_NAMES;
+    use hkask_ipc_wire::wallet_wire::WALLET_TOOL_NAMES;
 
     #[test]
     fn publish_tool_is_pinned_to_client_server() {

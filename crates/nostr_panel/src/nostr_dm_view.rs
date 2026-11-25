@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use gpui::{
     AnyElement, Context, Entity, Focusable, IntoElement, Render, ScrollHandle, Task, Window,
 };
-use hkask_types::nostr_wire::NOSTR_CLIENT_SERVER;
+use hkask_ipc_wire::nostr_wire::NOSTR_CLIENT_SERVER;
 use kask_bridge::KaskSettings;
 use kask_bridge::nostr_dm::{self, DmMessage, DmThreadSummary};
 use serde_json::json;

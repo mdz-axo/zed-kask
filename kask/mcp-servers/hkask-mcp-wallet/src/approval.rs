@@ -6,7 +6,7 @@
 //! implementation to test approved, declined, and cap-exceeded flows.
 
 use async_trait::async_trait;
-use hkask_types::wallet_wire::{
+use hkask_ipc_wire::wallet_wire::{
     WalletNwcOperationWire, WalletNwcResultWire, WalletSpendApprovalWire, WalletSpendRequestWire,
 };
 use thiserror::Error;

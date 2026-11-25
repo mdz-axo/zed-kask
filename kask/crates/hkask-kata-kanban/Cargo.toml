@@ -11,6 +11,7 @@ path = "src/hkask_kata_kanban.rs"
 
 [dependencies]
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 hkask-storage.workspace = true
 hkask-forecast.workspace = true
 hkask-bridge-ontology.workspace = true

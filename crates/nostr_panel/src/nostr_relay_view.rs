@@ -7,8 +7,8 @@
 //! `nostr_relay_sync` without owning relay-tab internals.
 
 use gpui::{AnyElement, Context, Entity, EventEmitter, IntoElement, Render, ScrollHandle, Window};
-use hkask_types::nostr_wire::{NOSTR_BLOSSOM_SERVER, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
-use hkask_types::wallet_wire::WALLET_SERVER_ID;
+use hkask_ipc_wire::nostr_wire::{NOSTR_BLOSSOM_SERVER, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER};
+use hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID;
 use kask_bridge::{KaskSettings, nostr_dm};
 use serde_json::{Value, json};
 use settings::Settings as _;

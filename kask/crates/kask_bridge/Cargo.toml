@@ -16,6 +16,7 @@ path = "src/kask_bridge.rs"
 # adapts (re-anchored 2026-11-07, dual-axis review B3: the old "port
 # traits only" header misdescribed its own list).
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 hkask-bridge-ontology.workspace = true
 
 hkask-memory.workspace = true

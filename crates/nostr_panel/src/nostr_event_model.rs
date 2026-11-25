@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use gpui::{RenderImage, SharedString};
-use hkask_types::nostr_wire::WireEvent;
+use hkask_ipc_wire::nostr_wire::WireEvent;
 use image::Frame;
 use serde::Deserialize;
 use serde_json::Value;
@@ -519,7 +519,7 @@ pub(crate) fn media_all_of(event: &WireEvent) -> Vec<MediaAttachment> {
     let mut seen_urls = HashSet::new();
 
     for tag in &event.tags {
-        if results.len() >= hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS {
+        if results.len() >= hkask_ipc_wire::nostr_wire::MAX_MEDIA_ATTACHMENTS {
             break;
         }
         if tag.first().map(String::as_str) != Some("imeta") {
@@ -573,7 +573,7 @@ pub(crate) fn media_all_of(event: &WireEvent) -> Vec<MediaAttachment> {
     }
 
     for link in extract_links(&event.content) {
-        if results.len() >= hkask_types::nostr_wire::MAX_MEDIA_ATTACHMENTS {
+        if results.len() >= hkask_ipc_wire::nostr_wire::MAX_MEDIA_ATTACHMENTS {
             break;
         }
         if let Some(kind) = classify_media_url(&link.url, None)

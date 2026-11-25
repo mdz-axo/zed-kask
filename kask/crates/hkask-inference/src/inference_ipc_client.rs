@@ -52,7 +52,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::FutureExt;
-use hkask_types::inference_ipc::{
+use hkask_ipc_wire::inference_ipc::{
     INFERENCE_SOCKET_ENV, InferenceMethod, InferenceOutcome, InferenceParams, InferenceRequest,
     InferenceResponse,
 };
@@ -167,12 +167,12 @@ const IPC_READ_TIMEOUT_FALLBACK: std::time::Duration = std::time::Duration::from
 /// value (see `.rules` — "Numeric env vars that fail to parse must `log::warn!`
 /// naming the malformed value, not silently fall back").
 fn ipc_read_timeout() -> std::time::Duration {
-    match std::env::var(hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV) {
+    match std::env::var(hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV) {
         Ok(raw) if !raw.is_empty() => match raw.parse::<u64>() {
             Ok(0) => {
                 tracing::warn!(
                     target: "hkask.inference",
-                    env_var = hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
+                    env_var = hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV,
                     raw = %raw,
                     "HKASK_INFERENCE_TIMEOUT_SECS is 0 — using fallback {}s \
                      (0 means disable on the server side and is not a valid client \
@@ -185,7 +185,7 @@ fn ipc_read_timeout() -> std::time::Duration {
             Err(_) => {
                 tracing::warn!(
                     target: "hkask.inference",
-                    env_var = hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV,
+                    env_var = hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV,
                     raw = %raw,
                     "HKASK_INFERENCE_TIMEOUT_SECS is not a valid u64 — using fallback \
                      {}s",
@@ -529,7 +529,7 @@ impl InferenceIpcClient {
     /// List available models from zed's `LanguageModelRegistry` via the IPC bridge.
     async fn call_list_models(
         &self,
-    ) -> Result<Vec<hkask_types::inference_ipc::ModelListEntry>, InferenceError> {
+    ) -> Result<Vec<hkask_ipc_wire::inference_ipc::ModelListEntry>, InferenceError> {
         let method = InferenceMethod::ListModels;
         let response = self
             .ipc_roundtrip(&method, InferenceParams::default())
@@ -588,7 +588,7 @@ impl InferenceIpcClient {
         &self,
         model: &str,
         state: &str,
-        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+        questions: &[hkask_ipc_wire::inference_ipc::DecisionQuestion],
     ) -> Result<hkask_types::ports::DecisionBatch, InferenceError> {
         let method = InferenceMethod::Decision;
         let params = InferenceParams {
@@ -618,7 +618,7 @@ impl InferenceIpcClient {
         &self,
         model: &str,
         state: &str,
-        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+        questions: &[hkask_ipc_wire::inference_ipc::DecisionQuestion],
     ) -> Result<hkask_types::ports::DecisionBatch, InferenceError> {
         if state.trim().is_empty() {
             return Err(InferenceError::Generation(
@@ -645,10 +645,10 @@ impl InferenceIpcClient {
         worktree_name: Option<&str>,
         base_ref: Option<&str>,
         allowed_tools: &[String],
-    ) -> Result<hkask_types::inference_ipc::WorktreeThreadInfo, InferenceError> {
+    ) -> Result<hkask_ipc_wire::inference_ipc::WorktreeThreadInfo, InferenceError> {
         let method = InferenceMethod::CreateWorktreeThread;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             tool_allowlist: Some(allowed_tools.to_vec()),
             worktree_prompt: Some(prompt.to_string()),
             worktree_title: Some(title.to_string()),
@@ -682,7 +682,7 @@ impl InferenceIpcClient {
         content: &str,
         created_at: u64,
         relays: &[String],
-        imeta: &[hkask_types::nostr_wire::NostrMediaAttachment],
+        imeta: &[hkask_ipc_wire::nostr_wire::NostrMediaAttachment],
     ) -> Result<serde_json::Value, InferenceError> {
         self.sign_nostr_note_with_imeta_and_quote(content, created_at, relays, imeta, None)
             .await
@@ -695,12 +695,12 @@ impl InferenceIpcClient {
         content: &str,
         created_at: u64,
         relays: &[String],
-        imeta: &[hkask_types::nostr_wire::NostrMediaAttachment],
-        quote: Option<&hkask_types::nostr_wire::NostrQuoteWire>,
+        imeta: &[hkask_ipc_wire::nostr_wire::NostrMediaAttachment],
+        quote: Option<&hkask_ipc_wire::nostr_wire::NostrQuoteWire>,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrNote;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_content: Some(content.to_string()),
             nostr_created_at: Some(created_at),
             nostr_relays: Some(relays.to_vec()),
@@ -723,11 +723,11 @@ impl InferenceIpcClient {
         expiration: u64,
         server_domains: &[String],
         server_urls: &[String],
-        blobs: &[hkask_types::nostr_wire::BlossomBlobSummary],
+        blobs: &[hkask_ipc_wire::nostr_wire::BlossomBlobSummary],
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignBlossomUpload;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_created_at: Some(created_at),
             nostr_relays: Some(server_urls.to_vec()),
             blossom_expiration: Some(expiration),
@@ -748,7 +748,7 @@ impl InferenceIpcClient {
     pub async fn wallet_db_unlock(&self) -> Result<(String, String), InferenceError> {
         let method = InferenceMethod::WalletDbUnlock;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             ..Default::default()
         };
         let response = self.ipc_roundtrip(&method, params).await?;
@@ -765,11 +765,11 @@ impl InferenceIpcClient {
     /// reservation for one bounded payment intent (D110).
     pub async fn wallet_spend_approve(
         &self,
-        request: hkask_types::wallet_wire::WalletSpendRequestWire,
-    ) -> Result<hkask_types::wallet_wire::WalletSpendApprovalWire, InferenceError> {
+        request: hkask_ipc_wire::wallet_wire::WalletSpendRequestWire,
+    ) -> Result<hkask_ipc_wire::wallet_wire::WalletSpendApprovalWire, InferenceError> {
         let method = InferenceMethod::WalletSpendApprove;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             wallet_spend_request: Some(request),
             ..Default::default()
         };
@@ -785,11 +785,11 @@ impl InferenceIpcClient {
     /// editor keychain (D110 Phase 3).
     pub async fn wallet_nwc_query(
         &self,
-        operation: hkask_types::wallet_wire::WalletNwcOperationWire,
-    ) -> Result<hkask_types::wallet_wire::WalletNwcResultWire, InferenceError> {
+        operation: hkask_ipc_wire::wallet_wire::WalletNwcOperationWire,
+    ) -> Result<hkask_ipc_wire::wallet_wire::WalletNwcResultWire, InferenceError> {
         let method = InferenceMethod::WalletNwcQuery;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             wallet_nwc_query: Some(operation),
             ..Default::default()
         };
@@ -804,11 +804,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_zap`; never bypassed by `autopublish`.
     pub async fn sign_nostr_zap_request(
         &self,
-        payload: hkask_types::nostr_wire::NostrZapRequestWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrZapRequestWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrZapRequest;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_zap_request: Some(payload),
             ..Default::default()
         };
@@ -823,11 +823,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_zap`; never bypassed by `autopublish`.
     pub async fn sign_nostr_nutzap(
         &self,
-        payload: hkask_types::nostr_wire::NostrNutzapWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrNutzapWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrNutzap;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_nutzap: Some(payload),
             ..Default::default()
         };
@@ -842,11 +842,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note`.
     pub async fn sign_nostr_reaction(
         &self,
-        payload: hkask_types::nostr_wire::NostrReactionWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrReactionWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrReaction;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_reaction: Some(payload),
             ..Default::default()
         };
@@ -861,11 +861,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note` and always requires native confirmation.
     pub async fn sign_nostr_deletion(
         &self,
-        payload: hkask_types::nostr_wire::NostrDeletionWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrDeletionWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrDeletion;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_deletion: Some(payload),
             ..Default::default()
         };
@@ -880,11 +880,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note`.
     pub async fn sign_nostr_repost(
         &self,
-        payload: hkask_types::nostr_wire::NostrRepostWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrRepostWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrRepost;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_repost: Some(payload),
             ..Default::default()
         };
@@ -899,11 +899,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note` and always requires native confirmation.
     pub async fn sign_nostr_follows(
         &self,
-        payload: hkask_types::nostr_wire::NostrFollowsWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrFollowsWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrFollows;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_follows: Some(payload),
             ..Default::default()
         };
@@ -918,11 +918,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note` and always requires native confirmation.
     pub async fn sign_nostr_article(
         &self,
-        payload: hkask_types::nostr_wire::NostrArticleWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrArticleWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrArticle;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_article: Some(payload),
             ..Default::default()
         };
@@ -935,11 +935,11 @@ impl InferenceIpcClient {
 
     pub async fn sign_nostr_profile(
         &self,
-        payload: hkask_types::nostr_wire::NostrProfileWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrProfileWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrProfile;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_profile: Some(payload),
             ..Default::default()
         };
@@ -952,11 +952,11 @@ impl InferenceIpcClient {
 
     pub async fn sign_nostr_highlight(
         &self,
-        payload: hkask_types::nostr_wire::NostrHighlightWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrHighlightWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrHighlight;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_highlight: Some(payload),
             ..Default::default()
         };
@@ -971,11 +971,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note` and always requires native confirmation.
     pub async fn sign_nostr_list(
         &self,
-        payload: hkask_types::nostr_wire::NostrListWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrListWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrList;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_list: Some(payload),
             ..Default::default()
         };
@@ -990,11 +990,11 @@ impl InferenceIpcClient {
     /// Gated by `host/sign_nostr_note`.
     pub async fn sign_nostr_reply(
         &self,
-        payload: hkask_types::nostr_wire::NostrReplyWire,
+        payload: hkask_ipc_wire::nostr_wire::NostrReplyWire,
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::SignNostrReply;
         let params = InferenceParams {
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            tool_grant: std::env::var(hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV).ok(),
             nostr_reply: Some(payload),
             ..Default::default()
         };
@@ -1121,7 +1121,7 @@ impl InferencePort for InferenceIpcClient {
         &'a self,
         model: &str,
         state: &str,
-        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+        questions: &[hkask_ipc_wire::inference_ipc::DecisionQuestion],
     ) -> hkask_types::DecisionFuture<'a> {
         let model = model.to_string();
         let state = state.to_string();
@@ -1230,7 +1230,7 @@ mod tests {
             InferenceError::Timeout("admission deadline".into()),
             InferenceError::Overloaded("not dispatched".into()),
         ] {
-            let payload: hkask_types::inference_ipc::InferenceErrorPayload = error.into();
+            let payload: hkask_ipc_wire::inference_ipc::InferenceErrorPayload = error.into();
             let expected = payload.code.clone();
             let directory = tempfile::tempdir().expect("tempdir");
             let path = directory.path().join("deadline.sock");
@@ -1324,7 +1324,7 @@ mod tests {
         let bridge = TestBridge::with_response(
             response_line(
                 InferenceOutcome::Error {
-                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                    error: hkask_ipc_wire::inference_ipc::InferenceErrorPayload {
                         code: "Json".into(),
                         message: "malformed embedding payload".into(),
                         status: None,
@@ -1354,7 +1354,7 @@ mod tests {
         let bridge = TestBridge::with_response(
             response_line(
                 InferenceOutcome::Error {
-                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                    error: hkask_ipc_wire::inference_ipc::InferenceErrorPayload {
                         code: "Api".into(),
                         message: "rate limited".into(),
                         status: Some(429),
@@ -1388,7 +1388,7 @@ mod tests {
         let bridge = TestBridge::with_response(
             response_line(
                 InferenceOutcome::Error {
-                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                    error: hkask_ipc_wire::inference_ipc::InferenceErrorPayload {
                         code: "NotConfigured".into(),
                         message: "DEEPINFRA_API_KEY not set".into(),
                         status: None,

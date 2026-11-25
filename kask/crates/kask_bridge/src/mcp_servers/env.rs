@@ -89,7 +89,7 @@ pub(crate) fn default_server_webid(server_id: &str) -> Option<hkask_types::WebID
 
 /// `stream_completion` establishment deadline to child-process IPC clients so
 /// they can align their read deadline; see
-/// `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV`.
+/// `hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV`.
 pub async fn build_mcp_server_env_with_sweep(
     server_id: &str,
     settings: &crate::KaskSettings,
@@ -128,7 +128,7 @@ pub async fn build_mcp_server_env_with_sweep(
         .unwrap_or_default();
     if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, &tools) {
         env.insert(
-            hkask_types::inference_ipc::TOOL_GRANT_ENV.to_string(),
+            hkask_ipc_wire::inference_ipc::TOOL_GRANT_ENV.to_string(),
             grant,
         );
     }
@@ -253,7 +253,7 @@ pub async fn build_mcp_server_env_with_sweep(
     //    inference through zed's LanguageModelRegistry over the IPC bridge.
     if let Some(socket) = inference_socket {
         env.insert(
-            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+            hkask_ipc_wire::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
             socket.to_string(),
         );
     }
@@ -267,7 +267,7 @@ pub async fn build_mcp_server_env_with_sweep(
     //    server, so a timed-out inference produces one timeout (the server's).
     if let Some(secs) = inference_timeout_secs {
         env.insert(
-            hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
+            hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV.to_string(),
             secs.to_string(),
         );
     }

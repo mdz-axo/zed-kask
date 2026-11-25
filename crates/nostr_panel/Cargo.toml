@@ -30,6 +30,7 @@ image.workspace = true
 # neither server: the relay brings an LMDB store and an HTTP listener, the
 # client a relay client, and neither belongs in the editor process.
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 # Pure Nostr event & NIP-57 zap verification (no secret keys, no network).
 hkask-nostr-core.workspace = true
 # The reader's own identity (`kask.nostr.npub`), read from the live

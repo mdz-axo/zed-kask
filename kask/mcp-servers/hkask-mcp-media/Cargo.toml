@@ -55,6 +55,7 @@ regex.workspace = true
 workspace = true
 
 [dev-dependencies]
+hkask-ipc-wire.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = { workspace = true }
 hkask-keystore.workspace = true

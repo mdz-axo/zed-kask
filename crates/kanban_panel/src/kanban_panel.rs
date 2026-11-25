@@ -36,7 +36,7 @@ use hkask_kanban_widget::view::KanbanWidget;
 use hkask_steer::{SteerContext, SteerSurface};
 use hkask_tool_invoker::shared_tool_invoker;
 use hkask_types::BlockProvenance;
-use hkask_types::kanban_wire::{KANBAN_BOARD_NAME_MAX_CHARS, KANBAN_SERVER_NAME};
+use hkask_ipc_wire::kanban_wire::{KANBAN_BOARD_NAME_MAX_CHARS, KANBAN_SERVER_NAME};
 use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;
@@ -67,7 +67,7 @@ use task_actions::{
     render_rename_board_form, render_spawn_task_form,
 };
 
-/// The MCP server id (matches `KANBAN_SERVER_NAME` in `hkask_types::kanban_wire`).
+/// The MCP server id (matches `KANBAN_SERVER_NAME` in `hkask_ipc_wire::kanban_wire`).
 const KANBAN_SERVER: &str = KANBAN_SERVER_NAME;
 
 /// The tool name for listing boards.

@@ -16,7 +16,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::time::Duration;
 
-use hkask_types::nostr_wire::LocalRelayAnnouncement;
+use hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement;
 
 use nostr_sdk::prelude::*;
 use serde_json::{Value, json};

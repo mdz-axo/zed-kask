@@ -147,10 +147,10 @@ impl Config {
             .with_blossom_servers(blossom_servers.as_deref())
             .with_blossom_public_url(blossom_public_url.as_deref())
             .with_local_relay_announcement(hkask_types::agent_paths::resolve_under_data_dir(
-                &hkask_types::nostr_wire::local_relay_announcement_path(),
+                &hkask_ipc_wire::nostr_wire::local_relay_announcement_path(),
             ))
             .with_local_blossom_announcement(hkask_types::agent_paths::resolve_under_data_dir(
-                &hkask_types::nostr_wire::local_blossom_announcement_path(),
+                &hkask_ipc_wire::nostr_wire::local_blossom_announcement_path(),
             ))
     }
 }

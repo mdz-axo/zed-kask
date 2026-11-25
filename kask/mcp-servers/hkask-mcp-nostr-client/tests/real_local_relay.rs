@@ -26,7 +26,7 @@ use hkask_mcp_nostr_relay::server::{
 };
 use hkask_mcp_test_support::invoke_tool;
 use hkask_types::WebID;
-use hkask_types::nostr_wire::WireEvent;
+use hkask_ipc_wire::nostr_wire::WireEvent;
 use nostr_sdk::prelude::*;
 
 fn note(keys: &Keys, at: u64, text: &str, tags: &[&[&str]]) -> Event {

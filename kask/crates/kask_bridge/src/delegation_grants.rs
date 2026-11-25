@@ -8,15 +8,15 @@ use std::sync::{LazyLock, Mutex};
 pub(crate) const WORKTREE_SPAWN: &str = "host/create_worktree_thread";
 /// The host effect that admits a Nostr sign request (D106). Same registry,
 /// same token; named in `hkask-types` so the wire and the editor agree.
-pub(crate) const NOSTR_SIGN: &str = hkask_types::inference_ipc::NOSTR_SIGN_GRANT;
+pub(crate) const NOSTR_SIGN: &str = hkask_ipc_wire::inference_ipc::NOSTR_SIGN_GRANT;
 /// Host effect admitting `InferenceMethod::WalletDbUnlock` (D110).
-pub(crate) const WALLET_DB_UNLOCK: &str = hkask_types::inference_ipc::WALLET_DB_UNLOCK_GRANT;
+pub(crate) const WALLET_DB_UNLOCK: &str = hkask_ipc_wire::inference_ipc::WALLET_DB_UNLOCK_GRANT;
 /// Host effect admitting `InferenceMethod::WalletSpendApprove` (D110).
 pub(crate) const WALLET_SPEND_APPROVE: &str =
-    hkask_types::inference_ipc::WALLET_SPEND_APPROVE_GRANT;
+    hkask_ipc_wire::inference_ipc::WALLET_SPEND_APPROVE_GRANT;
 /// Host effect admitting Nostr zap/nutzap signing (D110, separate from
 /// `NOSTR_SIGN` so `autopublish` can never apply to zaps).
-pub(crate) const NOSTR_ZAP_SIGN: &str = hkask_types::inference_ipc::NOSTR_ZAP_SIGN_GRANT;
+pub(crate) const NOSTR_ZAP_SIGN: &str = hkask_ipc_wire::inference_ipc::NOSTR_ZAP_SIGN_GRANT;
 struct Grant {
     token: String,
     tools: Vec<String>,

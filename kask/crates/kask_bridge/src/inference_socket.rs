@@ -108,7 +108,7 @@ pub fn get_inference_socket_path() -> Option<String> {
 
 /// The admission-to-completion inference timeout in seconds, published to MCP server
 /// child processes so IPC clients can align their read deadline with the
-/// server's. See `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV` for the
+/// server's. See `hkask_ipc_wire::inference_ipc::INFERENCE_TIMEOUT_ENV` for the
 /// rationale.
 static INFERENCE_TIMEOUT_SECS: Mutex<u64> = Mutex::new(0);
 

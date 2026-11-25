@@ -245,7 +245,7 @@ fn build_decision_state(
 /// the catalog's uniform three-level scale as the criteria. The Jev-class
 /// "Score" primitive — the model answers with a calibrated probability
 /// distribution over these levels, never text.
-fn decision_questions() -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
+fn decision_questions() -> Vec<hkask_ipc_wire::inference_ipc::DecisionQuestion> {
     KEY_EQMS
         .iter()
         .map(|eqm| {
@@ -253,7 +253,7 @@ fn decision_questions() -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
                 EqmDirection::Helps => "a good habit; higher is better",
                 EqmDirection::Hurts => "a warning sign; higher is worse",
             };
-            hkask_types::inference_ipc::DecisionQuestion {
+            hkask_ipc_wire::inference_ipc::DecisionQuestion {
                 id: eqm.id.to_string(),
                 instructions: format!(
                     "Score the rationale on the Explanation Quality Marker \"{}\" ({}). {}",
@@ -270,7 +270,7 @@ fn decision_questions() -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
 /// integer scale the composite, the flags and the skill's EQM-2 screens
 /// consume. Never a fabricated value: a levelless answer reads `None` and
 /// the caller records the marker as missing.
-fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u8> {
+fn answer_level(answer: &hkask_ipc_wire::inference_ipc::DecisionAnswer) -> Option<u8> {
     if answer.level_probabilities.is_empty()
         || answer
             .level_probabilities
@@ -562,19 +562,19 @@ mod tests {
     fn answer_level_takes_the_most_probable_level() {
         // The documented Jev score shape (research run b1f1663057722f5d):
         // probabilities {0: 0.0, 1: 0.79, 2: 0.21} → the argmax level is 1.
-        let answer = hkask_types::inference_ipc::DecisionAnswer {
+        let answer = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "severity".to_string(),
             score: 1.21,
             level_probabilities: vec![
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 0,
                     probability: 0.0,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 1,
                     probability: 0.79,
                 },
-                hkask_types::inference_ipc::DecisionLevelProbability {
+                hkask_ipc_wire::inference_ipc::DecisionLevelProbability {
                     level: 2,
                     probability: 0.21,
                 },
@@ -582,7 +582,7 @@ mod tests {
             confidence: 0.69,
         };
         assert_eq!(answer_level(&answer), Some(1));
-        let levelless = hkask_types::inference_ipc::DecisionAnswer {
+        let levelless = hkask_ipc_wire::inference_ipc::DecisionAnswer {
             id: "q".to_string(),
             score: 0.0,
             level_probabilities: Vec::new(),

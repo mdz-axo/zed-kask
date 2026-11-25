@@ -64,7 +64,7 @@ mod tool_surface_tests {
     fn wire_tool_names_match_the_generated_list() {
         let mut generated: Vec<&str> = TOOL_NAMES.to_vec();
         generated.sort_unstable();
-        assert_eq!(generated, hkask_types::nostr_wire::CLIENT_TOOL_NAMES);
+        assert_eq!(generated, hkask_ipc_wire::nostr_wire::CLIENT_TOOL_NAMES);
     }
 
     /// A tool's name says which server it belongs to: `nostr_relay_` is the
@@ -78,7 +78,7 @@ mod tool_surface_tests {
                 "tool {name} is named under the relay server's prefix"
             );
             assert!(
-                !hkask_types::nostr_wire::RELAY_TOOL_NAMES.contains(name),
+                !hkask_ipc_wire::nostr_wire::RELAY_TOOL_NAMES.contains(name),
                 "tool {name} has a relay server tool's name"
             );
         }

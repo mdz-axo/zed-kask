@@ -1452,7 +1452,7 @@ impl KanbanServer {
                         .unwrap_or_else(|| "Imported Board".to_string());
                     let trimmed_name = name.trim();
                     let is_reserved_algedonic =
-                        trimmed_name == hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME;
+                        trimmed_name == hkask_ipc_wire::kanban_wire::ALGEDONIC_BOARD_NAME;
                     if is_reserved_algedonic
                         && (done_requires_verification == Some(false)
                             || (done_requires_verification.is_none()
@@ -1664,7 +1664,7 @@ fn column_infos(columns: &[ColumnDef]) -> Vec<ColumnInfo> {
 /// Run the kanban MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
-        hkask_types::kanban_wire::KANBAN_SERVER_NAME,
+        hkask_ipc_wire::kanban_wire::KANBAN_SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
         |ctx: ServerContext| {
             (|| -> anyhow::Result<KanbanServer> {

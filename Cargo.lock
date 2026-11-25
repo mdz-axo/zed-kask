@@ -8369,6 +8369,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes 1.12.2",
  "futures-util",
+ "hkask-ipc-wire",
  "hkask-types",
  "minijinja",
  "serde",
@@ -8381,12 +8382,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-ipc-wire"
+version = "0.42.0"
+dependencies = [
+ "hkask-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hkask-kanban-widget"
 version = "0.42.0"
 dependencies = [
  "anyhow",
  "gpui",
  "gpui_util",
+ "hkask-ipc-wire",
  "hkask-tool-invoker",
  "hkask-types",
  "serde",
@@ -8404,6 +8415,7 @@ dependencies = [
  "chrono",
  "hkask-bridge-ontology",
  "hkask-forecast",
+ "hkask-ipc-wire",
  "hkask-storage",
  "hkask-types",
  "schemars 1.0.4",
@@ -8550,6 +8562,7 @@ dependencies = [
  "chrono",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-kata-kanban",
  "hkask-keystore",
  "hkask-mcp-kata-kanban",
@@ -8574,6 +8587,7 @@ dependencies = [
  "chrono",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-keystore",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
@@ -8612,6 +8626,7 @@ dependencies = [
  "bytes 1.12.2",
  "hex",
  "hkask-bridge-ontology",
+ "hkask-ipc-wire",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-nostr-core",
@@ -8646,6 +8661,7 @@ dependencies = [
  "hex",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-mcp-nostr-relay",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
@@ -8672,6 +8688,7 @@ version = "0.42.0"
 dependencies = [
  "base64 0.22.1",
  "hkask-bridge-ontology",
+ "hkask-ipc-wire",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-types",
@@ -8703,6 +8720,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-types",
@@ -8731,6 +8749,7 @@ dependencies = [
  "futures-util",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-storage",
@@ -8816,6 +8835,7 @@ dependencies = [
  "hex",
  "hkask-bridge-ontology",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-types",
@@ -10378,6 +10398,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "gpui_util",
+ "hkask-ipc-wire",
  "hkask-kanban-widget",
  "hkask-kata-kanban",
  "hkask-panel-ui",
@@ -10413,6 +10434,7 @@ dependencies = [
  "hkask-condenser",
  "hkask-experimentation",
  "hkask-inference",
+ "hkask-ipc-wire",
  "hkask-kata-kanban",
  "hkask-keystore",
  "hkask-mcp-curator",
@@ -12638,6 +12660,7 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
+ "hkask-ipc-wire",
  "hkask-media-widget",
  "hkask-nostr-core",
  "hkask-nostr-signer",
@@ -18001,6 +18024,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "hkask-ipc-wire",
  "hkask-keystore",
  "hkask-nostr-core",
  "hkask-nostr-signer",
@@ -23882,6 +23906,7 @@ dependencies = [
  "gpui_tokio",
  "gpui_util",
  "hang_telemetry",
+ "hkask-ipc-wire",
  "hkask-keystore",
  "hkask-mcp",
  "hkask-regulation",

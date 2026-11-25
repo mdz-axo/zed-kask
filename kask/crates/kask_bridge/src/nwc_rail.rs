@@ -9,7 +9,7 @@ use std::str::FromStr as _;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hkask_types::wallet_wire::{WalletNwcOperationWire, WalletNwcResultWire};
+use hkask_ipc_wire::wallet_wire::{WalletNwcOperationWire, WalletNwcResultWire};
 use hkask_wallet_core::{
     CreatedLightningInvoice, LightningError, LightningInvoiceLookup, LightningInvoiceState,
     LightningPaymentResult, LightningRail, Millisatoshis, Satoshis,

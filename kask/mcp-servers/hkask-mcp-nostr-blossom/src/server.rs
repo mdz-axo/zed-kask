@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hkask_mcp_server::server::{McpToolError, execute_tool};
-use hkask_types::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
+use hkask_ipc_wire::nostr_wire::MAX_BLOSSOM_UPLOAD_BYTES;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -170,13 +170,13 @@ impl Drop for AnnouncementGuard {
 
 pub fn default_announcement_path() -> PathBuf {
     hkask_types::agent_paths::resolve_under_data_dir(
-        &hkask_types::nostr_wire::local_blossom_announcement_path(),
+        &hkask_ipc_wire::nostr_wire::local_blossom_announcement_path(),
     )
 }
 
 fn read_announced_loopback(path: &Path) -> Option<(String, SocketAddr)> {
     let text = std::fs::read_to_string(path).ok()?;
-    let announcement: hkask_types::nostr_wire::LocalBlossomAnnouncement =
+    let announcement: hkask_ipc_wire::nostr_wire::LocalBlossomAnnouncement =
         serde_json::from_str(&text).ok()?;
     let host_port = announcement.address.strip_prefix("http://")?;
     let addr: SocketAddr = host_port.parse().ok()?;
@@ -206,7 +206,7 @@ pub fn announce_listener(
                 std::fs::create_dir_all(parent)?;
             }
             let address_text = format!("http://{address}");
-            let announcement = hkask_types::nostr_wire::LocalBlossomAnnouncement {
+            let announcement = hkask_ipc_wire::nostr_wire::LocalBlossomAnnouncement {
                 address: address_text.clone(),
             };
             let text = serde_json::to_string(&announcement).map_err(std::io::Error::other)?;

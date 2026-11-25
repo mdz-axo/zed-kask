@@ -11,7 +11,7 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_tool_invoker::{InvokeError, ToolInvoker};
-use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_SERVER_NAME};
+use hkask_ipc_wire::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_SERVER_NAME};
 use hkask_types::tool_response::parse_tool_response;
 use hkask_types::{InferenceError, WebID, WorktreeSpawnPort};
 use rmcp::handler::server::wrapper::Parameters;

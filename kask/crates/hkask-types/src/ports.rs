@@ -10,7 +10,10 @@ pub mod inference_types;
 pub mod memory_port;
 pub mod regulation;
 
-pub use embedding::{DecisionBatch, EmbeddingBatch, EmbeddingGenerationError, RerankBatch};
+pub use embedding::{
+    DecisionAnswer, DecisionBatch, DecisionLevelProbability, DecisionQuestion, EmbeddingBatch,
+    EmbeddingGenerationError, RerankBatch, RerankScoreEntry,
+};
 pub use inference_port::{
     DecisionFuture, EmbedFuture, EmbedWithIdentityFuture, InferenceFuture, InferencePort,
     MediaFuture, MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, WorktreeSpawnPort,

@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 hkask-forecast.workspace = true
 hkask-inference.workspace = true
 hkask-bridge-ontology.workspace = true

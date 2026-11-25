@@ -16,18 +16,13 @@ pub mod hashing;
 
 pub(crate) mod hmem_ontology;
 pub mod id;
-pub mod inference_ipc;
 
 pub mod json_extract;
 pub(crate) mod kanban_status;
-pub mod kanban_wire;
 pub mod maybe_string;
-pub mod media_wire;
 pub mod model_names;
 pub mod net_guard;
-pub mod nostr_wire;
 pub mod ocr_health;
-pub mod wallet_wire;
 
 pub mod regulation;
 pub mod secret;

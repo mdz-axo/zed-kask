@@ -364,7 +364,7 @@ pub trait InferencePort: Send + Sync {
         &'a self,
         _model: &str,
         _state: &str,
-        _questions: &[crate::inference_ipc::DecisionQuestion],
+        _questions: &[crate::ports::DecisionQuestion],
     ) -> DecisionFuture<'a> {
         Box::pin(async {
             Err(InferenceError::NotConfigured(

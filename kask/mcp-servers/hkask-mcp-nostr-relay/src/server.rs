@@ -29,7 +29,7 @@ pub const DEFAULT_QUERY_EVENTS: usize = 20;
 pub const DEFAULT_LOG_DECISIONS: usize = 50;
 /// The bounds on one event's content and tags, shared with the client
 /// server and the panel.
-pub use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_TAGS_PER_EVENT};
+pub use hkask_ipc_wire::nostr_wire::{MAX_CONTENT_CHARS, MAX_TAGS_PER_EVENT};
 
 /// What a reader of this relay's output must know about its access control.
 pub const ACCESS_LIMITS: [&str; 5] = [
@@ -95,8 +95,8 @@ fn rejected_kind_numbers() -> Vec<u16> {
 /// One stored event as tool output, in the shape every Nostr tool uses.
 /// `content` and `tags` are text written by the event's author, not by this
 /// system.
-fn wire_event(event: &Event) -> hkask_types::nostr_wire::WireEvent {
-    hkask_types::nostr_wire::WireEvent::bounded(
+fn wire_event(event: &Event) -> hkask_ipc_wire::nostr_wire::WireEvent {
+    hkask_ipc_wire::nostr_wire::WireEvent::bounded(
         event.id.to_hex(),
         event.pubkey.to_hex(),
         event.created_at.as_secs(),
@@ -110,7 +110,7 @@ fn wire_event(event: &Event) -> hkask_types::nostr_wire::WireEvent {
 /// `mcp/nostr-relay/listener.json` under the data dir.
 pub fn default_announcement_path() -> PathBuf {
     hkask_types::agent_paths::resolve_under_data_dir(
-        &hkask_types::nostr_wire::local_relay_announcement_path(),
+        &hkask_ipc_wire::nostr_wire::local_relay_announcement_path(),
     )
 }
 
@@ -148,7 +148,7 @@ impl Drop for AnnouncementGuard {
 
 fn read_announced_loopback(path: &Path) -> Option<(String, SocketAddr)> {
     let text = std::fs::read_to_string(path).ok()?;
-    let announcement: hkask_types::nostr_wire::LocalRelayAnnouncement =
+    let announcement: hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement =
         serde_json::from_str(&text).ok()?;
     let host_port = announcement.address.strip_prefix("ws://")?;
     let addr: SocketAddr = host_port.parse().ok()?;
@@ -187,7 +187,7 @@ pub fn announce_listener(
                 std::fs::create_dir_all(parent)?;
             }
             let address_text = format!("ws://{address}");
-            let announcement = hkask_types::nostr_wire::LocalRelayAnnouncement {
+            let announcement = hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement {
                 address: address_text.clone(),
             };
             let text = serde_json::to_string(&announcement).map_err(std::io::Error::other)?;
@@ -420,7 +420,7 @@ impl NostrRelayServer {
                 .await
                 .map_err(|error| McpToolError::internal(format!("reading the archive failed: {error}")))?;
             // The store's set is ordered newest first.
-            let events: Vec<hkask_types::nostr_wire::WireEvent> =
+            let events: Vec<hkask_ipc_wire::nostr_wire::WireEvent> =
                 events.iter().take(limit).map(wire_event).collect();
             Ok(json!({
                 "returned": events.len(),
@@ -658,7 +658,7 @@ mod tests {
 
         let _guard =
             announce_listener(&ListenerState::Listening(address), &path).expect("announced");
-        let announcement: hkask_types::nostr_wire::LocalRelayAnnouncement =
+        let announcement: hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("file written"))
                 .expect("the shared shape");
         assert_eq!(announcement.address, "ws://127.0.0.1:43455");
@@ -697,7 +697,7 @@ mod tests {
             let _secondary_guard =
                 announce_listener(&ListenerState::Listening(secondary_addr), &path)
                     .expect("secondary check succeeds");
-            let current: hkask_types::nostr_wire::LocalRelayAnnouncement =
+            let current: hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement =
                 serde_json::from_str(&std::fs::read_to_string(&path).expect("still present"))
                     .expect("parses");
             assert_eq!(
@@ -731,7 +731,7 @@ mod tests {
             .expect("writes stale announcement");
         let _recovered_guard = announce_listener(&ListenerState::Listening(secondary_addr), &path)
             .expect("replaces dead announcement");
-        let recovered: hkask_types::nostr_wire::LocalRelayAnnouncement =
+        let recovered: hkask_ipc_wire::nostr_wire::LocalRelayAnnouncement =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("present"))
                 .expect("parses");
         assert_eq!(recovered.address, format!("ws://{secondary_addr}"));

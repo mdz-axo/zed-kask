@@ -6,8 +6,8 @@
 //! bump zap totals and refresh reactions without owning zap internals.
 
 use gpui::{AnyElement, Context, Entity, EventEmitter, IntoElement, Render, Task, Window};
-use hkask_types::nostr_wire::NOSTR_CLIENT_SERVER;
-use hkask_types::wallet_wire::WALLET_SERVER_ID;
+use hkask_ipc_wire::nostr_wire::NOSTR_CLIENT_SERVER;
+use hkask_ipc_wire::wallet_wire::WALLET_SERVER_ID;
 use serde_json::{Value, json};
 use ui::{Label, LabelSize, prelude::*};
 use util::ResultExt as _;

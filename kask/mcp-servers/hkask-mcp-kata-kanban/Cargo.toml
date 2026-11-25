@@ -9,6 +9,7 @@ description = "Kata-Kanban workflow coordination MCP server"
 hkask-kata-kanban.workspace = true
 hkask-mcp-server = { workspace = true, features = ["storage"] }
 hkask-types.workspace = true
+hkask-ipc-wire.workspace = true
 hkask-storage.workspace = true
 # Folded from hkask-services-kata-kanban
 hkask-inference.workspace = true

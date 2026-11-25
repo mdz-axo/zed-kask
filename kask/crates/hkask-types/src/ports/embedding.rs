@@ -1,3 +1,60 @@
+use serde::{Deserialize, Serialize};
+
+/// A single reranked document's score — the provider's native relevance
+/// judgment, not a parsed LLM generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RerankScoreEntry {
+    /// Index of the document in the original input list.
+    pub index: usize,
+    /// Relevance score of the document to the query (provider-scaled,
+    /// typically 0.0-1.0).
+    pub relevance_score: f64,
+}
+
+/// A typed score question for `InferenceMethod::Decision` — the Jev-class
+/// "Score" primitive: an instruction plus an ordered array of level
+/// descriptions (least to most), answered with a probability distribution
+/// over the levels plus a confidence. The question id is never sent to the
+/// model (the provider's contract — all meaning lives in the instructions
+/// and the level descriptions).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionQuestion {
+    /// Caller-side question key — the answer returns under this key.
+    pub id: String,
+    /// The question text, including any criteria context the levels need.
+    pub instructions: String,
+    /// Ordered level descriptions, least to most (the score scale).
+    pub criteria: Vec<String>,
+}
+
+/// One level's probability from a decision answer — the parsed form of the
+/// provider's string-keyed `probabilities` map (`{"0": 0.79, ...}`),
+/// decoded once at the zed side (the one decode home).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionLevelProbability {
+    /// The level's index into the question's `criteria`.
+    pub level: u8,
+    /// The calibrated probability the model assigns to that level.
+    pub probability: f64,
+}
+
+/// A typed answer to one `DecisionQuestion` — the provider's native
+/// judgment (a probability distribution over the caller's own levels),
+/// not a parsed LLM generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionAnswer {
+    /// The question key the answer belongs to.
+    pub id: String,
+    /// The probability-weighted score over the levels (the provider's
+    /// `score` field — e.g. 1.21 for mostly-level-1 with some level-2).
+    pub score: f64,
+    /// The probability distribution over the question's criteria levels.
+    pub level_probabilities: Vec<DecisionLevelProbability>,
+    /// The concentration of the distribution (0.0-1.0) — how unambiguous
+    /// the model's judgment is (not its correctness).
+    pub confidence: f64,
+}
+
 /// One embedding batch plus its request and provider-reported model identities.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmbeddingBatch {
@@ -18,7 +75,7 @@ pub struct EmbeddingBatch {
 /// omitted the usage wire field.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RerankBatch {
-    pub scores: Vec<crate::inference_ipc::RerankScoreEntry>,
+    pub scores: Vec<RerankScoreEntry>,
     pub usage: crate::ports::InferenceUsage,
 }
 
@@ -28,7 +85,7 @@ pub struct RerankBatch {
 /// Decisions API reports usage on the wire path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecisionBatch {
-    pub answers: Vec<crate::inference_ipc::DecisionAnswer>,
+    pub answers: Vec<DecisionAnswer>,
     pub model: String,
     pub usage: crate::ports::InferenceUsage,
 }

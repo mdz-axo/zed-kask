@@ -13,7 +13,7 @@
 //! with a probability distribution over those levels); the other
 //! primitives (choice, noul, box) join when a consumer needs them.
 
-use hkask_types::inference_ipc::{DecisionAnswer, DecisionLevelProbability, DecisionQuestion};
+use hkask_ipc_wire::inference_ipc::{DecisionAnswer, DecisionLevelProbability, DecisionQuestion};
 use hkask_types::ports::{DecisionBatch, InferenceUsage};
 
 static DECISIONS_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();

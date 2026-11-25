@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::nostr_wire::{
+use hkask_ipc_wire::nostr_wire::{
     BlossomBlobSummary, LocalBlossomAnnouncement, MAX_BLOSSOM_UPLOAD_BYTES, MAX_MEDIA_ATTACHMENTS,
     NostrMediaAttachment, truncate_chars,
 };

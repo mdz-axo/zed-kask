@@ -409,8 +409,8 @@ fn set_sign_grant(settings: &mut settings::SettingsContent, granted: bool) {
         .get_or_insert_default()
         .delegated_tools
         .get_or_insert_default();
-    let server = hkask_types::nostr_wire::NOSTR_CLIENT_SERVER;
-    let effect = hkask_types::inference_ipc::NOSTR_SIGN_GRANT;
+    let server = hkask_ipc_wire::nostr_wire::NOSTR_CLIENT_SERVER;
+    let effect = hkask_ipc_wire::inference_ipc::NOSTR_SIGN_GRANT;
     if granted {
         let tools = delegated.entry(server.to_string()).or_default();
         if !tools.iter().any(|tool| tool == effect) {
@@ -903,8 +903,8 @@ mod tests {
     /// does not duplicate the entry.
     #[test]
     fn saving_the_key_grants_signing_to_the_nostr_server_and_reset_withdraws_it() {
-        let server = hkask_types::nostr_wire::NOSTR_CLIENT_SERVER;
-        let effect = hkask_types::inference_ipc::NOSTR_SIGN_GRANT;
+        let server = hkask_ipc_wire::nostr_wire::NOSTR_CLIENT_SERVER;
+        let effect = hkask_ipc_wire::inference_ipc::NOSTR_SIGN_GRANT;
         let grants = |settings: &settings::SettingsContent| {
             settings
                 .kask
