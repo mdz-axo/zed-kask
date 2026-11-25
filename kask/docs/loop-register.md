@@ -1427,7 +1427,7 @@ exactly that lag), not evidence of absence.)
   framework review completed:** all 46 fn items across the six
   hkask-mcp-server framework files mapped (transport, error, credentials,
   context, tool_span, validation) — zero `.rules` violations; the F4 TOCTOU
-  window located at `canonicalize_lenient` (`kask/crates/hkask-mcp-server/src/server/validation.rs:284-311@canonicalize_lenient`) plus
+  window located at `canonicalize_lenient` (`kask/crates/hkask-mcp-server/src/server/validation.rs:286-322@canonicalize_lenient`) plus
   the caller's non-atomic write; a per-server review item extracted for
   S1–S12 (DB-path credential declared required vs optional-with-surfaced-
   degradation, checked against the then-existing generic in-memory fallback; persistence is now server-specific). **E1

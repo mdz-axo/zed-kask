@@ -74,7 +74,7 @@ artifacts tree to its own `{server}-mcp/` folder: `run_stdio_server` records
 the owner from the binary name via `set_artifact_owner`
 (`kask/crates/hkask-mcp-server/src/server/validation.rs:352@set_artifact_owner`), and a write to the
 tree's top level or another server's folder is rejected
-(`contain_for_write`, `kask/crates/hkask-mcp-server/src/server/validation.rs:456-458@contain_for_write`). Reads may use the
+(`contain_for_write`, `kask/crates/hkask-mcp-server/src/server/validation.rs:458-460@contain_for_write`). Reads may use the
 whole tree (one server's output is another's input). Pinned by
 `artifact_writes_are_confined_to_the_owning_server`
 (`kask/crates/hkask-mcp-server/src/server/validation.rs:700@artifact_writes_are_confined_to_the_owning_server`). The built-in
