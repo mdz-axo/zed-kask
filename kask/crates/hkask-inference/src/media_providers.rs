@@ -933,23 +933,97 @@ impl MediaProvider for OpenRouterMediaProvider {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/// Download audio bytes from an HTTP(S) URL, or read a local file path
-/// directly — recordings from `audio_capture`/`record_and_transcribe` are
-/// local paths, not URLs, and the audio-input paths must serve them too.
+/// Maximum audio download size (200 MiB) to bound memory consumption (SEC-03).
+const MAX_AUDIO_DOWNLOAD_BYTES: usize = 200 * 1024 * 1024;
+
+struct AudioValidatingDnsResolver;
+
+impl reqwest::dns::Resolve for AudioValidatingDnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let resolved: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
+                .collect();
+            if resolved.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("DNS returned no addresses for {host}"),
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+            for addr in &resolved {
+                if !hkask_types::net_guard::is_public_ip(addr.ip()) {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "DNS for {host} resolved to non-public address {}",
+                            addr.ip()
+                        ),
+                    ))
+                        as Box<dyn std::error::Error + Send + Sync>);
+                }
+            }
+            let addrs: reqwest::dns::Addrs = Box::new(resolved.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+/// Download audio bytes from an HTTP(S) URL using an SSRF-hardened,
+/// no-redirect, connect-time-DNS-validated, byte-capped client (SEC-03), or
+/// read a local file path directly — recordings from
+/// `audio_capture`/`record_and_transcribe` are local paths, not URLs.
 async fn download_audio_bytes(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     url: &str,
 ) -> Result<Vec<u8>, InferenceError> {
     if url.starts_with("http://") || url.starts_with("https://") {
-        let bytes = client
+        let safe_client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect_policy(reqwest::redirect::Policy::none())
+            .dns_resolver(std::sync::Arc::new(AudioValidatingDnsResolver))
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| InferenceError::Connection(format!("audio client build failed: {e}")))?;
+        let mut resp = safe_client
             .get(url)
             .send()
             .await
-            .map_err(|e| InferenceError::Connection(format!("audio download failed: {e}")))?
-            .bytes()
+            .map_err(|e| InferenceError::Connection(format!("audio download failed: {e}")))?;
+        let status = resp.status();
+        if status.is_redirection() {
+            return Err(InferenceError::Connection(format!(
+                "audio download refused HTTP {status} redirect"
+            )));
+        }
+        if !status.is_success() {
+            return Err(InferenceError::Connection(format!(
+                "audio download returned HTTP {status}"
+            )));
+        }
+        if let Some(len) = resp.content_length()
+            && len > MAX_AUDIO_DOWNLOAD_BYTES as u64
+        {
+            return Err(InferenceError::Connection(format!(
+                "audio download Content-Length {len} exceeds {MAX_AUDIO_DOWNLOAD_BYTES}-byte limit"
+            )));
+        }
+        let mut out = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
             .await
-            .map_err(|e| InferenceError::Connection(format!("audio read failed: {e}")))?;
-        Ok(bytes.to_vec())
+            .map_err(|e| InferenceError::Connection(format!("audio read failed: {e}")))?
+        {
+            if out.len().saturating_add(chunk.len()) > MAX_AUDIO_DOWNLOAD_BYTES {
+                return Err(InferenceError::Connection(format!(
+                    "audio download exceeded {MAX_AUDIO_DOWNLOAD_BYTES}-byte limit"
+                )));
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(out)
     } else {
         let path = url.strip_prefix("file://").unwrap_or(url);
         std::fs::read(path).map_err(|e| {
