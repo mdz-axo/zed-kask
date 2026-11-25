@@ -5,6 +5,7 @@ use std::str::FromStr;
 use rmcp::ServiceExt as _;
 
 use super::context::{CredentialRequirement, ServerContext};
+#[cfg(feature = "keystore")]
 use super::credentials::resolve_credential;
 use super::error::McpError;
 
@@ -51,37 +52,54 @@ where
 
     super::validation::set_artifact_owner(server_name);
 
-    let catalog = match std::env::var(hkask_storage::DATABASE_CATALOG_ENV) {
-        Ok(path) => std::path::PathBuf::from(path),
-        Err(std::env::VarError::NotPresent) => hkask_types::agent_paths::resolve_under_data_dir(
-            std::path::Path::new(hkask_storage::DATABASE_CATALOG_RELATIVE_PATH),
-        ),
-        Err(error) => {
+    #[cfg(feature = "storage")]
+    {
+        let catalog = match std::env::var(hkask_storage::DATABASE_CATALOG_ENV) {
+            Ok(path) => std::path::PathBuf::from(path),
+            Err(std::env::VarError::NotPresent) => {
+                hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                    hkask_storage::DATABASE_CATALOG_RELATIVE_PATH,
+                ))
+            }
+            Err(error) => {
+                return Err(McpError::Storage(hkask_storage::DatabaseError::Inventory(
+                    error.to_string(),
+                )));
+            }
+        };
+        if let Err(error) = hkask_storage::configure_database_catalog(catalog) {
+            tracing::warn!(%error, "Database inventory could not be configured; refusing server startup");
             return Err(McpError::Storage(hkask_storage::DatabaseError::Inventory(
                 error.to_string(),
             )));
         }
-    };
-    if let Err(error) = hkask_storage::configure_database_catalog(catalog) {
-        tracing::warn!(%error, "Database inventory could not be configured; refusing server startup");
-        return Err(McpError::Storage(hkask_storage::DatabaseError::Inventory(
-            error.to_string(),
-        )));
     }
 
     let mut resolved = std::collections::HashMap::new();
     let mut missing_required = Vec::new();
     for cred in &credentials {
-        match resolve_credential(&cred.env_var) {
-            Ok(val) => {
+        let resolved_val: Option<String> = {
+            #[cfg(feature = "keystore")]
+            {
+                resolve_credential(&cred.env_var).ok()
+            }
+            #[cfg(not(feature = "keystore"))]
+            {
+                std::env::var(&cred.env_var)
+                    .ok()
+                    .filter(|val| !val.is_empty())
+            }
+        };
+        match resolved_val {
+            Some(val) => {
                 tracing::debug!(credential = %cred.env_var, "Credential resolved");
                 resolved.insert(cred.env_var.clone(), val);
             }
-            Err(_) if cred.required => {
+            None if cred.required => {
                 tracing::error!(credential = %cred.env_var, description = %cred.description, "Required credential not set — server cannot function");
                 missing_required.push(cred.env_var.clone());
             }
-            Err(_) => {
+            None => {
                 tracing::info!(credential = %cred.env_var, description = %cred.description, "Optional credential not set — server will use default or in-memory fallback")
             }
         }

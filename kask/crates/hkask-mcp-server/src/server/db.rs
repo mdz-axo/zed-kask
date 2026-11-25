@@ -6,15 +6,21 @@
 //! (`Infrastructure`) or degraded-to-empty (the curator's deliberate
 //! posture) — never a silent empty-key open.
 
+#[cfg(feature = "storage")]
 use std::collections::HashMap;
+#[cfg(feature = "storage")]
 use std::sync::Arc;
 
+#[cfg(feature = "storage")]
 use super::credentials::resolve_db_passphrase;
+#[cfg(feature = "storage")]
 use super::error::McpToolError;
+#[cfg(feature = "storage")]
 use hkask_storage::database::driver::DatabaseDriver;
 
 /// An opened server database: the path it was opened at, the handle the
 /// pool is cached on, and the labeled driver every store layer builds on.
+#[cfg(feature = "storage")]
 pub struct ServerDatabase {
     /// The path the database was opened at (the env override or the D28
     /// per-agent default) — the labeled driver and diagnostics carry it.
@@ -63,6 +69,7 @@ pub fn resolve_server_db_path(env_var: &str, default_relative: &std::path::Path)
 /// keychain), open-or-repair, the pool, and the labeled SQLite driver.
 /// The error is the canonical `McpToolError` — the caller maps it to its
 /// failure posture, never a silent empty-key open.
+#[cfg(feature = "storage")]
 pub fn open_server_db(
     db_path: &str,
     credentials: &HashMap<String, String>,
@@ -130,6 +137,7 @@ mod tests {
     /// The bootstrap's seam test (ra-strangle: one test per service
     /// operation, at the new seam): open under an allowed root, repair,
     /// label, and hand back the pool and driver.
+    #[cfg(feature = "storage")]
     #[test]
     fn open_server_db_opens_repairs_and_labels() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/c-bootstrap-probe");

@@ -134,6 +134,7 @@ pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) 
 /// embedding failures are `internal`. Canonical mapper shared by the
 /// memory-backed corpus and curator servers — reuse it instead of
 /// re-implementing per-crate copies.
+#[cfg(feature = "memory")]
 #[must_use = "result must be used"]
 pub fn map_memory_store_error(
     error: hkask_memory::MemoryStoreError,
@@ -174,6 +175,7 @@ pub fn map_memory_store_error(
 /// credential, not an infrastructure fault; a corrupted DB file is a
 /// caller-fixable data problem (`invalid_argument`); SQLite/SQLCipher
 /// failures are infrastructure (`internal`).
+#[cfg(feature = "storage")]
 #[must_use = "result must be used"]
 pub fn map_database_error(error: hkask_storage::DatabaseError, context: &str) -> McpToolError {
     use hkask_storage::DatabaseError;

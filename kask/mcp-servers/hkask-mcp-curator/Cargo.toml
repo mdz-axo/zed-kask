@@ -6,7 +6,7 @@ license.workspace = true
 description = "Curator MCP server — system observability and regulatory memory access"
 
 [dependencies]
-hkask-mcp-server.workspace = true
+hkask-mcp-server = { workspace = true, features = ["memory"] }
 hkask-types.workspace = true
 hkask-storage.workspace = true
 hkask-bridge-ontology.workspace = true

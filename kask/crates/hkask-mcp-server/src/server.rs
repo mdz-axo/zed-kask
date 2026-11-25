@@ -24,9 +24,11 @@ mod credentials;
 mod db;
 mod error;
 
+#[cfg(feature = "storage")]
+pub use db::{ServerDatabase, open_server_db};
 pub use db::{
-    ServerDatabase, db_passphrase_requirement, db_passphrase_requirement_optional_with,
-    db_passphrase_requirement_with, open_server_db, resolve_server_db_path,
+    db_passphrase_requirement, db_passphrase_requirement_optional_with,
+    db_passphrase_requirement_with, resolve_server_db_path,
 };
 pub mod call_provenance;
 mod tool_execution;
@@ -43,15 +45,20 @@ pub use call_provenance::{
     ProvenanceScopedService, current_call_provenance, request_meta_provenance, with_call_provenance,
 };
 pub use context::{CredentialRequirement, ServerContext};
-pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
+pub use credentials::parse_env_warn;
+#[cfg(feature = "keystore")]
+pub use credentials::{resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use tool_execution::{ToolContext, execute_tool, record_tool_usage};
 pub use transport::run_stdio_server;
+#[cfg(feature = "storage")]
+pub use validation::map_database_error;
+#[cfg(feature = "memory")]
+pub use validation::map_memory_store_error;
 pub use validation::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,
     read_capped, resolve_max_read_bytes, set_artifact_owner, write_contained,
 };
 pub use validation::{
-    map_database_error, map_infra_error, map_io_error, map_join_error, map_memory_store_error,
-    validate_identifier, validate_path,
+    map_infra_error, map_io_error, map_join_error, validate_identifier, validate_path,
 };

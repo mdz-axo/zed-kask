@@ -20,19 +20,23 @@ pub use security::http_guard;
 // `"kata-kanban"`, and the two contradicted each other silently).
 
 pub use hkask_types::{AnyJsonValue, find_boolean_schema_positions};
+#[cfg(feature = "memory")]
+pub use server::map_memory_store_error;
 pub use server::{
-    CredentialRequirement, McpError, ServerContext, ServerDatabase, ToolContext,
-    current_call_provenance, db_passphrase_requirement, db_passphrase_requirement_optional_with,
-    db_passphrase_requirement_with, execute_tool, open_server_db, parse_env_warn,
-    resolve_credential, resolve_db_passphrase, resolve_server_db_path, run_stdio_server,
-    validate_identifier, validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
-    with_call_provenance,
+    CredentialRequirement, McpError, ServerContext, ToolContext, current_call_provenance,
+    db_passphrase_requirement, db_passphrase_requirement_optional_with,
+    db_passphrase_requirement_with, execute_tool, parse_env_warn, resolve_server_db_path,
+    run_stdio_server, validate_identifier, validate_path, validate_tool_url_permissive,
+    validate_tool_url_with_dns, with_call_provenance,
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,
-    map_database_error, map_infra_error, map_io_error, map_join_error, map_memory_store_error,
-    read_capped, write_contained,
+    map_infra_error, map_io_error, map_join_error, read_capped, write_contained,
 };
+#[cfg(feature = "storage")]
+pub use server::{ServerDatabase, map_database_error, open_server_db};
+#[cfg(feature = "keystore")]
+pub use server::{resolve_credential, resolve_db_passphrase};
 
 /// Run an MCP server with stdio transport.
 ///

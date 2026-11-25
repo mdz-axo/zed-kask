@@ -22,6 +22,7 @@ pub enum McpError {
     )]
     MissingCredentials { missing: String },
 
+    #[cfg(feature = "storage")]
     #[error("Storage error: {0}")]
     Storage(#[from] hkask_storage::DatabaseError),
 

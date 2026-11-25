@@ -39,9 +39,9 @@ zeroize.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
-cdk = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
-cdk-common = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
-cdk-sql-common = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
+cdk = { workspace = true, default-features = false, features = ["wallet", "mint"] }
+cdk-common = { workspace = true, default-features = false, features = ["wallet", "mint"] }
+cdk-sql-common = { workspace = true, default-features = false, features = ["wallet", "mint"] }
 cdk-fake-wallet.workspace = true
 hkask-mcp-test-support.workspace = true
 tempfile.workspace = true

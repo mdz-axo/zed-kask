@@ -18,7 +18,7 @@ workspace = true
 
 [dependencies]
 
-hkask-mcp-server.workspace = true
+hkask-mcp-server = { workspace = true, features = ["storage"] }
 hkask-types.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true

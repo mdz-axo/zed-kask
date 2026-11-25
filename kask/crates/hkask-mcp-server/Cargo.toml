@@ -10,9 +10,9 @@ path = "src/hkask_mcp_server.rs"
 
 [dependencies]
 hkask-types.workspace = true
-hkask-keystore.workspace = true
-hkask-memory.workspace = true
-hkask-storage.workspace = true
+hkask-keystore = { workspace = true, optional = true }
+hkask-memory = { workspace = true, optional = true }
+hkask-storage = { workspace = true, optional = true }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -33,6 +33,9 @@ tempfile.workspace = true
 [features]
 default = []
 http-guard = ["dep:reqwest"]
+keystore = ["dep:hkask-keystore"]
+storage = ["dep:hkask-storage", "keystore"]
+memory = ["dep:hkask-memory", "storage"]
 
 [lints]
 workspace = true

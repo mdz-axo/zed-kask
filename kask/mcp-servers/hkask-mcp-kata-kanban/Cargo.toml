@@ -7,7 +7,7 @@ description = "Kata-Kanban workflow coordination MCP server"
 
 [dependencies]
 hkask-kata-kanban.workspace = true
-hkask-mcp-server.workspace = true
+hkask-mcp-server = { workspace = true, features = ["storage"] }
 hkask-types.workspace = true
 hkask-storage.workspace = true
 # Folded from hkask-services-kata-kanban

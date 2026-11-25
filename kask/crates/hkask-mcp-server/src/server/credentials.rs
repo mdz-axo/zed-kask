@@ -1,8 +1,10 @@
 //! Credential resolution — env-var-first lookup with keychain fallback for
 //! internal passphrases only.
 
+#[cfg(feature = "keystore")]
 use std::collections::HashMap;
 
+#[cfg(feature = "keystore")]
 use super::error::McpToolError;
 
 /// Resolve a credential by env var name.
@@ -21,6 +23,7 @@ use super::error::McpToolError;
 ///
 /// pre:  env_var is non-empty
 /// post: returns credential value from env var
+#[cfg(feature = "keystore")]
 #[must_use = "result must be used"]
 pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::KeystoreError> {
     match env_var {
@@ -72,6 +75,7 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
 ///
 /// Servers that require persistence (no in-memory fallback) should propagate
 /// the `Err` directly — it's already `McpToolError::permission_denied`.
+#[cfg(feature = "keystore")]
 #[must_use = "result must be used"]
 pub fn resolve_db_passphrase(
     credentials: &HashMap<String, String>,
