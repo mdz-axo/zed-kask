@@ -7,9 +7,8 @@
 //! to Blossom servers configured by the operator in `kask.nostr.blossom_servers`.
 
 use std::io::Read as _;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -38,80 +37,14 @@ const MAX_DESCRIPTOR_RESPONSE_BYTES: u64 = 64 * 1024;
 /// Maximum bytes read from a local Blossom `/list/<pubkey>` JSON array response.
 const MAX_LIST_RESPONSE_BYTES: u64 = 1024 * 1024;
 
-fn ip_is_admitted(ip: IpAddr, policy: AddressPolicy) -> bool {
-    let is_loopback = match ip {
-        IpAddr::V4(v4) => v4.is_loopback(),
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
-        }
-    };
-    if policy == AddressPolicy::LoopbackAllowed && is_loopback {
-        return true;
-    }
-    match ip {
-        IpAddr::V4(v4) => ipv4_is_public(v4),
-        IpAddr::V6(v6) => ipv6_is_public(v6),
-    }
-}
-
-struct BlossomDnsResolver {
-    policy: AddressPolicy,
-}
-
-impl reqwest::dns::Resolve for BlossomDnsResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let policy = self.policy;
-        Box::pin(async move {
-            let host = name.as_str().to_string();
-            let host_for_lookup = host.clone();
-            let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
-                (host_for_lookup.as_str(), 0u16)
-                    .to_socket_addrs()
-                    .map(|iter| iter.collect::<Vec<_>>())
-            })
-            .await
-            .map_err(|err| {
-                Box::new(std::io::Error::other(format!(
-                    "DNS lookup task failed for {host}: {err}"
-                ))) as Box<dyn std::error::Error + Send + Sync>
-            })?
-            .map_err(|err| {
-                Box::new(std::io::Error::other(format!(
-                    "DNS resolution failed for {host}: {err}"
-                ))) as Box<dyn std::error::Error + Send + Sync>
-            })?;
-            if addrs.is_empty() {
-                return Err(Box::new(std::io::Error::other(format!(
-                    "DNS returned no addresses for {host}"
-                )))
-                    as Box<dyn std::error::Error + Send + Sync>);
-            }
-            for addr in &addrs {
-                if !ip_is_admitted(addr.ip(), policy) {
-                    return Err(Box::new(std::io::Error::other(format!(
-                        "DNS for {host} resolved to disallowed non-public address {}",
-                        addr.ip()
-                    )))
-                        as Box<dyn std::error::Error + Send + Sync>);
-                }
-            }
-            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
-        })
-    }
-}
-
 /// Construct a hardened `reqwest::Client` with redirects disabled, ambient proxies
 /// ignored, connect-time DNS validation, and `timeout`.
 pub fn build_blossom_http_client(
     timeout: Duration,
     policy: AddressPolicy,
 ) -> Result<reqwest::Client, McpToolError> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .redirect_policy(reqwest::redirect::Policy::none())
-        .timeout(timeout)
-        .dns_resolver(Arc::new(BlossomDnsResolver { policy }))
-        .build()
+    let allow_loopback = policy == AddressPolicy::LoopbackAllowed;
+    hkask_mcp_server::http_guard::build_ssrf_safe_client(timeout, allow_loopback)
         .map_err(|err| McpToolError::unavailable(format!("HTTP client init failed: {err}")))
 }
 

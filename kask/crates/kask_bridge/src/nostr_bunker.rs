@@ -65,23 +65,7 @@ impl UnsignedApprovedEvent {
 }
 
 fn is_disallowed_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 64)
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
-        }
-    }
+    !hkask_types::net_guard::is_public_ip(ip)
 }
 
 /// Validate a bunker relay URL as a clean public `wss://` endpoint without
@@ -92,7 +76,7 @@ pub(crate) fn validate_public_wss_relay(raw: &str) -> Result<String, String> {
         return Err("bunker relay must be a clean wss:// URL".to_string());
     }
     let after_scheme = &trimmed["wss://".len()..];
-    let authority = after_scheme.split('/').next().unwrap_or("");
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() || authority.contains('@') {
         return Err("bunker relay must not contain credentials or an empty host".to_string());
     }
@@ -105,13 +89,8 @@ pub(crate) fn validate_public_wss_relay(raw: &str) -> Result<String, String> {
     } else {
         authority.split(':').next().unwrap_or("")
     };
-    let lower_host = host.to_ascii_lowercase();
-    if lower_host.is_empty()
-        || lower_host == "localhost"
-        || lower_host.ends_with(".localhost")
-        || lower_host.ends_with(".local")
-        || lower_host.ends_with(".internal")
-    {
+    let lower_host = hkask_types::net_guard::normalize_host(host);
+    if !hkask_types::net_guard::is_public_hostname(&lower_host) {
         return Err("bunker relay host must be a public hostname".to_string());
     }
     if let Ok(ip) = lower_host.parse::<IpAddr>()

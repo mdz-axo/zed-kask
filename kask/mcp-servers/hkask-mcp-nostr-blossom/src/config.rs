@@ -84,13 +84,17 @@ pub fn validate_public_base_url(raw: &str) -> Result<(String, String), &'static 
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err("public_base_url must not carry a query or fragment");
     }
+    let parsed_host = parsed.host().ok_or("public_base_url has no host")?;
+    if !hkask_types::net_guard::is_public_host(parsed_host) {
+        return Err("public_base_url must name a publicly routable host");
+    }
     let host = parsed
         .host_str()
         .ok_or("public_base_url has no host")?
         .trim_end_matches('.')
         .to_ascii_lowercase();
-    if host.is_empty() || host == "localhost" || host == "127.0.0.1" || host == "::1" {
-        return Err("public_base_url must name a public host, not loopback");
+    if host.is_empty() {
+        return Err("public_base_url has no host");
     }
     let host_port = match parsed.port() {
         Some(p) => format!("{host}:{p}"),
@@ -193,6 +197,10 @@ mod tests {
         );
         assert!(validate_public_base_url("http://media.example.com").is_err());
         assert!(validate_public_base_url("https://127.0.0.1:8080").is_err());
+        assert!(validate_public_base_url("https://10.0.0.1/").is_err());
+        assert!(validate_public_base_url("https://169.254.169.254/").is_err());
+        assert!(validate_public_base_url("https://100.64.0.1/").is_err());
+        assert!(validate_public_base_url("https://[fc00::1]/").is_err());
         assert!(validate_public_base_url("https://u:p@media.example.com").is_err());
     }
 }

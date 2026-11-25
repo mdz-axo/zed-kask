@@ -615,19 +615,35 @@ impl FfmpegRunner {
 
     /// Probe a video file for metadata (duration, width, height, codec, fps).
     /// Uses `ffprobe` (bundled with ffmpeg) with JSON output.
+    /// Build an `ffmpeg` command restricted to local `file,pipe` protocols so
+    /// untrusted media inputs cannot trigger network/HLS/redirect SSRF (SEC-04).
+    fn ffmpeg_cmd(&self) -> Command {
+        let mut command = Command::new(&self.ffmpeg_path);
+        command.arg("-protocol_whitelist").arg("file,pipe");
+        command
+    }
+
+    /// Build an `ffprobe` command restricted to local `file,pipe` protocols (SEC-04).
+    fn ffprobe_cmd() -> Command {
+        let mut command = Command::new("ffprobe");
+        command.arg("-protocol_whitelist").arg("file,pipe");
+        command
+    }
+
     pub async fn probe(&self, input: &str) -> Result<VideoProbeInfo, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
         // ffprobe is typically at the same path as ffmpeg with "probe" suffix,
         // or in the same directory. Try "ffprobe" on PATH.
-        let output = Command::new("ffprobe")
+        let output = Self::ffprobe_cmd()
             .arg("-v")
             .arg("error")
             .arg("-print_format")
             .arg("json")
             .arg("-show_format")
             .arg("-show_streams")
+            .arg("-i")
             .arg(input)
             .kill_on_drop(true)
             .output()
@@ -974,7 +990,7 @@ impl FfmpegRunner {
         video_args: &'static [&'static str],
     ) -> Result<PathBuf, crate::MediaError> {
         let output = RollbackOwnedOutput::new(self.output_path("mp4"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{start:.3}"))
@@ -1094,7 +1110,7 @@ impl FfmpegRunner {
         let filter_complex =
             format!("[1:a]atrim=start={rel_start:.3}:end={rel_end:.3},asetpts=PTS-STARTPTS[aout]");
         let output = RollbackOwnedOutput::new(self.output_path("mp4"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-i")
             .arg(part)
@@ -1160,7 +1176,7 @@ impl FfmpegRunner {
             ));
         }
         let output = RollbackOwnedOutput::new(self.output_path("mp4"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{seek:.3}"))
@@ -1217,7 +1233,7 @@ impl FfmpegRunner {
         let output = RollbackOwnedOutput::new(self.output_path("gif"));
         let frames = format!("fps={fps},scale={width}:-1:flags=lanczos");
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
@@ -1240,7 +1256,7 @@ impl FfmpegRunner {
             });
         }
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
@@ -1307,7 +1323,7 @@ impl FfmpegRunner {
             y_pos
         );
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-i")
             .arg(input)
@@ -1341,7 +1357,7 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("s16le"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-y")
             .arg("-ss")
@@ -1391,7 +1407,7 @@ impl FfmpegRunner {
 
         let output = RollbackOwnedOutput::new(self.output_path("mp3"));
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-y")
             .arg("-i")
@@ -1560,7 +1576,7 @@ impl FfmpegRunner {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
-        let output = Command::new("ffprobe")
+        let output = Self::ffprobe_cmd()
             .arg("-v")
             .arg("error")
             .arg("-select_streams")
@@ -1571,6 +1587,7 @@ impl FfmpegRunner {
             .arg("frame=pts_time")
             .arg("-of")
             .arg("csv=p=0")
+            .arg("-i")
             .arg(input)
             .kill_on_drop(true)
             .output()
@@ -1617,7 +1634,7 @@ impl FfmpegRunner {
         self.ensure_temp_dir()?;
 
         let output = RollbackOwnedOutput::new(self.output_path("mp4"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
@@ -1691,7 +1708,7 @@ impl FfmpegRunner {
             ))
         })?;
         let pattern = scratch.join("part_%03d.mp4");
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-y")
             .arg("-i")
@@ -1803,7 +1820,7 @@ impl FfmpegRunner {
         };
         let pattern = frames.directory.join("frame_%03d.jpg");
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-copyts")
             .arg("-i")
@@ -1893,7 +1910,7 @@ impl FfmpegRunner {
         let filter = format!(
             "select='isnan(prev_selected_t)+gte(t-prev_selected_t,{min_shot_sec:.3})*gt(scene,{threshold:.3})',showinfo"
         );
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-copyts")
             .arg("-i")
@@ -1971,7 +1988,7 @@ impl FfmpegRunner {
         };
         let pattern = frames.directory.join("frame_%03d.jpg");
 
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{start_sec:.3}"))
@@ -2081,7 +2098,7 @@ impl FfmpegRunner {
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let duration = end_sec - start_sec;
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         command
             .arg("-ss")
             .arg(format!("{:.3}", start_sec))
@@ -2135,7 +2152,7 @@ impl FfmpegRunner {
         let codec = codec.unwrap_or("pcm_s16le");
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
-        let mut command = Command::new(&self.ffmpeg_path);
+        let mut command = self.ffmpeg_cmd();
         let mut graph = String::new();
         for (index, path) in audio_paths.iter().enumerate() {
             command.arg("-i").arg(path);

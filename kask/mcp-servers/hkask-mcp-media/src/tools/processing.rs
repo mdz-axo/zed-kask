@@ -1235,7 +1235,7 @@ mod curation_tests {
         use sha2::Digest;
 
         let store = store();
-        let dir = tempfile::tempdir().expect("temp dir");
+        let dir = crate::test_support::contained_tempdir().expect("temp dir");
         let media = dir.path().join("source.mp4");
         std::fs::write(&media, b"local source bytes").expect("write source");
         let snapshot = SourceSnapshot::capture(&store, &media.to_string_lossy())
@@ -1284,7 +1284,7 @@ mod curation_tests {
 
     #[tokio::test]
     async fn missing_source_is_not_found_before_processing() {
-        let root = tempfile::tempdir().expect("tempdir");
+        let root = crate::test_support::contained_tempdir().expect("tempdir");
         let path = root.path().join("missing.mp4").display().to_string();
         let server = server(store(), FfmpegRunner::detect());
         let extract = server
@@ -1355,7 +1355,7 @@ mod curation_tests {
             crate::models::VISION_ENV,
             std::ffi::OsStr::new("mock/visual"),
         );
-        let root = tempfile::tempdir()?;
+        let root = crate::test_support::contained_tempdir()?;
         // A real video: the tool probes the source before the (fake)
         // extractor runs.
         let source = root.path().join("original.mp4");
@@ -1412,7 +1412,7 @@ mod curation_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
         let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let root = tempfile::tempdir()?;
+        let root = crate::test_support::contained_tempdir()?;
         let _guard = EnvironmentGuard::set("HKASK_ARTIFACTS_DIR", root.path().as_os_str());
         // A real video: the tool probes the source before the (fake)
         // extractor runs.

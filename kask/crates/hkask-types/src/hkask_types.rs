@@ -24,6 +24,7 @@ pub mod kanban_wire;
 pub mod maybe_string;
 pub mod media_wire;
 pub mod model_names;
+pub mod net_guard;
 pub mod nostr_wire;
 pub mod ocr_health;
 pub mod wallet_wire;

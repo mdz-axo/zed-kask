@@ -2040,6 +2040,11 @@ pub struct KaskMediaSettingsContent {
     pub vision_model: Option<String>,
     pub sound_annotation_model: Option<String>,
     pub tagging_model: Option<String>,
+    /// Additional operator-authorized local directories that `hkask-mcp-media`
+    /// may read/organize in place (read-only; destructive deletes remain
+    /// confined to the project root and `~/Documents/zk-data/media-mcp/`).
+    /// Empty by default (fail-closed to standard D28 roots).
+    pub allowed_gallery_roots: Option<Vec<String>>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

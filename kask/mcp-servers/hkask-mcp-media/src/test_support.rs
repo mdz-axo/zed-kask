@@ -18,6 +18,14 @@ use hkask_storage::database::driver::{DatabaseDriver, TransactionOps};
 use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 
+/// Create a temporary directory inside the crate's manifest directory (an
+/// allowed containment root under `hkask_mcp_server::contain_for_read` /
+/// `contain_for_write`, mirroring `hkask-mcp-server/src/server/validation.rs`)
+/// so legitimate fixture tests exercise the real production containment path.
+pub(crate) fn contained_tempdir() -> std::io::Result<tempfile::TempDir> {
+    tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))
+}
+
 /// Generate the `InferencePort` impl for a media test stub. `generate` is
 /// the text surface — most media stubs never exercise it (one body:
 /// panic, a canned error, or a canned result); `generate_vision` is the

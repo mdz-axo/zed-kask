@@ -74,7 +74,7 @@ struct TranscriptLinkedAsset {
 async fn transcript_linked_audio_asset(
     mode: &str,
 ) -> Result<TranscriptLinkedAsset, Box<dyn std::error::Error>> {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let root = fixture.path().join("root");
     std::fs::create_dir(&root)?;
     let source = root.join("source.wav");
@@ -261,7 +261,7 @@ async fn asset_file_deletion_failure_preserves_gallery_and_transcript_identity()
 /// (not dropped) so its registrations outlive the test body.
 fn two_created_dir_roots()
 -> std::io::Result<(tempfile::TempDir, std::path::PathBuf, std::path::PathBuf)> {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let first = fixture.path().join("first");
     let second = fixture.path().join("second");
     std::fs::create_dir(&first)?;
@@ -333,7 +333,7 @@ async fn reopen_two_roots_aliases_and_failure_preserves_activation() -> TestResu
 /// expect: Missing files retain tags, albums and lineage; reappearance restores the same ID. [P1]
 #[tokio::test]
 async fn missing_return_changed_and_partial_coverage() -> TestResult {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let root = fixture.path().join("root");
     std::fs::create_dir(&root)?;
     let path = root.join("one.png");
@@ -432,7 +432,7 @@ async fn missing_return_changed_and_partial_coverage() -> TestResult {
 /// expect: Nonrecursive scans do not hide nested images, external imports, or audio/video. [P1]
 #[tokio::test]
 async fn scope_and_identical_copies_keep_distinct_path_identities() -> TestResult {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let root = fixture.path().join("root");
     std::fs::create_dir_all(root.join("nested"))?;
     png(&root.join("a.png"), 1);
@@ -516,7 +516,7 @@ async fn scope_and_identical_copies_keep_distinct_path_identities() -> TestResul
 /// contains it, whichever gallery happens to be active. [P1]
 #[tokio::test]
 async fn add_media_files_under_the_containing_gallery() -> TestResult {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let owner = fixture.path().join("owner");
     let active = fixture.path().join("active");
     std::fs::create_dir_all(&owner)?;
@@ -547,7 +547,7 @@ async fn add_media_files_under_the_containing_gallery() -> TestResult {
 /// expect: A failed reconciliation rolls back physical changes and missing transitions together. [P1]
 #[tokio::test]
 async fn reconciliation_rolls_back_on_injected_insert_failure() -> TestResult {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let root = fixture.path().join("root");
     std::fs::create_dir(&root)?;
     png(&root.join("a.png"), 1);
@@ -759,7 +759,7 @@ async fn stale_image_analysis(
     ),
     Box<dyn std::error::Error>,
 > {
-    let fixture = tempfile::tempdir()?;
+    let fixture = crate::test_support::contained_tempdir()?;
     let root = fixture.path().join("root");
     std::fs::create_dir(&root)?;
     png(&root.join("a.png"), 1);

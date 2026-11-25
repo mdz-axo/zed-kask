@@ -326,6 +326,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // HKASK_MEDIA_TAGGING_MODEL → the vision default.
             "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
             "HKASK_MEDIA_TAGGING_MODEL",
+            // Additional operator-authorized read-only gallery/media roots
+            // (kask.media.allowed_gallery_roots, JSON array of paths; empty by
+            // default — SEC-01 Option B).
+            "HKASK_MEDIA_ALLOWED_GALLERY_ROOTS",
             // Text-layer pass model override (operator process env — no
             // settings field yet; the media server falls back to the
             // vision/analysis model when unset).

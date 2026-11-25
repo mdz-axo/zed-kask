@@ -76,51 +76,15 @@ fn entries(raw: Option<&str>) -> impl Iterator<Item = &str> {
 }
 
 fn ipv4_is_public(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    let is_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 64;
-    let is_ietf_protocol = octets[0] == 192 && octets[1] == 0 && octets[2] == 0;
-    let is_benchmarking = octets[0] == 198 && (octets[1] & 0xfe) == 18;
-    let is_reserved = octets[0] >= 240;
-    !(ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || is_cgnat
-        || is_ietf_protocol
-        || is_benchmarking
-        || is_reserved)
+    hkask_types::net_guard::is_public_ipv4(ip)
 }
 
 fn ipv6_is_public(ip: Ipv6Addr) -> bool {
-    let segments = ip.segments();
-    let first = segments[0];
-    let unique_local = first & 0xfe00 == 0xfc00;
-    let link_local = first & 0xffc0 == 0xfe80;
-    let is_6to4 = first == 0x2002;
-    let is_nat64 = first == 0x0064 && segments[1] == 0xff9b;
-    !(ip.is_loopback()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-        || unique_local
-        || link_local
-        || is_6to4
-        || is_nat64)
-        && ip.to_ipv4_mapped().is_none_or(ipv4_is_public)
+    hkask_types::net_guard::is_public_ipv6(ip) && !hkask_types::net_guard::is_nat64_ipv6(ip)
 }
 
 fn domain_is_public(name: &str) -> bool {
-    let name = name.trim_end_matches('.').to_ascii_lowercase();
-    if name.is_empty() {
-        return false;
-    }
-    for suffix in ["localhost", "local", "internal", "home.arpa", "lan"] {
-        if name == suffix || name.ends_with(&format!(".{suffix}")) {
-            return false;
-        }
-    }
-    true
+    hkask_types::net_guard::is_public_hostname(name)
 }
 
 /// Accept a relay address for sync only if it is `wss://`, carries no

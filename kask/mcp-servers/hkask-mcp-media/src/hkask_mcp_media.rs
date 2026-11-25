@@ -163,20 +163,121 @@ pub(crate) fn is_local_media_path(input: &str) -> bool {
     true
 }
 
-/// A local input path that does not exist is the caller's error, not a
-/// server fault — reject it as `not_found` before ffmpeg/ffprobe/provider
-/// calls surface it as `internal`/`unavailable` (mcp-tool-review M-02: a
-/// nonexistent local file previously classified as a server error kind —
-/// live probes 2026-10-04 returned `[internal] ffprobe … No such file or
-/// directory` and `[unavailable] Connection error: audio file read
-/// failed`). Remote inputs (URLs, data URIs) pass through untouched —
-/// their existence is the remote side's to discover.
+/// Environment variable carrying operator-authorized read-only gallery/media
+/// roots (JSON array of path strings, emitted from
+/// `kask.media.allowed_gallery_roots` — SEC-01 Option B).
+pub(crate) const ALLOWED_GALLERY_ROOTS_ENV: &str = "HKASK_MEDIA_ALLOWED_GALLERY_ROOTS";
+
+/// Parse `HKASK_MEDIA_ALLOWED_GALLERY_ROOTS` into canonicalized existing
+/// directory paths. Unset or empty means no external roots are admitted
+/// (fail-closed to standard D28 roots).
+pub(crate) fn configured_allowed_gallery_roots() -> Vec<PathBuf> {
+    let Ok(raw) = std::env::var(ALLOWED_GALLERY_ROOTS_ENV) else {
+        return Vec::new();
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let entries: Vec<String> = match serde_json::from_str::<Vec<String>>(trimmed) {
+        Ok(list) => list,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.media.paths",
+                env = ALLOWED_GALLERY_ROOTS_ENV,
+                %error,
+                "Ignoring malformed HKASK_MEDIA_ALLOWED_GALLERY_ROOTS env var (expected JSON array of paths)"
+            );
+            return Vec::new();
+        }
+    };
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let s = entry.trim();
+            if s.is_empty() {
+                return None;
+            }
+            let expanded = if let Some(rest) = s.strip_prefix("~/") {
+                home.as_ref().map(|h| h.join(rest))?
+            } else if s == "~" {
+                home.clone()?
+            } else {
+                PathBuf::from(s)
+            };
+            expanded.canonicalize().ok()
+        })
+        .collect()
+}
+
+/// Admit a caller-supplied local media path for reading or read-only/COW
+/// gallery organization (SEC-01 Option B).
+///
+/// Admits paths under standard D28 roots (`contain_for_read`: CWD/project root,
+/// `HKASK_DATA_DIR`, `~/Documents/zk-data`) OR under an operator-configured
+/// directory in `HKASK_MEDIA_ALLOWED_GALLERY_ROOTS`.
+///
+/// Missing targets return `not_found` (preserving M-02 error classification);
+/// existing targets outside every allowed root return `invalid_argument`.
+pub(crate) fn admit_local_media_read(input: &str) -> Result<PathBuf, McpToolError> {
+    let raw = input.strip_prefix("file://").unwrap_or(input);
+    let canonical = match std::path::Path::new(raw).canonicalize() {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(McpToolError::not_found(format!(
+                "Local media path does not exist: {raw}"
+            )));
+        }
+        Err(e) => {
+            return Err(McpToolError::invalid_argument(format!(
+                "Cannot resolve local media path '{raw}': {e}"
+            )));
+        }
+    };
+    if hkask_mcp_server::contain_for_read(raw).is_ok() {
+        return Ok(canonical);
+    }
+    let extra_roots = configured_allowed_gallery_roots();
+    if extra_roots.iter().any(|root| canonical.starts_with(root)) {
+        return Ok(canonical);
+    }
+    Err(McpToolError::invalid_argument(format!(
+        "Local media path '{}' is outside allowed roots (project root, kask data/artifacts dir, and kask.media.allowed_gallery_roots). \
+         Move the media under ~/Documents/zk-data or add its parent folder to kask.media.allowed_gallery_roots in settings.json.",
+        canonical.display()
+    )))
+}
+
+/// Admit a caller-supplied local path for destructive deletion (`mode="destructive"`
+/// or `gallery_delete_image(delete_file=true)`).
+///
+/// Strictly confined via `hkask_mcp_server::contain_for_write` (project root,
+/// `HKASK_DATA_DIR`, or `~/Documents/zk-data/media-mcp/`). External directories
+/// in `kask.media.allowed_gallery_roots` are intentionally read-only and never
+/// eligible for destructive deletion.
+pub(crate) fn admit_local_media_destructive_write(input: &str) -> Result<PathBuf, McpToolError> {
+    let raw = input.strip_prefix("file://").unwrap_or(input);
+    hkask_mcp_server::contain_for_write(raw).map_err(|e| {
+        McpToolError::permission_denied(format!(
+            "Destructive media operation refused outside writable roots (project root or ~/Documents/zk-data/media-mcp/); \
+             external kask.media.allowed_gallery_roots are read-only: {}",
+            e.message
+        ))
+    })
+}
+
+/// A local input path must exist AND lie within allowed media read roots
+/// (M-02 `not_found` + SEC-01 containment). Remote inputs (URLs, data URIs)
+/// pass through untouched — their validation runs at the SSRF boundary.
 pub(crate) fn ensure_local_input_exists(input: &str) -> Result<(), McpToolError> {
     if !is_local_media_path(input) {
         return Ok(());
     }
     let path = input.strip_prefix("file://").unwrap_or(input);
-    hkask_mcp_server::ensure_existing_file(path, "input file")
+    hkask_mcp_server::ensure_existing_file(path, "input file")?;
+    admit_local_media_read(path)?;
+    Ok(())
 }
 
 /// Lock-free snapshot of gallery state — safe to hold across .await points.
@@ -484,6 +585,65 @@ impl rmcp::ServerHandler for MediaServer {}
 
 #[cfg(test)]
 mod tool_surface_tests;
+
+#[cfg(test)]
+mod security_containment_tests {
+    use super::*;
+
+    /// expect: "Uncontained local paths outside project/data/artifacts roots are
+    /// refused by default; operator-configured allowed_gallery_roots admits
+    /// read-only access while still refusing destructive writes (SEC-01 Option B)." [P4]
+    #[tokio::test]
+    async fn allowed_gallery_roots_enforces_fail_closed_and_read_only_external_roots() {
+        let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let outside = tempfile::tempdir().expect("uncontained /tmp fixture");
+        let file = outside.path().join("secret.png");
+        std::fs::write(&file, b"png").expect("write fixture");
+
+        let prior = std::env::var(ALLOWED_GALLERY_ROOTS_ENV).ok();
+        unsafe { std::env::remove_var(ALLOWED_GALLERY_ROOTS_ENV) };
+
+        // 1. Default (unset): uncontained /tmp file is refused.
+        let err = admit_local_media_read(file.to_str().unwrap()).expect_err(
+            "uncontained /tmp path must be refused when allowed_gallery_roots is unset",
+        );
+        assert_eq!(err.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+        // 2. Configured in HKASK_MEDIA_ALLOWED_GALLERY_ROOTS: read succeeds,
+        //    destructive write STILL refused.
+        let encoded = serde_json::to_string(&vec![outside.path().to_string_lossy().to_string()])
+            .expect("encode json");
+        unsafe { std::env::set_var(ALLOWED_GALLERY_ROOTS_ENV, &encoded) };
+
+        let admitted = admit_local_media_read(file.to_str().unwrap())
+            .expect("explicitly allowlisted gallery root must be readable");
+        assert_eq!(admitted, file.canonicalize().unwrap());
+
+        let destructive_err = admit_local_media_destructive_write(file.to_str().unwrap())
+            .expect_err("external allowed_gallery_roots must remain read-only for destructive ops");
+        assert_eq!(
+            destructive_err.kind,
+            hkask_types::McpErrorKind::PermissionDenied
+        );
+
+        match prior {
+            Some(v) => unsafe { std::env::set_var(ALLOWED_GALLERY_ROOTS_ENV, v) },
+            None => unsafe { std::env::remove_var(ALLOWED_GALLERY_ROOTS_ENV) },
+        }
+    }
+
+    /// expect: "load_image_as_png_base64 rejects loopback HTTP URLs (SEC-02)." [P4]
+    #[tokio::test]
+    async fn load_image_as_png_base64_rejects_loopback_http_ssrf() {
+        let err = crate::gallery::vision::load_image_as_png_base64("http://127.0.0.1:9/img.png")
+            .await
+            .expect_err("loopback HTTP URL must be rejected");
+        assert!(
+            err.to_string().contains("invalid asset URL"),
+            "unexpected error: {err}"
+        );
+    }
+}
 
 /// Run the media MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {

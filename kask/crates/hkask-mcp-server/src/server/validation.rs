@@ -276,6 +276,11 @@ pub fn resolve_max_read_bytes() -> u64 {
 /// Canonicalize `path` for a target that may not exist yet (writes): resolve
 /// the nearest existing ancestor, then re-append the remaining components.
 /// Reads use `Path::canonicalize` directly (the target must exist).
+///
+/// Any walked component that exists as a symlink (dangling symlink, where
+/// `canonicalize` returned `NotFound` because the target does not exist yet) is
+/// rejected so callers that open the returned path without `O_NOFOLLOW` cannot
+/// be redirected outside the allowed roots (SEC-05).
 fn canonicalize_lenient(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     match path.canonicalize() {
         Ok(canonical) => Ok(canonical),
@@ -283,6 +288,17 @@ fn canonicalize_lenient(path: &std::path::Path) -> std::io::Result<std::path::Pa
             let mut ancestor = path;
             let mut suffix: Vec<&std::ffi::OsStr> = Vec::new();
             loop {
+                if let Ok(meta) = std::fs::symlink_metadata(ancestor)
+                    && meta.file_type().is_symlink()
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "refusing dangling symlink '{}' on write path",
+                            ancestor.display()
+                        ),
+                    ));
+                }
                 match ancestor.parent() {
                     Some(parent) => {
                         if let Some(name) = ancestor.file_name() {
@@ -537,6 +553,29 @@ mod tests {
         assert!(
             !real_target.exists(),
             "the symlinked write must not have reached the outside target"
+        );
+        Ok(())
+    }
+
+    /// expect: "contain_for_write itself refuses a dangling symlink pointing
+    /// outside the allowed root (SEC-05), protecting callers that do not use
+    /// write_contained's O_NOFOLLOW open." [P4]
+    #[test]
+    #[cfg(unix)]
+    fn contain_for_write_refuses_dangling_symlink_escape() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let outside = tempfile::tempdir()?;
+        let outside_target = outside.path().join("escaped-new.jsonl");
+        let symlinked = dir.path().join("out.jsonl");
+        std::os::unix::fs::symlink(&outside_target, &symlinked)?;
+
+        let err = contain_for_write(&symlinked.to_string_lossy())
+            .expect_err("dangling symlink must be refused by contain_for_write");
+        assert_eq!(err.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            err.to_string().contains("symlink"),
+            "error should name the symlink refusal: {err}"
         );
         Ok(())
     }

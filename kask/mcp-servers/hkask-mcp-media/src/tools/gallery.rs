@@ -390,6 +390,10 @@ impl MediaServer {
 
             let raw_path = PathBuf::from(&path);
             hkask_mcp_server::ensure_existing_dir(&raw_path, "Gallery path")?;
+            let canonical_path = crate::admit_local_media_read(&path)?;
+            if gallery_mode == GalleryMode::Destructive {
+                crate::admit_local_media_destructive_write(&canonical_path.to_string_lossy())?;
+            }
             let mut state = GalleryState::new(raw_path, gallery_mode.clone());
             state.validate().map_err(map_media_error)?;
             let record = self
@@ -985,9 +989,11 @@ impl MediaServer {
             let style_str = style.as_deref().unwrap_or("descriptive");
             require_one_of("style", style_str, &CAPTION_STYLES)?;
             let _admission = self.admit_heavy_operation()?;
-            // Gallery asset paths are local files; the SSRF validator is for
-            // network URLs (see `is_local_media_path`).
-            if !crate::is_local_media_path(&image_url) {
+            // Local files must lie within allowed read roots (SEC-01); network
+            // URLs pass DNS-validated SSRF checks.
+            if crate::is_local_media_path(&image_url) {
+                crate::admit_local_media_read(&image_url)?;
+            } else {
                 validate_tool_url_with_dns(&image_url).await?;
             }
             let mut vars = HashMap::new();
@@ -1635,6 +1641,7 @@ impl MediaServer {
                         owner.root_path, owner.mode
                     )));
                 }
+                crate::admit_local_media_destructive_write(&image.absolute_path)?;
                 let path = std::path::Path::new(&image.absolute_path);
                 std::fs::remove_file(path).map_err(|error| {
                     map_media_error(MediaError::AssetPersistence(format!(
@@ -2033,7 +2040,7 @@ pub(super) mod tests {
         }
 
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         image::RgbImage::new(2, 2).save(dir.path().join("one.png"))?;
         server
             .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
@@ -2099,7 +2106,7 @@ pub(super) mod tests {
     async fn historical_workflow_is_readable_through_lineage()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         image::RgbImage::new(2, 2).save(dir.path().join("historical.png"))?;
         server
             .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
@@ -2146,7 +2153,7 @@ pub(super) mod tests {
     async fn researcher_annotations_roundtrip_scan_analysis_search_and_owned_delete()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         let path = dir.path().join("specimen.png");
         image::RgbImage::new(2, 2).save(&path)?;
         let original = std::fs::read(&path)?;
@@ -2384,8 +2391,8 @@ pub(super) mod tests {
     async fn deleting_a_file_needs_the_owning_gallery_to_be_destructive()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let read_only = tempfile::tempdir()?;
-        let destructive = tempfile::tempdir()?;
+        let read_only = crate::test_support::contained_tempdir()?;
+        let destructive = crate::test_support::contained_tempdir()?;
         organize(&server, read_only.path(), 1, "read-only").await?;
         let kept = payload(
             &server
@@ -2432,8 +2439,8 @@ pub(super) mod tests {
     async fn album_tools_resolve_the_album_within_the_current_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let first = tempfile::tempdir()?;
-        let second = tempfile::tempdir()?;
+        let first = crate::test_support::contained_tempdir()?;
+        let second = crate::test_support::contained_tempdir()?;
         organize(&server, first.path(), 1, "read-only").await?;
         let album = payload(
             &server
@@ -2526,7 +2533,7 @@ pub(super) mod tests {
     async fn search_and_listing_bounds_are_refused_not_answered_empty()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         organize(&server, dir.path(), 2, "read-only").await?;
         for arguments in [
             serde_json::json!({"query": "zz", "limit": 0}),
@@ -2602,7 +2609,7 @@ pub(super) mod tests {
             );
         }
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         organize(&server, dir.path(), 2, "read-only").await?;
         let timeline = payload(
             &server
@@ -2625,7 +2632,7 @@ pub(super) mod tests {
     async fn timeline_groups_photographs_by_capture_date() -> Result<(), Box<dyn std::error::Error>>
     {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         crate::test_support::jpeg_with_capture_date(
             &dir.path().join("zz-2019.jpg"),
             "2019:07:04 10:00:00",
@@ -2661,7 +2668,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn naming_or_registering_nothing_is_refused() -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         organize(&server, dir.path(), 1, "read-only").await?;
         let unnamed = server
             .gallery_name_face(wire(
@@ -2699,7 +2706,7 @@ pub(super) mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use sha2::Digest;
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         organize(&server, dir.path(), 1, "read-only").await?;
         let wav = dir.path().join("zz-tone.wav");
         let made = tokio::process::Command::new("ffmpeg")
@@ -2778,7 +2785,7 @@ pub(super) mod tests {
     async fn every_enumerated_value_is_accepted_by_its_handler()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = research_server();
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         organize(&server, dir.path(), 2, "read-only").await?;
         let asset = payload(
             &server
@@ -3042,7 +3049,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn describe_image_refuses_an_unknown_style_before_inference()
     -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempfile::tempdir()?;
+        let dir = crate::test_support::contained_tempdir()?;
         let image = dir.path().join("zz.png");
         image::RgbImage::new(2, 2).save(&image)?;
         // research_server's port panics on any inference call.

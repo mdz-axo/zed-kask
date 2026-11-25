@@ -1261,4 +1261,15 @@ mod tests {
         .expect("local path read");
         assert_eq!(bytes, b"RIFF".to_vec());
     }
+
+    #[tokio::test]
+    async fn download_audio_bytes_rejects_loopback_ssrf() {
+        let err = download_audio_bytes(&reqwest::Client::new(), "http://127.0.0.1:9/audio.wav")
+            .await
+            .expect_err("loopback HTTP URL must be refused by SSRF-hardened audio downloader");
+        assert!(
+            err.to_string().contains("audio download failed"),
+            "unexpected error: {err}"
+        );
+    }
 }

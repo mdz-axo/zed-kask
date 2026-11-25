@@ -457,6 +457,7 @@ fn media_config_env_allowlist_matches_actual_reads() {
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
             "HKASK_MEDIA_TAGGING_MODEL",
+            "HKASK_MEDIA_ALLOWED_GALLERY_ROOTS",
             "HKASK_MEDIA_PASS_MODEL",
             "HKASK_EMBEDDING_MODEL",
         ],

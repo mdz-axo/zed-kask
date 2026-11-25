@@ -63,19 +63,10 @@ pub(crate) async fn load_image_as_png_base64(
                 crate::MediaError::VisionApi(format!("Invalid base64 image payload: {e}"))
             })?
     } else if image_source.starts_with("http://") || image_source.starts_with("https://") {
-        reqwest::get(image_source)
-            .await
-            .map_err(|e| {
-                crate::MediaError::VisionApi(format!("Failed to fetch image '{image_source}': {e}"))
-            })?
-            .bytes()
-            .await
-            .map_err(|e| {
-                crate::MediaError::VisionApi(format!(
-                    "Failed to read image bytes from '{image_source}': {e}"
-                ))
-            })?
-            .to_vec()
+        const MAX_VISION_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+        crate::assets::download_asset_with_limit(image_source, MAX_VISION_IMAGE_BYTES, false)
+            .await?
+            .bytes
     } else {
         let path = image_source.strip_prefix("file://").unwrap_or(image_source);
         tokio::fs::read(path).await.map_err(|e| {

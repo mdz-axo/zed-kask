@@ -521,6 +521,10 @@ pub struct KaskMediaSettings {
     /// Grounded-tagging model for the vision pass's grounded mode (env
     /// `HKASK_MEDIA_TAGGING_MODEL`).
     pub tagging_model: String,
+    /// Additional operator-authorized local directories that `hkask-mcp-media`
+    /// may read/organize in place (env `HKASK_MEDIA_ALLOWED_GALLERY_ROOTS`,
+    /// JSON array of path strings). Empty by default (fail-closed).
+    pub allowed_gallery_roots: Vec<String>,
 }
 
 impl Default for KaskMediaSettings {
@@ -537,6 +541,7 @@ impl Default for KaskMediaSettings {
                 hkask_inference::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL.to_string(),
             tagging_model: hkask_inference::model_constants::DEFAULT_MEDIA_TAGGING_MODEL
                 .to_string(),
+            allowed_gallery_roots: Vec::new(),
         }
     }
 }
@@ -1253,6 +1258,9 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
                 .sound_annotation_model
                 .unwrap_or(default.sound_annotation_model),
             tagging_model: c.tagging_model.unwrap_or(default.tagging_model),
+            allowed_gallery_roots: c
+                .allowed_gallery_roots
+                .unwrap_or(default.allowed_gallery_roots),
         }
     }
 }
@@ -1402,12 +1410,13 @@ mod tests {
         );
         let serialized = serde_json::to_value(default).expect("serialize research media settings");
         let fields = serialized.as_object().expect("media settings object");
-        assert_eq!(fields.len(), 5);
+        assert_eq!(fields.len(), 6);
         assert!(fields.contains_key("stt_model"));
         assert!(fields.contains_key("cross_check_stt_models"));
         assert!(fields.contains_key("vision_model"));
         assert!(fields.contains_key("sound_annotation_model"));
         assert!(fields.contains_key("tagging_model"));
+        assert!(fields.contains_key("allowed_gallery_roots"));
     }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user

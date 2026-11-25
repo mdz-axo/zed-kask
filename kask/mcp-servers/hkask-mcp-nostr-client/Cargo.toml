@@ -24,7 +24,7 @@ hkask-bridge-ontology.workspace = true
 # editor holds the key and the approval; this server only carries the
 # note's text and the target relays over the wire.
 hkask-inference.workspace = true
-hkask-mcp-server.workspace = true
+hkask-mcp-server = { workspace = true, features = ["http-guard"] }
 # Public Nostr operations only. This server parses untrusted relay text, so it
 # must never depend on hkask-nostr-signer; `pin hkask-mcp-nostr-client
 # hkask-nostr-signer` (plan, "Tested commands") checks that.

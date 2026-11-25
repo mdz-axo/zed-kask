@@ -180,20 +180,11 @@ fn is_public_https_media_url(raw: &str) -> bool {
     if scheme != "https" {
         return false;
     }
-    if host == "localhost" || host.ends_with(".localhost") {
+    if !hkask_types::net_guard::is_public_hostname(&host) {
         return false;
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return match ip {
-            std::net::IpAddr::V4(v4) => {
-                !(v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_broadcast())
-            }
-            std::net::IpAddr::V6(v6) => !(v6.is_loopback() || v6.is_unspecified()),
-        };
+        return hkask_types::net_guard::is_public_ip(ip);
     }
     true
 }
@@ -289,10 +280,17 @@ pub(crate) fn admit_blossom_upload(
             "the Blossom token has no expiration",
         ));
     };
+    const MAX_BLOSSOM_UPLOAD_TTL_SECS: u64 = 600;
     if expiration <= created_at {
         return Err(refusal(
             "InvalidArgument",
             "the Blossom token expiration must be strictly after created_at",
+        ));
+    }
+    if expiration - created_at > MAX_BLOSSOM_UPLOAD_TTL_SECS {
+        return Err(refusal(
+            "InvalidArgument",
+            format!("the Blossom token TTL must not exceed {MAX_BLOSSOM_UPLOAD_TTL_SECS} seconds"),
         ));
     }
     if server_domains.is_empty() || server_domains.len() > hkask_nostr_signer::MAX_BLOSSOM_SERVERS {

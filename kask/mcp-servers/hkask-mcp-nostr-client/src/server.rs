@@ -1992,7 +1992,7 @@ impl NostrClientServer {
             let allow_loopback = cfg!(feature = "test-fixture");
             let endpoint = crate::zaps::lud16_to_lnurlp_url(&request.lud16, allow_loopback)
                 .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
-            let http = crate::zaps::build_no_redirect_http_client()
+            let http = crate::zaps::build_no_redirect_http_client_with_loopback(allow_loopback)
                 .map_err(|e| McpToolError::unavailable(e.to_string()))?;
             let meta =
                 crate::zaps::fetch_lnurl_pay_metadata(&http, &endpoint, amount_msat, allow_loopback)

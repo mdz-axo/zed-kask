@@ -9,8 +9,9 @@
 //! `http://[::1]:<port>`) is permitted **only** when `allow_loopback` is
 //! explicitly `true` (regtest or test fixtures).
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 
+use hkask_types::net_guard;
 use thiserror::Error;
 use url::Url;
 
@@ -62,79 +63,23 @@ pub enum UrlError {
     NonPublicIp,
 }
 
-fn is_non_public_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    let is_cgnat = octets[0] == 100 && (octets[1] & 0b1100_0000) == 64;
-    let is_benchmarking = octets[0] == 198 && (octets[1] == 18 || octets[1] == 19);
-    let is_documentation = (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
-        || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
-        || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113);
-    let is_reserved_high = octets[0] >= 240;
-
-    ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || is_cgnat
-        || is_benchmarking
-        || is_documentation
-        || is_reserved_high
-}
-
-fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
-    if let Some(mapped) = ip.to_ipv4_mapped() {
-        return is_non_public_ipv4(mapped);
-    }
-    let segs = ip.segments();
-    let is_ula = (segs[0] & 0xfe00) == 0xfc00;
-    let is_link_local = (segs[0] & 0xffc0) == 0xfe80;
-    let is_documentation = segs[0] == 0x2001 && segs[1] == 0x0db8;
-
-    ip.is_loopback()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-        || is_ula
-        || is_link_local
-        || is_documentation
-}
-
-fn is_loopback_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_loopback(),
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
-        }
-    }
-}
-
 /// Validate a DNS-resolved IP address before opening a TCP/TLS connection.
 pub fn validate_resolved_ip(ip: IpAddr, allow_loopback: bool) -> Result<(), UrlError> {
-    if allow_loopback && is_loopback_ip(ip) {
+    if allow_loopback && net_guard::is_loopback_ip(ip) {
         return Ok(());
     }
-    let blocked = match ip {
-        IpAddr::V4(v4) => is_non_public_ipv4(v4),
-        IpAddr::V6(v6) => is_non_public_ipv6(v6),
-    };
-    if blocked {
+    if !net_guard::is_public_ip(ip) {
         return Err(UrlError::NonPublicIp);
     }
     Ok(())
 }
 
 fn is_loopback_hostname(host: &str) -> bool {
-    host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+    net_guard::is_loopback_hostname(host)
 }
 
 fn is_disallowed_local_hostname(host: &str) -> bool {
-    host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
-        || host.ends_with(".localdomain")
-        || !host.contains('.')
+    !net_guard::is_public_fqdn(host)
 }
 
 /// Validate an external Cashu mint or LNURL URL under the D110 SSRF perimeter.
@@ -275,6 +220,7 @@ mod tests {
     mod prop {
         use super::*;
         use proptest::prelude::*;
+        use std::net::Ipv4Addr;
 
         proptest! {
             #[test]

@@ -8790,6 +8790,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "zed-reqwest",
 ]
 
 [[package]]
@@ -9059,6 +9061,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -9083,6 +9086,7 @@ dependencies = [
  "async-trait",
  "bip39",
  "hex",
+ "hkask-types",
  "hmac 0.12.1",
  "lightning-invoice",
  "proptest",

@@ -716,12 +716,11 @@ pub(crate) async fn download_asset_with_limit(
     allow_loopback_fixture: bool,
 ) -> Result<DownloadedAsset, MediaError> {
     validate_download_url(url, allow_loopback_fixture).await?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect_policy(reqwest::redirect::Policy::none())
-        .timeout(DOWNLOAD_ASSET_TIMEOUT)
-        .build()
-        .map_err(|e| MediaError::AssetPersistence(format!("build download client: {e}")))?;
+    let client = hkask_mcp_server::http_guard::build_ssrf_safe_client(
+        DOWNLOAD_ASSET_TIMEOUT,
+        allow_loopback_fixture,
+    )
+    .map_err(|e| MediaError::AssetPersistence(format!("build download client: {e}")))?;
     let mut resp = client
         .get(url)
         .send()

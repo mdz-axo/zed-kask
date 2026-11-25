@@ -12,6 +12,7 @@ path = "src/hkask_wallet_core.rs"
 async-trait.workspace = true
 bip39.workspace = true
 hex.workspace = true
+hkask-types.workspace = true
 hmac.workspace = true
 lightning-invoice.workspace = true
 rand.workspace = true

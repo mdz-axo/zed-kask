@@ -10,6 +10,9 @@
 pub(crate) mod security;
 pub mod server;
 
+#[cfg(feature = "http-guard")]
+pub use security::http_guard;
+
 // NOTE: The canonical MCP server registry lives in
 // `kask_bridge::mcp_servers::BUILT_IN_MCP_SERVERS` (id + binary + description).
 // Do NOT re-introduce a parallel list here — it drifts (the previous

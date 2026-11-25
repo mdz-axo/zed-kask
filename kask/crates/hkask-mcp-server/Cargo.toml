@@ -20,6 +20,8 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
+url.workspace = true
+reqwest = { workspace = true, optional = true }
 # `O_NOFOLLOW` for `write_contained`'s symlink-resistant open (F4). Unix-only;
 # already a workspace dependency (transitively present via libsqlite3-sys).
 [target.'cfg(unix)'.dependencies]
@@ -27,6 +29,10 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[features]
+default = []
+http-guard = ["dep:reqwest"]
 
 [lints]
 workspace = true

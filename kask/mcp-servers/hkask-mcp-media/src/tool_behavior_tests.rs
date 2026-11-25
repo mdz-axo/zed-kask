@@ -162,9 +162,9 @@ async fn video_extract_frames_reports_partial_and_cleans_failed_copies()
     use std::os::unix::fs::PermissionsExt;
 
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
-    let gallery_root = tempfile::tempdir()?;
+    let gallery_root = crate::test_support::contained_tempdir()?;
     let template = artifacts.path().join("valid.jpg");
     image::RgbImage::new(2, 2).save(&template)?;
     let fake_ffmpeg = artifacts.path().join("extract-mixed.sh");
@@ -245,7 +245,7 @@ async fn video_extract_frames_reports_partial_and_cleans_failed_copies()
 async fn organized_single_image_gallery()
 -> Result<(MediaServer, tempfile::TempDir), Box<dyn std::error::Error>> {
     let server = make_server();
-    let directory = tempfile::tempdir()?;
+    let directory = crate::test_support::contained_tempdir()?;
     image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
     server
         .gallery_organize(read_only_organize_request(directory.path()))
@@ -306,10 +306,10 @@ async fn gallery_rescan_preserves_identity() -> Result<(), Box<dyn std::error::E
 async fn collage_refuses_impossible_canvases_and_unknown_layouts()
 -> Result<(), Box<dyn std::error::Error>> {
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
     let server = make_server();
-    let directory = tempfile::tempdir()?;
+    let directory = crate::test_support::contained_tempdir()?;
     for name in ["a", "b", "c", "d", "e", "f", "g"] {
         image::RgbImage::new(2, 2).save(directory.path().join(format!("{name}.png")))?;
     }
@@ -370,10 +370,10 @@ async fn collage_refuses_impossible_canvases_and_unknown_layouts()
 #[tokio::test]
 async fn collage_publishes_through_canonical_storage() -> Result<(), Box<dyn std::error::Error>> {
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
     let server = make_server();
-    let directory = tempfile::tempdir()?;
+    let directory = crate::test_support::contained_tempdir()?;
     image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
     image::RgbImage::new(2, 2).save(directory.path().join("two.png"))?;
     server
@@ -520,9 +520,9 @@ async fn media_test_env() -> Result<
     Box<dyn std::error::Error>,
 > {
     let env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let env = ArtifactsEnvGuard::set(artifacts.path());
-    let gallery_root = tempfile::tempdir()?;
+    let gallery_root = crate::test_support::contained_tempdir()?;
     let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
     let gallery = store.open(
         gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
@@ -648,10 +648,10 @@ struct TwoGalleryArms {
 
 #[cfg(unix)]
 async fn two_gallery_arms() -> Result<TwoGalleryArms, Box<dyn std::error::Error>> {
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
-    let gallery_a_root = tempfile::tempdir()?;
-    let gallery_b_root = tempfile::tempdir()?;
+    let gallery_a_root = crate::test_support::contained_tempdir()?;
+    let gallery_b_root = crate::test_support::contained_tempdir()?;
     let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
     let gallery_a = store.open(
         gallery_a_root
@@ -1575,7 +1575,7 @@ async fn an_audio_reel_is_pcm_of_the_kept_length_at_the_source_bit_depth()
 #[tokio::test]
 async fn a_missing_binary_names_the_install_and_is_not_a_tool_fault()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let source = root.path().join("zz.wav");
     std::fs::write(&source, b"zz")?;
     let mut server = make_server();
@@ -1937,9 +1937,9 @@ async fn omc_graph_failure_rolls_back_file_asset_lineage_and_graph()
 async fn video_clip_publishes_durable_asset_and_lineage_across_store_reopen()
 -> Result<(), Box<dyn std::error::Error>> {
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
-    let gallery_root = tempfile::tempdir()?;
+    let gallery_root = crate::test_support::contained_tempdir()?;
     let source = gallery_root.path().join("source.mp4");
     create_real_video(&source).await?;
     let db_path = artifacts.path().join("gallery.db");
@@ -2036,9 +2036,9 @@ async fn video_clip_publishes_durable_asset_and_lineage_across_store_reopen()
 async fn video_clip_trims_audio_inputs_to_audio_kind_assets()
 -> Result<(), Box<dyn std::error::Error>> {
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
-    let gallery_root = tempfile::tempdir()?;
+    let gallery_root = crate::test_support::contained_tempdir()?;
     let source = gallery_root.path().join("source.mp3");
     let status = tokio::process::Command::new("ffmpeg")
         .args([
@@ -2160,13 +2160,13 @@ async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
 async fn video_clip_file_publication_failure_rolls_back_real_ffmpeg_output()
 -> Result<(), Box<dyn std::error::Error>> {
     let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-    let artifacts = tempfile::tempdir()?;
+    let artifacts = crate::test_support::contained_tempdir()?;
     let _env = ArtifactsEnvGuard::set(artifacts.path());
     std::fs::write(
         artifacts.path().join("media-mcp"),
         b"blocks generated directory",
     )?;
-    let source_dir = tempfile::tempdir()?;
+    let source_dir = crate::test_support::contained_tempdir()?;
     let source = source_dir.path().join("source.mp4");
     create_real_video(&source).await?;
     let runner = video::ffmpeg::FfmpegRunner::detect();
@@ -2666,7 +2666,7 @@ struct IsolatedArtifacts {
 impl IsolatedArtifacts {
     async fn new() -> Self {
         let lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        let temp = crate::test_support::contained_tempdir().expect("tempdir for artifacts isolation");
         let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
         unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
         Self {
@@ -6276,7 +6276,7 @@ async fn educt_transcript_store_lifecycle_round_trip() {
     };
 
     let server = make_server();
-    let gallery_root = tempfile::tempdir().expect("gallery root");
+    let gallery_root = crate::test_support::contained_tempdir().expect("gallery root");
     let source = gallery_root.path().join("a.wav");
     std::fs::write(&source, b"source audio").expect("source media");
     let gallery = server
@@ -9726,7 +9726,7 @@ async fn a_caption_is_drawn_where_asked_and_never_parsed_as_a_filter()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::test_support::wire;
     let env = video_server_env().await?;
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let video = root.path().join("white.mp4");
     lavfi_fixture(&video, &WHITE_VIDEO).await?;
     let video = video.to_string_lossy().into_owned();
@@ -9829,7 +9829,7 @@ async fn a_clip_follows_the_streams_and_reports_what_was_cut()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::test_support::wire;
     let env = video_server_env().await?;
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let source = env.source.to_string_lossy().into_owned();
 
     let error = env
@@ -9969,7 +9969,7 @@ async fn a_clip_follows_the_streams_and_reports_what_was_cut()
 async fn a_gif_request_is_bounded_before_ffmpeg_runs() -> Result<(), Box<dyn std::error::Error>> {
     use crate::test_support::wire;
     let env = video_server_env().await?;
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let source = env.source.to_string_lossy().into_owned();
     let tone = root.path().join("zz-tone.wav");
     crate::test_support::media_fixture(&tone, &[]).await?;
@@ -10057,7 +10057,7 @@ async fn a_gif_request_is_bounded_before_ffmpeg_runs() -> Result<(), Box<dyn std
 async fn clips_that_differ_are_not_joined() -> Result<(), Box<dyn std::error::Error>> {
     use crate::test_support::wire;
     let env = video_server_env().await?;
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let silent = root.path().join("silent.mp4");
     lavfi_fixture(&silent, &WHITE_VIDEO).await?;
     let sound = root.path().join("sound.mp4");
@@ -10484,7 +10484,7 @@ async fn the_paid_tools_refuse_bad_arguments_before_the_provider()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::test_support::wire;
     let _artifacts = IsolatedArtifacts::new().await;
-    let root = tempfile::tempdir()?;
+    let root = crate::test_support::contained_tempdir()?;
     let video = root.path().join("zz.mp4");
     create_real_video(&video).await?;
     let tone = root.path().join("zz.wav");

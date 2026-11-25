@@ -9,7 +9,7 @@ description = "Source-media research and curation MCP server (analysis, transcri
 default = []
 
 [dependencies]
-hkask-mcp-server.workspace = true
+hkask-mcp-server = { workspace = true, features = ["http-guard"] }
 hkask-media.workspace = true
 hkask-types.workspace = true
 hkask-inference.workspace = true

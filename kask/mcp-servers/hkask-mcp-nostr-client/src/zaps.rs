@@ -4,7 +4,7 @@
 //! Keeps `hkask-mcp-nostr-client` 100% zero-credential and free of
 //! `libsecp256k1` / `hkask-nostr-signer`.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::time::Duration;
 
 use hkask_nostr_core::{validate_nip61_p2pk_pubkey, verify_bolt11_zap_invoice};
@@ -68,32 +68,7 @@ pub struct VerifiedZapInvoice {
     pub recipient_nostr_pubkey: Option<String>,
 }
 
-fn is_non_public_ipv4(ip: Ipv4Addr) -> bool {
-    let o = ip.octets();
-    let is_cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64;
-    let is_doc = (o[0] == 192 && o[1] == 0 && o[2] == 2)
-        || (o[0] == 198 && o[1] == 51 && o[2] == 100)
-        || (o[0] == 203 && o[1] == 0 && o[2] == 113);
-    ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || is_cgnat
-        || is_doc
-        || o[0] >= 240
-}
-
-fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
-    if let Some(v4) = ip.to_ipv4_mapped() {
-        return is_non_public_ipv4(v4);
-    }
-    let s = ip.segments();
-    let is_ula = (s[0] & 0xfe00) == 0xfc00;
-    let is_link_local = (s[0] & 0xffc0) == 0xfe80;
-    ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() || is_ula || is_link_local
-}
+const MAX_LNURL_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Validate an LNURL or callback URL under the D110 SSRF perimeter (Threat T5).
 ///
@@ -113,13 +88,9 @@ pub fn validate_lnurl_url(raw: &str, allow_loopback: bool) -> Result<reqwest::Ur
     let host_raw = parsed
         .host_str()
         .ok_or(ZapClientError::SsrfBlocked("missing host"))?;
-    let host = host_raw.trim_end_matches('.').to_ascii_lowercase();
-    let host_unbracketed = host
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(&host);
+    let host_unbracketed = hkask_types::net_guard::normalize_host(host_raw);
 
-    if allow_loopback && (host == "127.0.0.1" || host == "localhost" || host == "[::1]") {
+    if allow_loopback && hkask_types::net_guard::is_loopback_hostname(&host_unbracketed) {
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err(ZapClientError::SsrfBlocked("invalid scheme"));
         }
@@ -130,19 +101,10 @@ pub fn validate_lnurl_url(raw: &str, allow_loopback: bool) -> Result<reqwest::Ur
         return Err(ZapClientError::SsrfBlocked("only https:// is permitted"));
     }
     if let Ok(ip) = host_unbracketed.parse::<IpAddr>() {
-        let blocked = match ip {
-            IpAddr::V4(v4) => is_non_public_ipv4(v4),
-            IpAddr::V6(v6) => is_non_public_ipv6(v6),
-        };
-        if blocked {
+        if !hkask_types::net_guard::is_public_ip(ip) {
             return Err(ZapClientError::SsrfBlocked("non-public IP address"));
         }
-    } else if host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
-        || !host.contains('.')
-    {
+    } else if !hkask_types::net_guard::is_public_fqdn(&host_unbracketed) {
         return Err(ZapClientError::SsrfBlocked("non-public hostname"));
     }
     Ok(parsed)
@@ -178,12 +140,18 @@ pub fn lud16_to_lnurlp_url(
     validate_lnurl_url(&raw, allow_loopback)
 }
 
-/// Build an SSRF-hardened HTTP client with redirects disabled.
+/// Build an SSRF-hardened HTTP client with `.no_proxy()`, redirects disabled,
+/// and connect-time DNS validation (SEC-07).
 pub fn build_no_redirect_http_client() -> Result<reqwest::Client, ZapClientError> {
-    reqwest::Client::builder()
-        .redirect_policy(reqwest::redirect::Policy::none())
-        .timeout(LNURL_TIMEOUT)
-        .build()
+    build_no_redirect_http_client_with_loopback(false)
+}
+
+/// Build an SSRF-hardened HTTP client optionally admitting loopback (test
+/// fixtures only).
+pub fn build_no_redirect_http_client_with_loopback(
+    allow_loopback: bool,
+) -> Result<reqwest::Client, ZapClientError> {
+    hkask_mcp_server::http_guard::build_ssrf_safe_client(LNURL_TIMEOUT, allow_loopback)
         .map_err(|e| ZapClientError::Http(e.to_string()))
 }
 
@@ -204,14 +172,10 @@ pub async fn verify_resolved_dns(
     for addr in addrs {
         resolved_any = true;
         let ip = addr.ip();
-        if allow_loopback && ip.is_loopback() {
+        if allow_loopback && hkask_types::net_guard::is_loopback_ip(ip) {
             continue;
         }
-        let blocked = match ip {
-            IpAddr::V4(v4) => is_non_public_ipv4(v4),
-            IpAddr::V6(v6) => is_non_public_ipv6(v6),
-        };
-        if blocked {
+        if !hkask_types::net_guard::is_public_ip(ip) {
             return Err(ZapClientError::SsrfBlocked(
                 "DNS resolved to a non-public IP address",
             ));
@@ -244,9 +208,11 @@ pub async fn fetch_lnurl_pay_metadata(
             resp.status()
         )));
     }
-    let meta: LnurlPayMetadata = resp
-        .json()
-        .await
+    let raw_bytes =
+        hkask_mcp_server::http_guard::read_response_bytes_bounded(resp, MAX_LNURL_RESPONSE_BYTES)
+            .await
+            .map_err(ZapClientError::MalformedResponse)?;
+    let meta: LnurlPayMetadata = serde_json::from_slice(&raw_bytes)
         .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     if !meta.allows_nostr {
         return Err(ZapClientError::NostrZapsUnsupported);
@@ -289,9 +255,11 @@ pub async fn fetch_and_verify_zap_invoice(
             resp.status()
         )));
     }
-    let body: LnurlCallbackResponse = resp
-        .json()
-        .await
+    let raw_bytes =
+        hkask_mcp_server::http_guard::read_response_bytes_bounded(resp, MAX_LNURL_RESPONSE_BYTES)
+            .await
+            .map_err(ZapClientError::MalformedResponse)?;
+    let body: LnurlCallbackResponse = serde_json::from_slice(&raw_bytes)
         .map_err(|e| ZapClientError::MalformedResponse(e.to_string()))?;
     let Some(pr) = body.pr.filter(|s| !s.trim().is_empty()) else {
         return Err(ZapClientError::MalformedResponse(

@@ -82,7 +82,9 @@ pub(crate) enum WalletApprovalOperation {
 }
 
 /// Outcome returned over the oneshot channel to `inference_ipc_server`.
-#[derive(Debug)]
+///
+/// Manual `Debug` impl redacts `DbKey` secrets (`Zeroizing<T>` delegates
+/// `Debug` to `T` and would otherwise print cleartext — SEC-08).
 pub(crate) enum WalletApprovalResponse {
     DbKey {
         passphrase: Zeroizing<String>,
@@ -90,6 +92,20 @@ pub(crate) enum WalletApprovalResponse {
     },
     SpendApproved(WalletSpendApprovalWire),
     NwcResult(WalletNwcResultWire),
+}
+
+impl std::fmt::Debug for WalletApprovalResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DbKey { .. } => f
+                .debug_struct("DbKey")
+                .field("passphrase", &"<redacted>")
+                .field("seed_hex", &"<redacted>")
+                .finish(),
+            Self::SpendApproved(w) => f.debug_tuple("SpendApproved").field(w).finish(),
+            Self::NwcResult(w) => f.debug_tuple("NwcResult").field(w).finish(),
+        }
+    }
 }
 
 /// Admitted request carried from tokio dispatch to the GPUI handler.
@@ -733,6 +749,18 @@ mod tests {
         assert!(!answer_approves::<()>(Ok(1)));
         assert!(!answer_approves::<()>(Ok(2)));
         assert!(!answer_approves(Err(())));
+    }
+
+    #[test]
+    fn wallet_approval_response_debug_redacts_db_secrets() {
+        let resp = WalletApprovalResponse::DbKey {
+            passphrase: Zeroizing::new("super-secret-passphrase".to_string()),
+            seed_hex: Zeroizing::new("deadbeefcafebabe1234".to_string()),
+        };
+        let rendered = format!("{resp:?}");
+        assert!(!rendered.contains("super-secret-passphrase"));
+        assert!(!rendered.contains("deadbeefcafebabe1234"));
+        assert!(rendered.contains("<redacted>"));
     }
 
     #[gpui::test]

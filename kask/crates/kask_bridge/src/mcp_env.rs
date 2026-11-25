@@ -364,6 +364,17 @@ pub(crate) fn emit_media_env(
             media.tagging_model.clone(),
         );
     }
+    let allowed_roots: Vec<String> = media
+        .allowed_gallery_roots
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !allowed_roots.is_empty()
+        && let Ok(encoded) = serde_json::to_string(&allowed_roots)
+    {
+        env.insert("HKASK_MEDIA_ALLOWED_GALLERY_ROOTS".to_string(), encoded);
+    }
 }
 
 /// Settings-struct-backed `config_env` keys emitted by `KaskSettings::mcp_env`.
@@ -413,6 +424,7 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_MEDIA_VISION_MODEL",
     "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
     "HKASK_MEDIA_TAGGING_MODEL",
+    "HKASK_MEDIA_ALLOWED_GALLERY_ROOTS",
     "HKASK_DEFAULT_MODEL",
     "HKASK_CLASSIFIER_MODEL",
     hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,

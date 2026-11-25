@@ -774,7 +774,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let server = server(stt())?;
         let input = tempfile::NamedTempFile::new()?;
-        let root = tempfile::tempdir()?;
+        let root = crate::test_support::contained_tempdir()?;
         let gallery = server.gallery_store.open(
             &root.path().to_string_lossy(),
             crate::gallery::GalleryMode::ReadOnly,
@@ -918,7 +918,7 @@ mod tests {
     async fn a_queued_clip_or_join_answers_as_the_direct_tool_does()
     -> Result<(), Box<dyn std::error::Error>> {
         let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let root = tempfile::tempdir()?;
+        let root = crate::test_support::contained_tempdir()?;
         // The staged clip is written under the artifacts directory: this
         // test's own, restored on every exit.
         struct EnvGuard(Option<std::ffi::OsString>);
@@ -997,7 +997,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::PermissionsExt;
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let root = tempfile::tempdir()?;
+        let root = crate::test_support::contained_tempdir()?;
         struct EnvGuard(Option<std::ffi::OsString>);
         impl Drop for EnvGuard {
             fn drop(&mut self) {

@@ -63,57 +63,38 @@ impl UrlValidationConfig {
     }
 }
 
-/// Parse a URL and return (scheme, hostname) after basic structural checks.
+/// Parse a URL via the WHATWG `url::Url` parser and return `(scheme, host)`
+/// after scheme and embedded-credential checks.
 ///
-/// Shared by [`validate_url`] (sync, literal-IP only) and
-/// [`validate_url_with_dns`] (async, DNS-resolved). Extracting this avoids
-/// duplicating the URL-parsing logic across the two functions.
-///
-/// Returns:
-/// - `Ok((scheme, hostname))` if the URL has a valid scheme separator and
-///   no embedded credentials.
-/// - `Err(DisallowedScheme)` if the scheme is not http/https.
-/// - `Err(EmbeddedCredentials)` if the authority contains `user:pass@`.
-/// - `Err(InvalidUrl)` if the URL is malformed (no `://`, bad IPv6 brackets).
-fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
-    let scheme_end = raw_url
-        .find("://")
-        .ok_or_else(|| SecurityError::InvalidUrl("No scheme separator '://' found".to_string()))?;
-    let scheme = &raw_url[..scheme_end];
+/// Using `url::Url::parse` (matching `reqwest`'s parser) eliminates authority
+/// splitting differentials (`http://127.0.0.1?x`, `http://127.0.0.1#x`) and
+/// canonicalizes IPv4 shorthands (`127.1`, `0x7f000001`, `2130706433`).
+fn parse_url_for_ssrf(raw_url: &str) -> Result<(String, String), SecurityError> {
+    let trimmed = raw_url.trim();
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|e| SecurityError::InvalidUrl(format!("Malformed URL: {e}")))?;
+    let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
         return Err(SecurityError::DisallowedScheme(scheme.to_string()));
     }
-
-    let after_scheme = &raw_url[scheme_end + 3..];
-    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
-    let host_part = authority.split('@').next_back().unwrap_or(authority);
-    if host_part != authority {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(SecurityError::EmbeddedCredentials);
     }
-
-    // Bracketed IPv6 (e.g. `[::1]:8080`) must be extracted before stripping the
-    // port — splitting on ':' first would truncate to "[" and lose the address.
-    let hostname = if let Some(rest) = host_part.strip_prefix('[') {
-        let bracket_close = rest
-            .find(']')
-            .ok_or_else(|| SecurityError::InvalidUrl("Malformed IPv6 address".to_string()))?;
-        &rest[..bracket_close]
-    } else {
-        host_part.split(':').next().unwrap_or(host_part)
-    };
-
-    Ok((scheme, hostname))
+    let host_raw = parsed
+        .host_str()
+        .ok_or_else(|| SecurityError::InvalidUrl("URL has no host".to_string()))?;
+    let hostname = hkask_types::net_guard::normalize_host(host_raw);
+    if hostname.is_empty() {
+        return Err(SecurityError::InvalidUrl("URL has empty host".to_string()));
+    }
+    Ok((scheme.to_string(), hostname))
 }
 
 /// Check one literal or resolved destination address against the config.
 ///
-/// IPv6 addresses that embed an IPv4 destination (the deprecated
-/// IPv4-compatible form and the NAT64 well-known prefix 64:ff9b::/96) are
-/// unmasked and the embedded IPv4 destination is checked as IPv4, so neither
-/// address family can re-spell a forbidden destination as the other.
-/// `to_canonical` already unmaps the IPv4-mapped form (::ffff:a.b.c.d) before
-/// this runs. Native IPv6 categories (loopback, ULA, link-local, unspecified)
-/// are checked on the untranslated address first so their messages stay exact.
+/// Delegates to `hkask_types::net_guard` so IPv4, IPv4-mapped IPv6,
+/// IPv4-compatible IPv6, NAT64, CGNAT, documentation, benchmarking, multicast,
+/// and reserved ranges share one canonical classifier across the workspace.
 fn policy_check_address(
     address: &IpAddr,
     config: &UrlValidationConfig,
@@ -127,11 +108,11 @@ fn policy_check_address(
             if !config.allow_loopback && v6.is_loopback() {
                 return Err(SecurityError::LoopbackNotAllowed(v6.to_string()));
             }
+            if let Some(embedded) = hkask_types::net_guard::embedded_ipv4(v6) {
+                policy_check_ipv4(embedded, config)?;
+            }
             if !config.allow_private_ips && is_private_ip(&IpAddr::V6(v6)) {
                 return Err(SecurityError::PrivateIpNotAllowed(v6.to_string()));
-            }
-            if let Some(embedded) = embedded_ipv4(v6) {
-                policy_check_ipv4(embedded, config)?;
             }
             Ok(())
         }
@@ -142,10 +123,6 @@ fn policy_check_ipv4(
     v4: std::net::Ipv4Addr,
     config: &UrlValidationConfig,
 ) -> Result<(), SecurityError> {
-    // 0.0.0.0/8 ("this network") is never a real destination, and on Linux
-    // connecting to 0.0.0.0 routes to loopback — it re-enters exactly the
-    // services this gate exists to protect. Gated by the private-IP allowance
-    // so the permissive (user-curated RSS) policy is unchanged.
     if !config.allow_private_ips && v4.octets()[0] == 0 {
         return Err(SecurityError::UnspecifiedAddressNotAllowed(v4.to_string()));
     }
@@ -156,31 +133,6 @@ fn policy_check_ipv4(
         return Err(SecurityError::PrivateIpNotAllowed(v4.to_string()));
     }
     Ok(())
-}
-
-/// The IPv4 destination embedded in a non-mapped IPv6 address, if any.
-///
-/// Covers the deprecated IPv4-compatible form (::a.b.c.d, all of the first
-/// six segments zero, excluding unspecified `::`) and the NAT64 well-known
-/// prefix (64:ff9b::/96). The IPv4-mapped form is handled earlier by
-/// `to_canonical`.
-fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
-    let segments = v6.segments();
-    let compatible =
-        v6.segments()[0..6].iter().all(|&segment| segment == 0) && !v6.is_unspecified();
-    let nat64 = segments[0] == 0x64
-        && segments[1] == 0xff9b
-        && segments[2..6].iter().all(|&segment| segment == 0);
-    if compatible || nat64 {
-        Some(std::net::Ipv4Addr::new(
-            (segments[6] >> 8) as u8,
-            segments[6] as u8,
-            (segments[7] >> 8) as u8,
-            segments[7] as u8,
-        ))
-    } else {
-        None
-    }
 }
 
 /// Validate a URL for use in MCP web/scholar requests.
@@ -263,7 +215,7 @@ pub(crate) async fn validate_url_with_dns(
         })?
         .collect();
 
-    validate_resolved_addresses_core(hostname, &resolved, config)
+    validate_resolved_addresses_core(&hostname, &resolved, config)
 }
 
 /// Strictly validate an already-resolved address list for one hostname.
@@ -313,23 +265,7 @@ fn with_hostname(hostname: &str, error: SecurityError) -> SecurityError {
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip.to_canonical() {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            octets[0] == 10
-                || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                || (octets[0] == 192 && octets[1] == 168)
-                || (octets[0] == 169 && octets[1] == 254)
-        }
-        IpAddr::V6(v6) => {
-            let segments = v6.segments();
-            // fc00::/7 — Unique Local Addresses (includes fc00:: through fdff:...)
-            let is_ula = (segments[0] & 0xfe00) == 0xfc00;
-            // fe80::/10 — Link-Local addresses
-            let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
-            is_ula || is_link_local
-        }
-    }
+    hkask_types::net_guard::is_private_or_reserved_ip(*ip)
 }
 
 // ── Public SSRF entry points (re-exported via `server`) ──────────────────
@@ -393,6 +329,114 @@ pub fn validate_resolved_addresses(
 ) -> Result<(), McpToolError> {
     validate_resolved_addresses_core(hostname, addresses, &UrlValidationConfig::default())
         .map_err(|e| McpToolError::invalid_argument(format!("URL validation failed: {e}")))
+}
+
+#[cfg(feature = "http-guard")]
+pub mod http_guard {
+    //! Connect-time DNS validation and bounded response readers for `reqwest`
+    //! clients, closing DNS-rebinding TOCTOU and unbounded-body OOM surfaces.
+
+    use std::io;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+
+    use super::{UrlValidationConfig, validate_resolved_addresses_core};
+
+    /// `reqwest::dns::Resolve` implementation that rejects non-public resolved
+    /// addresses at connect time (optionally admitting loopback for local
+    /// fixtures).
+    #[derive(Debug, Clone, Copy)]
+    pub struct ValidatingDnsResolver {
+        allow_loopback: bool,
+    }
+
+    impl ValidatingDnsResolver {
+        #[must_use]
+        pub const fn strict() -> Self {
+            Self {
+                allow_loopback: false,
+            }
+        }
+
+        #[must_use]
+        pub const fn with_loopback(allow_loopback: bool) -> Self {
+            Self { allow_loopback }
+        }
+    }
+
+    impl Resolve for ValidatingDnsResolver {
+        fn resolve(&self, name: Name) -> Resolving {
+            let host = name.as_str().to_string();
+            let config = UrlValidationConfig {
+                allow_private_ips: false,
+                allow_loopback: self.allow_loopback,
+            };
+            Box::pin(async move {
+                let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
+                    .collect();
+                validate_resolved_addresses_core(&host, &resolved, &config).map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            e.to_string(),
+                        ))
+                    },
+                )?;
+                let addrs: Addrs = Box::new(resolved.into_iter());
+                Ok(addrs)
+            })
+        }
+    }
+
+    /// Build an SSRF-hardened `reqwest::Client` with `.no_proxy()`, redirects
+    /// disabled (`Policy::none()`), a connect-time [`ValidatingDnsResolver`],
+    /// and the supplied timeout.
+    pub fn build_ssrf_safe_client(
+        timeout: Duration,
+        allow_loopback: bool,
+    ) -> Result<reqwest::Client, reqwest::Error> {
+        reqwest::Client::builder()
+            .no_proxy()
+            .redirect_policy(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(ValidatingDnsResolver::with_loopback(
+                allow_loopback,
+            )))
+            .timeout(timeout)
+            .build()
+    }
+
+    /// Read a `reqwest::Response` body into memory up to `max_bytes`, failing
+    /// before allocating unbounded buffers when `Content-Length` or streamed
+    /// chunks exceed the cap.
+    pub async fn read_response_bytes_bounded(
+        mut resp: reqwest::Response,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, String> {
+        if let Some(len) = resp.content_length()
+            && len > max_bytes as u64
+        {
+            return Err(format!(
+                "response Content-Length {len} exceeds {max_bytes}-byte limit"
+            ));
+        }
+        let mut out = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("response body read failed: {e}"))?
+        {
+            if out.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(format!("response body exceeded {max_bytes}-byte limit"));
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -616,5 +660,25 @@ mod tests {
             validate_resolved_addresses("host", &[]).is_err(),
             "empty resolution must be rejected"
         );
+    }
+
+    /// expect: "URL authority parser differentials and IPv4 shorthands cannot
+    /// bypass literal SSRF validation (SEC-06)." [P4]
+    #[test]
+    fn literal_validation_rejects_query_fragment_differentials_and_ipv4_shorthands() {
+        for bypass in [
+            "http://127.0.0.1?x",
+            "http://127.0.0.1#x",
+            "http://127.1/",
+            "http://0x7f000001/",
+            "http://2130706433/",
+            "http://100.64.0.1/",
+            "http://240.0.0.1/",
+        ] {
+            assert!(
+                validate_tool_url_literal(bypass).is_err(),
+                "literal SSRF validation admitted {bypass}"
+            );
+        }
     }
 }
