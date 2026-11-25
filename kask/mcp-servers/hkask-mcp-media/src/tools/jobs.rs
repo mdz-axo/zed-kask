@@ -733,7 +733,7 @@ mod tests {
     async fn transcription_job_completes_with_source_and_timings()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = server(stt())?;
-        let input = tempfile::NamedTempFile::new()?;
+        let input = crate::test_support::contained_tempfile()?;
         let id = submit(&server, input.path()).await?;
         wait_until(|| server.job_store.active_count().expect("active count") == 0).await;
         let job = server.job_store.get(&id)?.expect("completed job");
@@ -773,7 +773,7 @@ mod tests {
     async fn transcription_job_against_a_recording_stores_the_transcript()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = server(stt())?;
-        let input = tempfile::NamedTempFile::new()?;
+        let input = crate::test_support::contained_tempfile()?;
         let root = crate::test_support::contained_tempdir()?;
         let gallery = server.gallery_store.open(
             &root.path().to_string_lossy(),
@@ -872,7 +872,7 @@ mod tests {
             dropped: dropped.clone(),
             fail: false,
         })?;
-        let input = tempfile::NamedTempFile::new()?;
+        let input = crate::test_support::contained_tempfile()?;
         let id = submit(&server, input.path()).await?;
         barrier.wait().await;
         let permits = (1..MAX_CONCURRENT_HEAVY_OPERATIONS)
@@ -1129,7 +1129,7 @@ mod tests {
         let mut port = stt();
         port.fail = true;
         let server = server(port)?;
-        let input = tempfile::NamedTempFile::new()?;
+        let input = crate::test_support::contained_tempfile()?;
         let singleton = ResearchJob::VideoConcat(VideoConcatRequest {
             video_urls: vec![input.path().to_string_lossy().into_owned()],
         });

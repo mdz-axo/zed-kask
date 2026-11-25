@@ -148,8 +148,8 @@ impl ClusterInput {
             .map(|(entity_ref, vector)| (entity_ref.as_str(), vector.as_slice()))
             .collect();
 
-        let mut by_source: std::collections::HashMap<&str, Vec<usize>> =
-            std::collections::HashMap::new();
+        let mut by_source: std::collections::BTreeMap<&str, Vec<usize>> =
+            std::collections::BTreeMap::new();
         for (index, chunk) in self.chunks.iter().enumerate() {
             by_source
                 .entry(chunk.source.as_str())

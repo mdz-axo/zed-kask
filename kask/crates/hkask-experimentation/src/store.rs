@@ -693,10 +693,11 @@ impl ExperimentationStore {
                 .unwrap_or(0);
             let recorded = u64::try_from(recorded)
                 .map_err(|_| DbError::Database("negative recorded run total".to_string()))?;
-            if recorded + write.run_count > write.ceiling {
+            let would_be_total = recorded.checked_add(write.run_count);
+            if would_be_total.is_none_or(|total| total > write.ceiling) {
                 refusal = Some(ExperimentationError::BudgetExhausted(
                     write.experiment_id.to_string(),
-                    recorded + write.run_count,
+                    would_be_total.unwrap_or(u64::MAX),
                     write.ceiling,
                 ));
                 return Err(refused());

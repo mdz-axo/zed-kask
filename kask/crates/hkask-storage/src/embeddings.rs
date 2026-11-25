@@ -273,6 +273,54 @@ impl EmbeddingStore {
     /// Atomically replace all embeddings for a destination, preserving the old
     /// value if either metadata or vector-index insertion fails. Ordinary
     /// `store` calls remain append-only.
+    /// Delete `vec_embeddings` rows for `entity_ref` via an O(log N) lookup on
+    /// `idx_embeddings_entity_ref` + direct rowid deletes, avoiding `vec0`'s
+    /// full O(N) virtual-table scan triggered by `WHERE rowid IN (SELECT ...)`
+    /// (EFF-01, matching `publish_corpus_batch`).
+    fn delete_vec_rows_for_entity(
+        tx: &rusqlite::Transaction<'_>,
+        entity_ref: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let rowids: Vec<i64> = {
+            let mut stmt =
+                tx.prepare_cached("SELECT rowid FROM embeddings WHERE entity_ref = ?1")?;
+            let rows = stmt.query_map(rusqlite::params![entity_ref], |r| r.get::<_, i64>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        if !rowids.is_empty() {
+            let mut del = tx.prepare_cached("DELETE FROM vec_embeddings WHERE rowid = ?1")?;
+            for rowid in rowids {
+                del.execute(rusqlite::params![rowid])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete `vec_embeddings` rows for `(entity_ref, passage_text)` via an
+    /// O(log N) index lookup + direct rowid deletes (EFF-01).
+    fn delete_vec_rows_for_entity_and_passage(
+        tx: &rusqlite::Transaction<'_>,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let rowids: Vec<i64> = {
+            let mut stmt = tx.prepare_cached(
+                "SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![entity_ref, passage_text], |r| {
+                r.get::<_, i64>(0)
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        if !rowids.is_empty() {
+            let mut del = tx.prepare_cached("DELETE FROM vec_embeddings WHERE rowid = ?1")?;
+            for rowid in rowids {
+                del.execute(rusqlite::params![rowid])?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn replace(
         &self,
         entity_ref: &str,
@@ -289,10 +337,7 @@ impl EmbeddingStore {
         // concurrent replacements cannot retain each other's prior value.
         let transaction =
             conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1)",
-            rusqlite::params![entity_ref],
-        )?;
+        Self::delete_vec_rows_for_entity(&transaction, entity_ref)?;
         transaction.execute(
             "DELETE FROM embeddings WHERE entity_ref = ?1",
             rusqlite::params![entity_ref],
@@ -373,10 +418,12 @@ impl EmbeddingStore {
                 }
             }
             if !shared {
-                transaction.execute(
-                    "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
-                    rusqlite::params![h_mem.entity, previous_passage],
-                ).map_err(database_error)?;
+                Self::delete_vec_rows_for_entity_and_passage(
+                    &transaction,
+                    &h_mem.entity,
+                    previous_passage,
+                )
+                .map_err(database_error)?;
                 transaction
                     .execute(
                         "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
@@ -385,10 +432,8 @@ impl EmbeddingStore {
                     .map_err(database_error)?;
             }
         }
-        transaction.execute(
-            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
-            rusqlite::params![h_mem.entity, passage],
-        ).map_err(database_error)?;
+        Self::delete_vec_rows_for_entity_and_passage(&transaction, &h_mem.entity, passage)
+            .map_err(database_error)?;
         transaction
             .execute(
                 "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",

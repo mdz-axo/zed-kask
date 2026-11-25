@@ -631,7 +631,9 @@ pub fn compute_salience_batch(all_tags: &[EntityTags]) -> Vec<f32> {
                 }
             }
         }
-        neighbors[i] = seen.into_iter().collect();
+        let mut nb: Vec<usize> = seen.into_iter().collect();
+        nb.sort_unstable();
+        neighbors[i] = nb;
     }
 
     // One-hop: degree centrality — fraction of passages directly connected
@@ -666,21 +668,18 @@ pub fn compute_salience_batch(all_tags: &[EntityTags]) -> Vec<f32> {
 
             // ── redundancy: local clustering coefficient ──
             // What fraction of sampled neighbor pairs are themselves connected?
+            // Each `neighbors[j]` is sorted above, so binary_search checks
+            // connectivity in O(log d) with zero per-passage HashSet allocations.
             let redundancy = if sample.len() < 2 {
                 0.0
             } else {
-                // Build hash sets for sampled neighbors for O(1) edge checks
-                let sample_sets: Vec<std::collections::HashSet<usize>> = sample
-                    .iter()
-                    .map(|&j| neighbors[j].iter().copied().collect())
-                    .collect();
-
                 let mut edges = 0usize;
                 let mut pairs = 0usize;
-                for (a_idx, a_set) in sample_sets.iter().enumerate() {
+                for (a_idx, &a) in sample.iter().enumerate() {
+                    let a_neighbors = &neighbors[a];
                     for &b in &sample[(a_idx + 1)..] {
                         pairs += 1;
-                        if a_set.contains(&b) {
+                        if a_neighbors.binary_search(&b).is_ok() {
                             edges += 1;
                         }
                     }

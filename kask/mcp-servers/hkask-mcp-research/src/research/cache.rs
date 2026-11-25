@@ -5,16 +5,19 @@
 //! a different set of providers was available).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::types::MAX_CACHE_VALUE_BYTES;
 
-#[derive(Clone)]
 struct CacheEntry {
     data: serde_json::Value,
     inserted_at: std::time::Instant,
-    last_accessed: std::time::Instant,
+    /// Monotonic milliseconds since `ResponseCache::epoch`, updated atomically
+    /// under a shared read lock so concurrent `get` calls never serialize on
+    /// `RwLock::write()` (EFF-04).
+    last_accessed_ms: AtomicU64,
     ttl: Duration,
 }
 
@@ -29,6 +32,7 @@ pub struct CacheKey(pub String);
 
 pub struct ResponseCache {
     entries: RwLock<HashMap<CacheKey, CacheEntry>>,
+    epoch: std::time::Instant,
     max_entries: usize,
     default_ttl: Duration,
 }
@@ -46,19 +50,27 @@ impl ResponseCache {
     pub fn new(max_entries: usize, default_ttl: Duration) -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
+            epoch: std::time::Instant::now(),
             max_entries,
             default_ttl,
         }
     }
 
-    /// Get a cached value, updating its last-accessed time for LRU eviction.
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Get a cached value under a shared read lock, updating its last-accessed
+    /// timestamp atomically for LRU eviction (EFF-04).
     pub async fn get(&self, key: &CacheKey) -> Option<serde_json::Value> {
-        let mut entries = self.entries.write().await;
-        let entry = entries.get_mut(key)?;
+        let entries = self.entries.read().await;
+        let entry = entries.get(key)?;
         if entry.is_expired() {
             return None;
         }
-        entry.last_accessed = std::time::Instant::now();
+        entry
+            .last_accessed_ms
+            .store(self.elapsed_ms(), Ordering::Relaxed);
         Some(entry.data.clone())
     }
 
@@ -81,18 +93,19 @@ impl ResponseCache {
         if entries.len() >= self.max_entries
             && let Some(oldest_key) = entries
                 .iter()
-                .min_by_key(|(_, v)| v.last_accessed)
+                .min_by_key(|(_, v)| v.last_accessed_ms.load(Ordering::Relaxed))
                 .map(|(k, _)| k.clone())
         {
             entries.remove(&oldest_key);
         }
         let now = std::time::Instant::now();
+        let now_ms = self.elapsed_ms();
         entries.insert(
             key,
             CacheEntry {
                 data,
                 inserted_at: now,
-                last_accessed: now,
+                last_accessed_ms: AtomicU64::new(now_ms),
                 ttl: self.default_ttl,
             },
         );

@@ -26,6 +26,10 @@ pub(crate) fn contained_tempdir() -> std::io::Result<tempfile::TempDir> {
     tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))
 }
 
+pub(crate) fn contained_tempfile() -> std::io::Result<tempfile::NamedTempFile> {
+    tempfile::NamedTempFile::new_in(env!("CARGO_MANIFEST_DIR"))
+}
+
 /// Generate the `InferencePort` impl for a media test stub. `generate` is
 /// the text surface — most media stubs never exercise it (one body:
 /// panic, a canned error, or a canned result); `generate_vision` is the

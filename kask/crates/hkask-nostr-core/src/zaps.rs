@@ -272,7 +272,7 @@ fn parse_bolt11_hrp_msat(hrp: &str) -> Result<Option<u64>, ZapParseError> {
 /// Convert 52 5-bit bech32 words (260 bits -> 32 bytes + 4 zero padding bits)
 /// into a 32-byte array.
 fn fe5_to_32_bytes(words: &[u8]) -> Result<[u8; 32], ZapParseError> {
-    if words.len() != 52 {
+    if words.len() != 52 || (words[51] & 0x0f) != 0 {
         return Err(ZapParseError::InvalidBolt11);
     }
     let mut out = [0u8; 32];

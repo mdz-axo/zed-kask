@@ -199,7 +199,11 @@ impl CorpusServer {
         Parameters(request): Parameters<BuildChunkRepresentationsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_build_chunk_representations", async move {
-            build_representations(request)
+            tokio::task::spawn_blocking(move || build_representations(request))
+                .await
+                .map_err(|e| {
+                    hkask_mcp_server::map_join_error(e, "corpus_build_chunk_representations")
+                })?
         })
         .await
     }
@@ -217,7 +221,9 @@ impl CorpusServer {
         Parameters(request): Parameters<EmbeddingInventoryRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_embedding_inventory", async move {
-            embedding_inventory(request)
+            tokio::task::spawn_blocking(move || embedding_inventory(request))
+                .await
+                .map_err(|e| hkask_mcp_server::map_join_error(e, "corpus_embedding_inventory"))?
         })
         .await
     }
@@ -245,7 +251,9 @@ impl CorpusServer {
         Parameters(request): Parameters<ExportBundleRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_export_bundle", async move {
-            export_bundle(request)
+            tokio::task::spawn_blocking(move || export_bundle(request))
+                .await
+                .map_err(|e| hkask_mcp_server::map_join_error(e, "corpus_export_bundle"))?
         })
         .await
     }

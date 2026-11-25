@@ -1080,7 +1080,14 @@ impl KanbanService {
         evidence: &str,
         verifier: WebID,
     ) -> Result<(Task, Verification), KanbanError> {
-        let (task, verification) = self.mutate_task(task_id, |task| {
+        let current = self.require_task(task_id)?;
+        let board = self.board_get(current.board_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: current.board_id.to_string(),
+            })
+        })?;
+        let (task, verification) = self.mutate_task_scanning(task_id, |task, reads| {
             Self::require_task_owner(task, verifier)?;
 
             if task.status != TaskStatus::Review {
@@ -1095,6 +1102,25 @@ impl KanbanService {
             // Evidence (the user's confirmation text) IS the completion signal.
             // Criteria are informational — they guide work but don't gate completion.
             let passed = !evidence.trim().is_empty();
+            if passed {
+                let done_column = board.column_for_status(TaskStatus::Done).ok_or(
+                    KanbanError::InvalidTransition {
+                        task: task_id,
+                        from: task.status,
+                        to: TaskStatus::Done,
+                    },
+                )?;
+                if let Some(limit) = done_column.wip_limit {
+                    let count = Self::count_status_in_txn(reads, task.board_id, TaskStatus::Done)?;
+                    if count >= limit as usize {
+                        return Err(KanbanError::WipLimitExceeded {
+                            column: done_column.name.clone(),
+                            limit,
+                            current: count as u32,
+                        });
+                    }
+                }
+            }
             let reasoning = if passed {
                 let criteria_list: Vec<String> = task
                     .criteria

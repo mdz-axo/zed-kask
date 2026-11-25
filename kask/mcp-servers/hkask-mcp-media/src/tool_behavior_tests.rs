@@ -2748,7 +2748,7 @@ async fn transcribe_and_store_refuses_an_unknown_recording_before_transcribing()
         media_response_is_json: true,
         audio_urls: audio_urls.clone(),
     }));
-    let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+    let recording = crate::test_support::contained_tempfile().expect("recording fixture");
     let error = server
         .transcribe_and_store(
             crate::test_support::wire(serde_json::json!({
@@ -3272,7 +3272,7 @@ async fn educt_speaker_pass_defaults_to_the_audio_source() {
         r#"{"spans": [{"start_word": 0, "end_word": 0, "speaker": "speaker-1", "confidence": 0.95}, {"start_word": 1, "end_word": 1, "speaker": "speaker-2", "confidence": 0.9}]}"#
             .to_string(),
     );
-    let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+    let recording = crate::test_support::contained_tempfile().expect("recording fixture");
     let transcript_id =
         store_two_word_transcript_over(&server, &recording.path().to_string_lossy()).await;
     let result = server
@@ -3326,7 +3326,7 @@ async fn educt_speaker_pass_audio_unparseable_output_surfaces() {
         "unused".to_string(),
         "I cannot listen to this audio.".to_string(),
     );
-    let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+    let recording = crate::test_support::contained_tempfile().expect("recording fixture");
     let transcript_id =
         store_two_word_transcript_over(&server, &recording.path().to_string_lossy()).await;
     let error = server
@@ -4379,7 +4379,7 @@ async fn backwards_word_timings_are_refused_wherever_a_time_range_is_cut() {
     use crate::test_support::wire;
     let _artifacts = IsolatedArtifacts::new().await;
     let server = make_pass_server("{}".to_string());
-    let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+    let recording = crate::test_support::contained_tempfile().expect("recording fixture");
     let bundle = serde_json::json!({
         "format": "hkask-transcript-v1", "audio_path": recording.path(), "audio_duration_secs": 8.0,
         "full_text": "zz late early",

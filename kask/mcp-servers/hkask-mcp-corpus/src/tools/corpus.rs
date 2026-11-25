@@ -64,6 +64,67 @@ fn grounding_fields(
 // services/prompt_builder.rs) so the services don't depend on the private
 // submodule paths.
 
+fn dedup_chunks_sync(req: DedupChunksRequest) -> Result<serde_json::Value, McpToolError> {
+    cosine_threshold(req.threshold)?;
+    crate::helpers::check_output(&req.output)?;
+    let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+    let db_path = crate::helpers::existing_db(&req.db_path)?;
+    let input = crate::services::cluster::load_clusters(
+        &req.tagged_jsonl,
+        &db_path,
+        &passphrase,
+        &req.prefix,
+    )?;
+    if input.dropped_malformed > 0 {
+        tracing::warn!(
+            dropped = input.dropped_malformed,
+            "tagged_jsonl contained malformed lines; deduplicating the parseable subset"
+        );
+    }
+    let threshold = req.threshold as f32;
+    let all_clusters = input.cluster_by_source(threshold, usize::MAX);
+    let chunks = input.chunks;
+
+    let mut keep_indices: Vec<usize> = all_clusters
+        .iter()
+        .map(|cluster| cluster[0]) // highest-salience survivor
+        .collect();
+    keep_indices.sort_unstable();
+    keep_indices.dedup();
+
+    let sources = chunks
+        .iter()
+        .map(|c| c.source.as_str())
+        .collect::<std::collections::HashSet<&str>>()
+        .len();
+
+    let result = json!({
+        "original": chunks.len(),
+        "deduped": keep_indices.len(),
+        "removed": chunks.len() - keep_indices.len(),
+        "clusters": all_clusters.len(),
+        "sources": sources,
+        "dropped_malformed_lines": input.dropped_malformed,
+        "reduction_pct": (1.0 - keep_indices.len() as f64 / chunks.len().max(1) as f64) * 100.0,
+    });
+
+    if req.dry_run {
+        return Ok(result);
+    }
+
+    let mut out = String::new();
+    for &idx in &keep_indices {
+        out.push_str(
+            &serde_json::to_string(&chunks[idx])
+                .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?,
+        );
+        out.push('\n');
+    }
+    crate::helpers::write_contained(&req.output, &out)?;
+
+    Ok(result)
+}
+
 #[tool_router(router = corpus_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
@@ -73,63 +134,10 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "corpus_dedup_chunks", async {
-            cosine_threshold(req.threshold)?;
-            crate::helpers::check_output(&req.output)?;
-            let passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            let db_path = crate::helpers::existing_db(&req.db_path)?;
-            let input = crate::services::cluster::load_clusters(
-                &req.tagged_jsonl,
-                &db_path,
-                &passphrase,
-                &req.prefix,
-            )?;
-            if input.dropped_malformed > 0 {
-                tracing::warn!(
-                    dropped = input.dropped_malformed,
-                    "tagged_jsonl contained malformed lines; deduplicating the parseable subset"
-                );
-            }
-            let threshold = req.threshold as f32;
-            let all_clusters = input.cluster_by_source(threshold, usize::MAX);
-            let chunks = input.chunks;
-
-            let mut keep_indices: Vec<usize> = all_clusters
-                .iter()
-                .map(|cluster| cluster[0]) // highest-salience survivor
-                .collect();
-            keep_indices.sort_unstable();
-            keep_indices.dedup();
-
-            let sources = chunks
-                .iter()
-                .map(|c| c.source.as_str())
-                .collect::<std::collections::HashSet<&str>>()
-                .len();
-
-            let result = json!({
-                "original": chunks.len(),
-                "deduped": keep_indices.len(),
-                "removed": chunks.len() - keep_indices.len(),
-                "clusters": all_clusters.len(),
-                "sources": sources,
-                "dropped_malformed_lines": input.dropped_malformed,
-                "reduction_pct": (1.0 - keep_indices.len() as f64 / chunks.len().max(1) as f64) * 100.0,
-            });
-
-            if req.dry_run {
-                return Ok(result);
-            }
-
-            let mut out = String::new();
-            for &idx in &keep_indices {
-                out.push_str(&serde_json::to_string(&chunks[idx])
-                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
-                out.push('\n');
-            }
-            crate::helpers::write_contained(&req.output, &out)?;
-
-            Ok(result)
+        execute_tool(self, "corpus_dedup_chunks", async move {
+            tokio::task::spawn_blocking(move || dedup_chunks_sync(req))
+                .await
+                .map_err(|e| hkask_mcp_server::map_join_error(e, "corpus_dedup_chunks"))?
         })
         .await
     }
