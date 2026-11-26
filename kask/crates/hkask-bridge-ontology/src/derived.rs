@@ -2555,6 +2555,55 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["deep_module", "deletion_test", "change_amplification"],
         authority: "operator ruling 2026-11-25; Fowler, Refactoring: Improving the Design of Existing Code (2nd ed., 2018); Ousterhout, A Philosophy of Software Design (2018)",
     },
+    DerivedConcept {
+        term: "commitment",
+        aliases: &["agent commitment", "computational commitment"],
+        identity: "requester + performer + signed conditions_of_satisfaction + boundary verification -> outcome record",
+        definition: "A bilateral obligation established through a conversation for action (Winograd & Flores, 1986; leggy.fish ACN model, Labra & Pfeifer 2026) in which requester and performer agree before execution on checkable conditions of satisfaction, accountability bindings, and verification authority. In zed-kask, commitments anchor longitudinal agent trajectories at discrete boundaries without transferring human PI closure authority (co-research-environment.md; GOAL_INTERFACE.md). The nameable violation: treating an agent's self-reported completion or an unnegotiated prose prompt as a binding commitment.",
+        constituents: &["contract", "conditions_of_satisfaction", "verification"],
+        authority: "operator ruling 2026-11-25 (fish-papers study Gate 1 / A1); Winograd & Flores, Understanding Computers and Cognition (1986); Labra & Pfeifer, Building Trust into Agentic Work (2026)",
+    },
+    DerivedConcept {
+        term: "conditions_of_satisfaction",
+        aliases: &["condition of satisfaction", "executable intent"],
+        identity: "deterministic gates + explicit disqualifiers + visible expert rubric declared before execution",
+        definition: "The explicit, checkable definition of done agreed before work begins (Winograd & Flores, 1986; Labra & Pfeifer, The Economics of Agentic Work & Building Trust into Agentic Work, 2026): composed of deterministic checks/invariants, explicit disqualifiers that void corner-cutting passes, and visible expert-authored rubrics. In zed-kask it bridges frozen goal criteria (GOAL_INTERFACE.md) and typed experimentation rubrics (hkask-mcp-experimentation). The nameable violation: grading an agent against hidden post-hoc criteria or conflating a pinned AI rubric with a deterministic check.",
+        constituents: &["rubric", "disqualifier", "verification"],
+        authority: "operator ruling 2026-11-25 (fish-papers study Gate 1 / A1); Winograd & Flores (1986); Labra & Pfeifer, The Economics of Agentic Work (2026)",
+    },
+    DerivedConcept {
+        term: "disqualifier",
+        aliases: &["disqualifiers", "hard disqualifier", "cheating term"],
+        identity: "explicit hard-failure predicate that voids an otherwise passing rubric or test outcome",
+        definition: "A declared condition attached to a standard or commitment naming known ways an agent can satisfy the letter of a metric while violating its intent (Goodhart's law; Labra & Pfeifer, The Expert Inversion & Building Trust into Agentic Work, 2026). Triggering a disqualifier overrides any positive rubric score and voids acceptance. The nameable violation: allowing a soft rubric average to compensate for a triggered hard disqualifier.",
+        constituents: &["goodharts_law", "rubric", "verification"],
+        authority: "operator ruling 2026-11-25 (fish-papers study Gate 1 / A1); Goodhart (1975); Labra & Pfeifer, The Expert Inversion (2026)",
+    },
+    DerivedConcept {
+        term: "adversarial_validation",
+        aliases: &[
+            "adversarial validator",
+            "red-team validation",
+            "pre-seal red-teaming",
+        ],
+        identity: "independent red-team challenge of conditions_of_satisfaction and deliveries to surface loophole passes -> versioned standard hardening",
+        definition: "A distinct validation role that attacks specifications before commitment freeze and hunts outputs that pass checks without satisfying intent (Labra & Pfeifer, Building Trust into Agentic Work & Notes on Architectural Grounding, 2026; grounded in diagonalization limits of Xu et al., arXiv:2401.11817, and Karpowicz, arXiv:2506.06382). Each discovered loophole produces a new versioned check or disqualifier. The nameable violation: treating a static rubric or cooperative self-review by the generating vendor as adversarial validation.",
+        constituents: &["conditions_of_satisfaction", "disqualifier", "verification"],
+        authority: "operator ruling 2026-11-25 (fish-papers study Gate 1 / A1); Xu et al., arXiv:2401.11817 (2025); Karpowicz, arXiv:2506.06382 (2026); Labra & Pfeifer (2026)",
+    },
+    DerivedConcept {
+        term: "procedural_trust",
+        aliases: &["expert-mediated procedural trust"],
+        identity: "conformance to expert-authored, externally verified, continuously hardened procedures at commitment boundaries (distinct from truth)",
+        definition: "Trust established as an auditable procedure rather than an assertion of model correctness (Labra & Pfeifer, Building Trust into Agentic Work & Notes on Architectural Grounding, 2026; grounded in Karpowicz, arXiv:2506.06382 Thm 11: grounding against externally authorized evidence closure is decidable for decidable checks and independent of truth). Procedural trust strictly separates deterministic checks, pinned AI judges, and named human signers and never lets one stand in for another. The nameable violation: claiming that rubric conformance certifies ground truth or substituting vendor self-grading for independent procedure.",
+        constituents: &[
+            "commitment",
+            "certification",
+            "provenance",
+            "adversarial_validation",
+        ],
+        authority: "operator ruling 2026-11-25 (fish-papers study Gate 1 / A1); Karpowicz, arXiv:2506.06382 (2026); Labra & Pfeifer, Building Trust into Agentic Work (2026)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -4399,6 +4448,72 @@ mod tests {
                 assert_ne!(
                     resolved.tier, "core",
                     "constituent {constituent:?} fell to core"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fish_papers_derived_concepts_resolve_above_core_with_authority() {
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "commitment",
+                &["commitment", "agent commitment", "computational commitment"],
+            ),
+            (
+                "conditions_of_satisfaction",
+                &[
+                    "conditions of satisfaction",
+                    "condition of satisfaction",
+                    "executable intent",
+                ],
+            ),
+            (
+                "disqualifier",
+                &[
+                    "disqualifier",
+                    "disqualifiers",
+                    "hard disqualifier",
+                    "cheating term",
+                ],
+            ),
+            (
+                "adversarial_validation",
+                &[
+                    "adversarial validation",
+                    "adversarial validator",
+                    "red-team validation",
+                    "pre-seal red-teaming",
+                ],
+            ),
+            (
+                "procedural_trust",
+                &["procedural trust", "expert-mediated procedural trust"],
+            ),
+        ];
+        for (expected_term, candidates) in cases {
+            for candidate in *candidates {
+                let resolved = crate::term_resolution::resolve_term(candidate);
+                assert_eq!(
+                    (
+                        resolved.tier.as_str(),
+                        resolved.namespace.as_str(),
+                        resolved.concept.as_str()
+                    ),
+                    ("derived", "derived", *expected_term),
+                    "{candidate} must resolve on the derived rung: {resolved:?}"
+                );
+            }
+            let concept = resolve_derived(expected_term).expect("canonical term resolves");
+            assert!(
+                concept.authority.contains("operator ruling 2026-11-25"),
+                "{expected_term} must cite the 2026-11-25 operator ruling"
+            );
+            for constituent in concept.constituents {
+                let resolved = crate::term_resolution::resolve_term(constituent);
+                assert_ne!(
+                    resolved.tier, "core",
+                    "constituent {constituent:?} of {expected_term} fell to core"
                 );
             }
         }
