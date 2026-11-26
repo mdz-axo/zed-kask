@@ -47,8 +47,17 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 ### Mode Selection (`IMP-1` + `improv-select`)
 1. First run deterministic `lisp_eval` pre-router `IMP-1` when a kata stage or override is present in context (`q4 -> yes-but`, `q5/observation-drill -> plussing`, `pdca-cycle -> yes-and`):
-   - form: `(cond ((string= kata_stage "q4") "yes-but") ((or (string= kata_stage "q5") (string= kata_stage "observation-drill")) "plussing") ((string= kata_stage "pdca-cycle") "yes-and") (true "none"))`
+   - form: `(if (not (stringp kata_stage)) "none" (cond ((string= kata_stage "q4") "yes-but") ((or (string= kata_stage "q5") (string= kata_stage "observation-drill")) "plussing") ((string= kata_stage "pdca-cycle") "yes-and") (true "none")))`
    - env: `{ "kata_stage": <"q4"|"q5"|"observation-drill"|"pdca-cycle"|"none"> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"IMP-1","case":"q4","env":{"kata_stage":"q4"},"expected":"yes-but"}
+     {"gate":"IMP-1","case":"q5","env":{"kata_stage":"q5"},"expected":"plussing"}
+     {"gate":"IMP-1","case":"observation-drill","env":{"kata_stage":"observation-drill"},"expected":"plussing"}
+     {"gate":"IMP-1","case":"pdca-cycle","env":{"kata_stage":"pdca-cycle"},"expected":"yes-and"}
+     {"gate":"IMP-1","case":"none","env":{"kata_stage":"none"},"expected":"none"}
+     {"gate":"IMP-1","case":"null-stage","env":{"kata_stage":null},"expected":"none"}
+     ```
    When `IMP-1` returns a mode other than `"none"`, use that mode directly and skip `improv-select.j2`.
 2. Otherwise, render `improv/improv-select` to evaluate conversation context, current contribution, active mode, and prior contributions, and select the best-fit improv mode from {plussing, yes-and, yes-but, freestyling, riffing}.
 3. Do NOT apply the mode in the selector — the agent then renders the selected mode's template.
@@ -83,7 +92,16 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 3. Frame as additive guidance ("yes, and let's also account for…"), not rejection. Do not say "no," "wrong," "can't," or "impossible."
 4. Ensure the constraint narrows without contradicting the accepted base.
 5. Return `{accepted_base, constraint}`.
-6. Partial check (`IMP-2`): call `lisp_eval` with `reply` bound to the reply text and `(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible")))`. A non-empty list names the literal words to remove. An empty list does not prove the reply avoids contradiction; that stays the human's judgment.
+6. Partial check (`IMP-2`): call `lisp_eval` with `reply` bound to the reply text:
+   - form: `(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (if (not (stringp reply)) (list "invalid_reply") (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible"))))`
+   - env: `{ "reply": "<the drafted reply text>" }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"IMP-2","case":"clean-reply","env":{"reply":"Yes — and let's also account for the deployment constraint"},"expected":[]}
+     {"gate":"IMP-2","case":"forbidden-no","env":{"reply":"Yes, no deployment before the checklist is ready"},"expected":[" no "]}
+     {"gate":"IMP-2","case":"null-reply","env":{"reply":null},"expected":["invalid_reply"]}
+     ```
+   A non-empty list names the literal words to remove (or `"invalid_reply"` on a non-string reply). An empty list does not prove the reply avoids contradiction; that stays the human's judgment.
 
 ### Freestyling (`improv-freestyling`)
 1. Initiate the session with a declared time bound and participant list.
@@ -91,6 +109,17 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 3. Compute `time_remaining` and `next_speaker` deterministically via `lisp_eval` `IMP-3` (when time expires, signal session end and summarize emergent themes):
    - form: `(begin (define names-ok (lambda (xs) (if (= (length xs) 0) true (and (stringp (car xs)) (not (string= (car xs) "")) (names-ok (cdr xs)))))) (define wrap-index (lambda (i n) (if (< i n) i (if (< (- i n) n) (- i n) (let ((r (wrap-index i (+ n n)))) (if (>= r n) (- r n) r)))))) (cond ((not (listp participants)) "invalid_participants") ((or (= (length participants) 0) (not (names-ok participants))) "invalid_participants") ((not (numberp turn_index)) "invalid_turn_index") ((or (not (eq (- turn_index turn_index) 0)) (< turn_index 0)) "invalid_turn_index") ((not (and (numberp time_bound) (numberp elapsed_secs))) "invalid_time") ((or (< time_bound 0) (< elapsed_secs 0)) "invalid_time") (true (let ((n (length participants)) (r (wrap-index turn_index (length participants)))) (list (max 0 (- time_bound elapsed_secs)) (nth (if (= r (- n 1)) 0 (+ r 1)) participants))))))`
    - env: `{ "time_bound": <the declared session bound in seconds>, "elapsed_secs": <seconds since the session start, from the clock (date +%s minus the recorded start)>, "participants": <the declared participant list>, "turn_index": <the number of turns already marked in the session log> }`. Pass as JSON text to `lisp_eval`; every value is read from the session record, none estimated.
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"IMP-3-freestyling","case":"default","env":{"time_bound":60,"elapsed_secs":10,"participants":["a","b","c"],"turn_index":0},"expected":[50,"b"]}
+     {"gate":"IMP-3-freestyling","case":"wrap-around","env":{"time_bound":60,"elapsed_secs":10,"participants":["a","b","c"],"turn_index":2},"expected":[50,"a"]}
+     {"gate":"IMP-3-freestyling","case":"expired","env":{"time_bound":60,"elapsed_secs":80,"participants":["a"],"turn_index":0},"expected":[0,"a"]}
+     {"gate":"IMP-3-freestyling","case":"max-i64-index","env":{"time_bound":60,"elapsed_secs":10,"participants":["a","b","c"],"turn_index":9223372036854775807},"expected":[50,"c"]}
+     {"gate":"IMP-3-freestyling","case":"float-turn-index","env":{"time_bound":60,"elapsed_secs":10,"participants":["a","b","c"],"turn_index":1.0},"expected":"invalid_turn_index"}
+     {"gate":"IMP-3-freestyling","case":"empty-participants","env":{"time_bound":60,"elapsed_secs":10,"participants":[],"turn_index":0},"expected":"invalid_participants"}
+     {"gate":"IMP-3-freestyling","case":"negative-time","env":{"time_bound":60,"elapsed_secs":-1,"participants":["a","b","c"],"turn_index":0},"expected":"invalid_time"}
+     {"gate":"IMP-3-freestyling","case":"fractional-time","env":{"time_bound":0.5,"elapsed_secs":0.25,"participants":["a","b","c"],"turn_index":0},"expected":[0.25,"b"]}
+     ```
    - `turn_index` is the zero-based ordinal of the turn just completed, not a precomputed participant index. The result is `[time_remaining, next_speaker]`, equivalent to advancing one participant after that completed turn. Participants must be a nonempty array of nonempty strings; `turn_index` must be a nonnegative JSON integer (even `1.0` is rejected); times must be nonnegative numbers. Invalid values return the named string above and block the contribution; missing bindings or exhausted interpreter budgets surface as tool errors, never success.
    - Integer admission uses type-sensitive `eq`: subtracting an integer from itself yields integer zero, while a float yields float zero. The remainder helper doubles only when `2*n <= i`, avoiding integer overflow; reduction precedes the increment so even the maximum signed 64-bit index is supported. Recursion is logarithmic in the index; participant validation traverses the list and remains subject to the interpreter's finite budgets. At zero time remaining the speaker is bookkeeping only: do not emit another turn.
 4. Mark each turn `[freestyle turn N by AGENT] content`.
@@ -100,8 +129,15 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 1. Diverge from the seed contribution; identify an interesting dimension, implication, or "what if."
 2. Explore the tangent independently — go deep, wide, or weird without group constraint.
 3. Resolve per return policy: `ReturnToGroup` (synthesize and bridge back), `SpawnThread` (create new thread), or `ReturnAfterSteps { max_steps }` (explore up to N steps then return). Compute `steps_remaining` deterministically via `lisp_eval` `IMP-3`:
-   - form: `(max 0 (- max_steps (length steps_taken)))`
+   - form: `(if (and (numberp max_steps) (eq (- max_steps max_steps) 0) (>= max_steps 0) (listp steps_taken)) (max 0 (- max_steps (length steps_taken))) "invalid_riff_bounds")`
    - env: `{ "max_steps": <max_steps>, "steps_taken": <steps_taken array> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"IMP-3-riffing","case":"two-of-two","env":{"max_steps":2,"steps_taken":["a","b"]},"expected":0}
+     {"gate":"IMP-3-riffing","case":"one-of-two","env":{"max_steps":2,"steps_taken":["a"]},"expected":1}
+     {"gate":"IMP-3-riffing","case":"string-max-steps","env":{"max_steps":"2","steps_taken":["a"]},"expected":"invalid_riff_bounds"}
+     {"gate":"IMP-3-riffing","case":"float-max-steps","env":{"max_steps":2.0,"steps_taken":["a"]},"expected":"invalid_riff_bounds"}
+     ```
 4. The riff must resolve — it cannot hang indefinitely.
 5. Return `{tangent, outcome, synthesis, thread_id}` from the template plus `IMP-3`'s `steps_remaining`.
 
@@ -109,7 +145,7 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 1. Render `improv/improv-select` with the complete context below, select Yes But for scope narrowing, then render `improv/improv-yes-but` with its complete context. The renderer returns a guide, not the generated `{mode, rationale}` or reply: the agent produces those outputs by following the guide.
 2. Execute Check/Act on a clean draft, `Yes — and let's also account for the deployment constraint`: `IMP-2` with JSON-text env `{"reply":"Yes — and let's also account for the deployment constraint"}` must return `[]`; deliver for human judgment without revision. For `Yes, no deployment before the checklist is ready`, it must return `[" no "]`; name the failure, revise once to the clean draft, and recheck to `[]`. Reusing the failing draft on the recheck must instead report the unmet constraint and stop. These are literal-word controls, not human semantic acceptance. A tool error (including a needle longer than the reply) blocks Check visibly.
-3. Run the exact Freestyling `IMP-3` form against each row below, merging overrides into the example env. Compare actual results to the fixed expectations; do not supply a model-computed index. Also run Riffing's unchanged form with `{"max_steps":2,"steps_taken":["a","b"]}` → `0` and with one step → `1`. Render both bounded modes using the contexts below; verify that zero remaining time/steps routes to summary/return, not more exploration.
+3. Run the exact Freestyling `IMP-3` form against each row below, merging overrides into the example env. Compare actual results to the fixed expectations; do not supply a model-computed index. Also run Riffing's `IMP-3` form with `{"max_steps":2,"steps_taken":["a","b"]}` → `0` and with one step → `1`. Render both bounded modes using the contexts below; verify that zero remaining time/steps routes to summary/return, not more exploration.
 
 | Freestyling env override (base env `{ "time_bound": 60, "elapsed_secs": 10, "participants": ["a", "b", "c"], "turn_index": 0 }`) | Expected result |
 |---|---|

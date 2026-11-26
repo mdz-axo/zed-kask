@@ -60,13 +60,31 @@ clarity-requiring part. When a process skill is active, its content
 obligations are delivered in full — compression arranges prose, never deletes
 content.
 
-When `adhd-mode/caveman-compress` runs, verify word-count reduction and sacred-snippet preservation deterministically in `lisp_eval` (`ADHD-1`): `(and (< comp_words orig_words) (string-contains sacred_snippet compressed_response))`.
+When `adhd-mode/caveman-compress` runs, verify word-count reduction and sacred-snippet preservation deterministically in `lisp_eval` (`ADHD-1`):
+- form: `(and (numberp comp_words) (numberp orig_words) (> orig_words 0) (>= comp_words 0) (< comp_words orig_words) (stringp sacred_snippet) (stringp compressed_response) (<= (length sacred_snippet) (length compressed_response)) (string-contains sacred_snippet compressed_response))`
+- env: `{"comp_words": <compressed word count>, "orig_words": <original word count>, "sacred_snippet": "<verbatim sacred text>", "compressed_response": "<compressed draft>"}`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"ADHD-1","case":"pass","env":{"comp_words":12,"orig_words":25,"sacred_snippet":"cargo test","compressed_response":"Run cargo test now."},"expected":true}
+  {"gate":"ADHD-1","case":"not-compressed","env":{"comp_words":25,"orig_words":25,"sacred_snippet":"cargo test","compressed_response":"Run cargo test now."},"expected":false}
+  {"gate":"ADHD-1","case":"missing-sacred","env":{"comp_words":10,"orig_words":25,"sacred_snippet":"cargo test","compressed_response":"Run tests now."},"expected":false}
+  {"gate":"ADHD-1","case":"short-response","env":{"comp_words":1,"orig_words":25,"sacred_snippet":"cargo test","compressed_response":"ok"},"expected":false}
+  {"gate":"ADHD-1","case":"non-numeric-words","env":{"comp_words":"12","orig_words":25,"sacred_snippet":"cargo test","compressed_response":"Run cargo test now."},"expected":false}
+  ```
 
 ### Per-turn gate
 
 Initial condition: the composed draft and its turn type. Target condition:
-Form G returns `send` and Form C returns `content-complete` (`ADHD-2`: `(and (string= form_g_verdict "send") (string= form_c_verdict "content-complete"))`), or the best
-draft is sent with a one-line note after 2 revision passes.
+Form G returns `send` and Form C returns `content-complete` (or the best
+draft is sent with a one-line note after 2 revision passes), verified in `lisp_eval` (`ADHD-2`):
+- form: `(and (stringp form_g_verdict) (stringp form_c_verdict) (string= form_g_verdict "send") (string= form_c_verdict "content-complete"))`
+- env: `{"form_g_verdict": <Form G output>, "form_c_verdict": <Form C output, or "content-complete" when content_obligations is empty and Form C is skipped>}`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"ADHD-2","case":"pass","env":{"form_g_verdict":"send","form_c_verdict":"content-complete"},"expected":true}
+  {"gate":"ADHD-2","case":"revise-list-verdict","env":{"form_g_verdict":["revise",["delete-opener:Let me"]],"form_c_verdict":"content-complete"},"expected":false}
+  {"gate":"ADHD-2","case":"missing-content-list-verdict","env":{"form_g_verdict":"send","form_c_verdict":["missing-content",["files"]]},"expected":false}
+  ```
 
 Run this gate on every response while the mode is on. Apply the Constraints
 (including the six overrides) first — the gate checks the override-adjusted
@@ -76,13 +94,13 @@ draft.
    content obligations must all be delivered. When the turn has a known type (assess,
    verify, code-answer) and you are not yet fluent in its shape,
    call `render_template` with template `adhd-mode/turn-shape` and context
-   `{ "turn_type": "<type>", "content_obligations": [<obligations from the
-   active process skill, or []>] }`, and compose following the rendered shape
+   `{"turn_type": "<type>", "content_obligations": []}` (populate `content_obligations`
+   from the active process skill when one is active), and compose following the rendered shape
    spec. On repeat turns of the same type, compose from the internalized spec
    without re-rendering.
 
 2. Call `render_template` with template `adhd-mode/pre-send-gate` and context
-   `{ "turn_type": "<type>", "content_obligations": [<obligations or []>] }`.
+   `{"turn_type": "<type>", "content_obligations": []}` (same obligations array).
    The rendered checklist defines the gate fields to extract from the draft.
 
 3. Extract the gate fields from the draft following the rendered checklist.
@@ -114,32 +132,47 @@ the enforcement layer; the prose rules are the floor, not a replacement.
 ### Form G — gate
 
 ```
-(let ((issues (append (if (or (starts-with "Let me" opener) (starts-with "I'll" opener) (starts-with "Great question" opener) (starts-with "Sure!" opener) (starts-with "Looking at" opener) (starts-with "To answer" opener)) (list (concat "delete-opener:" opener)) nil) (if (or (ends-with "that helps" closer) (ends-with "me know" closer) (ends-with "to clarify" closer) (ends-with "free to ask" closer) (ends-with "anything else" closer)) (list (concat "delete-closer:" closer)) nil) (if (> sidebar_count 0) (list "delete-sidebar") nil) (if (> empty_hedge_count 0) (list "delete-empty-hedge") nil) (if (> idiom_count 0) (list "replace-idiom") nil) (if (> assumptions_count cap) (list "split:assumptions") nil) (if (> risks_count cap) (list "split:risks") nil) (if (> goals_count cap) (list "split:goals") nil) (if (> critical_count cap) (list "split:critical") nil) (if (> minor_groups cap) (list "split:minor_groups") nil) (if (not (= next_actions_count 1)) (list "exactly-one-next-action") nil) (if (not first_line_is_action) (list "reshape:first-line-is-action") nil) (if (not last_line_states_next) (list "reshape:last-line-states-next") nil) (if (not last_line_states_done) (list "reshape:last-line-states-done") nil)))) (if (> (length issues) 0) (list 'revise issues) 'send))
+(let ((issues (append (if (not (stringp opener)) (list "invalid:opener") (if (or (starts-with "Let me" opener) (starts-with "I'll" opener) (starts-with "Great question" opener) (starts-with "Sure!" opener) (starts-with "Looking at" opener) (starts-with "To answer" opener)) (list (concat "delete-opener:" opener)) nil)) (if (not (stringp closer)) (list "invalid:closer") (if (or (ends-with "that helps" closer) (ends-with "me know" closer) (ends-with "to clarify" closer) (ends-with "free to ask" closer) (ends-with "anything else" closer)) (list (concat "delete-closer:" closer)) nil)) (if (or (not (numberp cap)) (< cap 1)) (list "invalid:cap") nil) (if (or (not (numberp sidebar_count)) (< sidebar_count 0)) (list "invalid:sidebar_count") (if (> sidebar_count 0) (list "delete-sidebar") nil)) (if (or (not (numberp empty_hedge_count)) (< empty_hedge_count 0)) (list "invalid:empty_hedge_count") (if (> empty_hedge_count 0) (list "delete-empty-hedge") nil)) (if (or (not (numberp idiom_count)) (< idiom_count 0)) (list "invalid:idiom_count") (if (> idiom_count 0) (list "replace-idiom") nil)) (if (or (not (numberp assumptions_count)) (< assumptions_count 0)) (list "invalid:assumptions_count") (if (and (numberp cap) (> assumptions_count cap)) (list "split:assumptions") nil)) (if (or (not (numberp risks_count)) (< risks_count 0)) (list "invalid:risks_count") (if (and (numberp cap) (> risks_count cap)) (list "split:risks") nil)) (if (or (not (numberp goals_count)) (< goals_count 0)) (list "invalid:goals_count") (if (and (numberp cap) (> goals_count cap)) (list "split:goals") nil)) (if (or (not (numberp critical_count)) (< critical_count 0)) (list "invalid:critical_count") (if (and (numberp cap) (> critical_count cap)) (list "split:critical") nil)) (if (or (not (numberp minor_groups)) (< minor_groups 0)) (list "invalid:minor_groups") (if (and (numberp cap) (> minor_groups cap)) (list "split:minor_groups") nil)) (if (or (not (numberp next_actions_count)) (not (= next_actions_count 1))) (list "exactly-one-next-action") nil) (if (not (eq first_line_is_action true)) (list "reshape:first-line-is-action") nil) (if (not (eq last_line_states_next true)) (list "reshape:last-line-states-next") nil) (if (not (eq last_line_states_done true)) (list "reshape:last-line-states-done") nil)))) (if (> (length issues) 0) (list 'revise issues) 'send))
 ```
 
 env: `opener`, `closer` (strings, verbatim evidence); `sidebar_count`,
 `empty_hedge_count`, `idiom_count`, `assumptions_count`, `risks_count`,
 `goals_count`, `critical_count`, `minor_groups`, `next_actions_count`
-(numbers); `first_line_is_action`, `last_line_states_next`,
-`last_line_states_done` (booleans); `cap` (number, from Constraints).
+(non-negative numbers); `first_line_is_action`, `last_line_states_next`,
+`last_line_states_done` (booleans); `cap` (number >= 1, from Constraints).
+
+```lisp-receipts
+{"gate":"Form-G","case":"clean","env":{"opener":"Run the tests","closer":"end of draft","sidebar_count":0,"empty_hedge_count":0,"idiom_count":0,"assumptions_count":0,"risks_count":0,"goals_count":0,"critical_count":0,"minor_groups":0,"next_actions_count":1,"first_line_is_action":true,"last_line_states_next":true,"last_line_states_done":true,"cap":5},"expected":"send"}
+{"gate":"Form-G","case":"revise-multiple","env":{"opener":"Let me","closer":"Hope that helps","sidebar_count":0,"empty_hedge_count":0,"idiom_count":0,"assumptions_count":6,"risks_count":0,"goals_count":0,"critical_count":0,"minor_groups":0,"next_actions_count":2,"first_line_is_action":false,"last_line_states_next":true,"last_line_states_done":true,"cap":5},"expected":["revise",["delete-opener:Let me","delete-closer:Hope that helps","split:assumptions","exactly-one-next-action","reshape:first-line-is-action"]]}
+{"gate":"Form-G","case":"string-false-boolean","env":{"opener":"Run the tests","closer":"end of draft","sidebar_count":0,"empty_hedge_count":0,"idiom_count":0,"assumptions_count":0,"risks_count":0,"goals_count":0,"critical_count":0,"minor_groups":0,"next_actions_count":1,"first_line_is_action":"false","last_line_states_next":true,"last_line_states_done":true,"cap":5},"expected":["revise",["reshape:first-line-is-action"]]}
+{"gate":"Form-G","case":"invalid-and-negative-counts","env":{"opener":null,"closer":"end of draft","sidebar_count":-1,"empty_hedge_count":0,"idiom_count":0,"assumptions_count":-2,"risks_count":0,"goals_count":0,"critical_count":0,"minor_groups":0,"next_actions_count":1,"first_line_is_action":true,"last_line_states_next":true,"last_line_states_done":true,"cap":5},"expected":["revise",["invalid:opener","invalid:sidebar_count","invalid:assumptions_count"]]}
+```
 
 ### Form C — content completeness
 
 ```
-(let ((req required) (secs sections))
-  (begin
-    (define check-all (lambda (r missing)
-      (if (= (length r) 0)
-        missing
-        (if (member (car r) secs)
-          (check-all (cdr r) missing)
-          (check-all (cdr r) (append missing (list (car r))))))))
-    (let ((missing (check-all req nil)))
-      (if (= (length missing) 0) 'content-complete (list 'missing-content missing)))))
+(if (or (not (listp required)) (not (listp sections)))
+  (list 'missing-content (list "invalid_inputs"))
+  (let ((req required) (secs sections))
+    (begin
+      (define check-all (lambda (r missing)
+        (if (= (length r) 0)
+          missing
+          (if (member (car r) secs)
+            (check-all (cdr r) missing)
+            (check-all (cdr r) (append missing (list (car r))))))))
+      (let ((missing (check-all req nil)))
+        (if (= (length missing) 0) 'content-complete (list 'missing-content missing))))))
 ```
 
 env: `required` (the active process skill's content obligations), `sections`
 (section headers present in the draft).
+
+```lisp-receipts
+{"gate":"Form-C","case":"complete","env":{"required":["what changed","validation","files"],"sections":["what changed","validation","files"]},"expected":"content-complete"}
+{"gate":"Form-C","case":"missing-files","env":{"required":["what changed","validation","files"],"sections":["what changed","validation"]},"expected":["missing-content",["files"]]}
+{"gate":"Form-C","case":"non-list-required","env":{"required":"not-a-list","sections":["files"]},"expected":["missing-content",["invalid_inputs"]]}
+```
 
 ## Registry Templates
 
@@ -154,7 +187,13 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `pre-send-gate.j2`: `turn_type`, `content_obligations`
 - `turn-shape.j2`: `turn_type`, `content_obligations`
-- `caveman-compress.j2`: `draft_response`,`context_topic`
+- `caveman-compress.j2`: `draft_response`, `context_topic`
+
+Copyable `render_template` contexts:
+
+- `adhd-mode/pre-send-gate`: `{"turn_type": "verify", "content_obligations": ["what changed", "validation", "files"]}`
+- `adhd-mode/turn-shape`: `{"turn_type": "verify", "content_obligations": ["what changed", "validation", "files"]}`
+- `adhd-mode/caveman-compress`: `{"draft_response": "Run cargo test now. The parser fix passed all 12 tests.", "context_topic": "parser bug fix"}`
 
 
 ## Regression case

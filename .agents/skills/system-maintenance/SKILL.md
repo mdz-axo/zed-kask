@@ -15,7 +15,7 @@ audience: platform
 
 ## Initial and target condition
 
-- **Initial condition:** a "run the weekly maintenance" request (or a staleness/health warning to triage), the five `~/system-maintenance/` scripts, their logs, and live system state.
+- **Initial condition:** a "run the weekly maintenance" request (or a staleness/health warning to triage), the six `~/system-maintenance/` scripts, their logs, and live system state.
 - **Target condition:** a completed pass — health check interpreted, dry-run classified, disposable class executed, manual-review items surfaced as exact commands, sudo work handed off (not asked for), measurements reconciled, ledger reported. Observable: health-check exit code, review-script output, the handoff block, and a df/du delta that closes against the deletion ledger.
 
 ## Managed scripts
@@ -52,9 +52,27 @@ The skill manages the script fleet at `~/system-maintenance/` (this machine's co
    - **manual-review** — held back by the scripts (HF models, datasets, podman volumes, toolchains, snap revisions, journals). Probe before any deletion (step 4).
    - **sudo-gated** — package updates, SMART, failed-unit resets, `/var/crash`. Handoff only (step 7).
    - **protected** — false positives and live infrastructure. Never delete without an operator ruling.
-   Verify total partition and zero class overlap in `lisp_eval` (`SMN-1`): `(and (= total_dry_run_items (+ disposable_count manual_review_count sudo_gated_count protected_count)) (= overlap_count 0))`.
+   Verify total partition and zero class overlap in `lisp_eval` (`SMN-1`):
+   - form: `(and (numberp total_dry_run_items) (numberp disposable_count) (numberp manual_review_count) (numberp sudo_gated_count) (numberp protected_count) (numberp overlap_count) (>= total_dry_run_items 0) (>= disposable_count 0) (>= manual_review_count 0) (>= sudo_gated_count 0) (>= protected_count 0) (= total_dry_run_items (+ disposable_count manual_review_count sudo_gated_count protected_count)) (= overlap_count 0))`
+   - env: `{"total_dry_run_items": <int>, "disposable_count": <int>, "manual_review_count": <int>, "sudo_gated_count": <int>, "protected_count": <int>, "overlap_count": <int>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SMN-1","case":"pass","env":{"total_dry_run_items":5,"disposable_count":2,"manual_review_count":1,"sudo_gated_count":1,"protected_count":1,"overlap_count":0},"expected":true}
+     {"gate":"SMN-1","case":"overlap-nonzero","env":{"total_dry_run_items":5,"disposable_count":2,"manual_review_count":1,"sudo_gated_count":1,"protected_count":1,"overlap_count":1},"expected":false}
+     {"gate":"SMN-1","case":"negative-count-cancels","env":{"total_dry_run_items":2,"disposable_count":-1,"manual_review_count":0,"sudo_gated_count":0,"protected_count":3,"overlap_count":0},"expected":false}
+     {"gate":"SMN-1","case":"non-numeric","env":{"total_dry_run_items":"5","disposable_count":2,"manual_review_count":1,"sudo_gated_count":1,"protected_count":1,"overlap_count":0},"expected":false}
+     ```
 3. **Preview (D).** Run `bash ~/system-maintenance/maintenance-clean.sh --dry-run`. Read the full output — never a truncated display.
-4. **Probe-before-delete (P, D gates).** For each manual-review item the operator has asked to delete, verify in `lisp_eval` (`SMN-2`: `(and (= recent_atime_files 0) (= open_fd_handles 0) (= active_references 0) (not is_unrecoverable_local))`) before Step 5:
+4. **Probe-before-delete (P, D gates).** For each manual-review item the operator has asked to delete, verify in `lisp_eval` (`SMN-2`) before Step 5:
+   - form: `(and (numberp recent_atime_files) (numberp open_fd_handles) (numberp active_references) (= recent_atime_files 0) (= open_fd_handles 0) (= active_references 0) (eq is_unrecoverable_local false))`
+   - env: `{"recent_atime_files": <int>, "open_fd_handles": <int>, "active_references": <int>, "is_unrecoverable_local": <true|false>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SMN-2","case":"pass","env":{"recent_atime_files":0,"open_fd_handles":0,"active_references":0,"is_unrecoverable_local":false},"expected":true}
+     {"gate":"SMN-2","case":"unrecoverable-true","env":{"recent_atime_files":0,"open_fd_handles":0,"active_references":0,"is_unrecoverable_local":true},"expected":false}
+     {"gate":"SMN-2","case":"unrecoverable-null-fails-closed","env":{"recent_atime_files":0,"open_fd_handles":0,"active_references":0,"is_unrecoverable_local":null},"expected":false}
+     {"gate":"SMN-2","case":"open-fd-nonzero","env":{"recent_atime_files":0,"open_fd_handles":1,"active_references":0,"is_unrecoverable_local":false},"expected":false}
+     ```
    - **Usage:** `find <dir> -type f -atime -30 | wc -l` (0 = unused recently); open handles via `/proc/*/fd` scan; running services (`systemctl --user`, `ps`).
    - **Recoverability:** public assets re-download anonymously; private ones need the stored token; local-only artifacts (fine-tunes, volumes, audit trails) are **unrecoverable** — say so.
    - **References:** grep configs, clones, and pins before removing any toolchain or volume.
