@@ -158,3 +158,41 @@ async fn snapshot_carries_the_native_first_drift_reading() {
         "an empty window is no data, never a fabricated 0.0"
     );
 }
+
+#[tokio::test]
+async fn label_validity_divergence_alerts_when_outcome_high_and_operator_low() {
+    let ledger = Arc::new(TokioRwLock::new(RegulationLedger::default()));
+    {
+        let ledger = ledger.read().await;
+        for _ in 0..5 {
+            ledger
+                .record_skill_span(
+                    "demo-skill",
+                    "outcome",
+                    serde_json::json!({ "success": true }),
+                )
+                .await;
+            ledger
+                .record_skill_span(
+                    "demo-skill",
+                    "operator_feedback",
+                    serde_json::json!({ "accepted": false, "note": "rubric missed intent" }),
+                )
+                .await;
+        }
+    }
+    let config = MetacognitionConfig {
+        feedback_drift_min_samples: 5,
+        feedback_drift_window: 5,
+        ..MetacognitionConfig::default()
+    };
+    let loop_ = MetacognitionLoop::with_config(ledger, config);
+    loop_.tick().await;
+    let snapshot = loop_
+        .last_snapshot_blocking()
+        .expect("tick stores a snapshot");
+    assert_eq!(
+        snapshot.escalation_count, 1,
+        "100% outcome vs 0% operator acceptance must fire a label-validity divergence alert"
+    );
+}
