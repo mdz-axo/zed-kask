@@ -174,10 +174,41 @@ Call `lisp_eval` (`PA-4`) over the renders and the run's re-entry log (`<run_dir
 | `outbound.j2` | Read one vendor's outbound alignment — stale docs, unconsumed capabilities, churn, degradation honesty — against the tree, distinguishing recorded choice from silent gap. |
 | `findings.j2` | Compose the audit's findings artifact with severity, file:line or URL evidence, routing, and the retrodictive calibration receipts. |
 
-To render a template, call `render_template` with the ref (e.g. `provider-audit/inbound`):
-- `inbound.j2`: `vendor`, `profile`, `trigger`
-- `outbound.j2`: `vendor`, `profile`, `capability_sources`
-- `findings.j2`: `vendor`, `findings`, `calibration`
+Copyable `render_template` context blocks (field names and nested shapes verified against each template's `[inference]` contract and Jinja body):
+
+`provider-audit/inbound`:
+```json
+{
+  "vendor": "<vendor id>",
+  "profile": {
+    "keychain": { "slot": "<keychain slot URL>", "env_var": "<ENV_VAR_NAME>" },
+    "roles": ["inference"],
+    "first_audit_pending": false
+  },
+  "trigger": "<adoption|drift|scheduled|announcement|retirement>"
+}
+```
+
+`provider-audit/outbound`:
+```json
+{
+  "vendor": "<vendor id>",
+  "profile": {
+    "consumed_capabilities": [{ "capability": "<cap>", "source": "<file:line>" }],
+    "deliberate_non_consumption": [{ "capability": "<cap>", "reason": "<reason>" }]
+  },
+  "capability_sources": [{ "name": "<source name>", "url": "<https://...>", "read_at": "<YYYY-MM-DD>" }]
+}
+```
+
+`provider-audit/findings` *(map `PA-3`'s `known_good_b1 == "pass"` → `known_good_pass` and `known_bad_b1 == "fail" || known_bad_b2 == "fail"` → `known_bad_flag`)*:
+```json
+{
+  "vendor": "<vendor id>",
+  "findings": [{ "id": "PA-01", "severity": "<blocking|major|minor>", "check": "<B1..B6|O1..O4>", "evidence": "<file:line or URL + date>" }],
+  "calibration": { "known_good_pass": true, "known_bad_flag": true }
+}
+```
 
 ## Constraints
 

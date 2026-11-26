@@ -42,14 +42,12 @@ The seven surface ontologies (the shape table in `gradient-detect.j2` Step 2) de
 - Diagnose whether an agentic orchestrator's strategy ensemble is being shifted by the task (allosteric coupling check)
 - Any "dog that didn't bark" investigation where a source or field is rich in adjacent evidence but an expected measurement, subgroup, or explanation is missing; test that expected slot, not just the amount of evidence present.
 
-Do NOT use for:
+## When NOT to Use
+
 - Pure absence checking with no prior or testable expectation ("does this crate have any tests?" — that's a checklist, not gradient analysis)
 - Positive-space threat hunting (use `bug-hunt`)
 - Reasoning-context ellipses (use `metacognition`)
 - Reproducing a known symptom (use `diagnose` — deserts are asymptomatic until you have a prior)
-
-## When NOT to Use
-
 - Absent features someone should simply build — the gradient is the *reason* for an absence, not a backlog; a known missing feature needs a plan, not an investigation.
 - Performance profiling — use `diagnose`; a slow path is a measurement question, not an information-field question.
 
@@ -72,7 +70,7 @@ finding.
 | Phase 5 Report (prioritization) | P | the fixed reason-class priority order; the user |
 | Phase 6 Converge (`GH-1` stability gate) | D | `lisp_eval` `GH-1` list-computing form over `curr_shapes`, `prev_shapes`, `curr_top_k`, `prev_top_k` — in this SKILL.md, executed live at use time |
 | Phase 7 Loop (re-enter or emit) | D | the gate result vs the bound (max 2 prior refinements) |
-| Expectation-led step 3 (relevance & 2-probe gate `GH-2`) | D / P | `GH-2` `lisp_eval` checks non-blank `active_goal` and `<= (length probe_results) 2` (D); the operator judges goal relevance (P) |
+| Expectation-led step 4 (relevance & 2-probe gate `GH-2`) | D / P | `GH-2` `lisp_eval` checks non-blank `active_goal`, `operator_dismissed == false`, and `< (length probe_results) 2` (D); the operator judges goal relevance (P) |
 | Expectation-led step 6 (bound and report) | P | the user (revised-expectation honesty); the two-probe count is D (`GH-2`) |
 
 ## Instructions
@@ -97,8 +95,16 @@ Start this route at intake for a substantive uncertain inquiry by selecting a qu
 2. **Sense and compare.** Fetch direct evidence with `grep`/`read_file` or the relevant read-only tool; render `gradient-hunter/gradient-map` when mapping a field. Record observation, source and comparability. In a rich field, inventory which expected slots are actually covered: distinguish `observed`, `explicitly not measured`, `not reported in inspected scope`, and `not retrieved`. Use `metacognition/ellipsis-analysis` for source-text gaps, rendered with `{ "text": <the source passage>, "expectations": <the prior's expected slots for it>, "biases": <the known cognitive biases to check, [] when none are named>, "assumptions": <the prior's stated assumptions about the source>, "domain": <the field's domain> }`: only evidence of deliberate omission supports `ellipsis`, only evidence of accidental loss supports `leak`; otherwise mark intent unknown. A paper's acknowledged missing variable is evidence about that study set, not proof that no one has studied it. An unobserved region is `unmeasured`, not empty. A mismatch in units, scope, measurement or authorization is a measurement problem, not yet evidence the world violates the prior.
 3. **Gate relevance before inquiry.** Compare the discrepancy with the active user goal: what decision, capability assessment, or user experience could resolving it change? Is the expectation actually uncertain and potentially learnable, or merely surprising to this agent? Use explicit operator feedback as the priority signal. If the operator calls it uninteresting or no consequence for the active goal can be named, stop this branch and return to the goal; do not ask for permission to continue chasing it. If it exposes a mandatory correctness or safety risk, surface that risk once with evidence rather than silently burying it, but do not extend an unrelated investigation without authorization.
 4. **Choose a question, not a spectacle.** Before rendering `gradient-hunter/expectation-inquiry` (and before any re-render), run the deterministic `GH-2` preflight with `lisp_eval` to enforce a non-blank `active_goal`, no operator dismissal, and the 2-probe bound:
-   - form (`GH-2`): `(and (> (length active_goal) 0) (not operator_dismissed) (< (length probe_results) 2))`
+   - form (`GH-2`): `(and (stringp active_goal) (> (length active_goal) 0) (eq operator_dismissed false) (listp probe_results) (< (length probe_results) 2))`
    - env: `{ "active_goal": <the user's stated outcome>, "operator_dismissed": <true if operator_feedback dismisses the inquiry, else false>, "probe_results": <array of completed probes for this question> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"GH-2","case":"valid-under-bound-passes","env":{"active_goal":"Fix bug","operator_dismissed":false,"probe_results":[]},"expected":true}
+     {"gate":"GH-2","case":"dismissed-fails","env":{"active_goal":"Fix bug","operator_dismissed":true,"probe_results":[]},"expected":false}
+     {"gate":"GH-2","case":"two-probes-exhausted-fails","env":{"active_goal":"Fix bug","operator_dismissed":false,"probe_results":[{"p":1},{"p":2}]},"expected":false}
+     {"gate":"GH-2","case":"string-dismissed-refused","env":{"active_goal":"Fix bug","operator_dismissed":"false","probe_results":[]},"expected":false}
+     {"gate":"GH-2","case":"blank-goal-refused","env":{"active_goal":"","operator_dismissed":false,"probe_results":[]},"expected":false}
+     ```
    Only when `GH-2` returns `true` and the relevance gate passes, render `gradient-hunter/expectation-inquiry` with `active_goal` from the user's stated outcome, `operator_feedback` (explicit text or null), `expectation`, `observation`, and `probe_results: []`. Do not bury the goal in an optional nested field or invent it when absent. Form at least two live explanations (including a bad prior or bad measurement), each with a differing prediction for an authorized next probe. Pick the smallest probe whose possible outcomes discriminate them; for a suspected omission, check methods, supplementary data, or a comparable source that could contain the missing slot before asserting absence. State expected outcomes **before** invoking it. Repeated unexplained noise without learnable structure is not a reason to revisit indefinitely.
 5. **Execute and update.** Run the selected probe with its owner tool, carry its result and provenance into a second rendering of `expectation-inquiry` with the same `active_goal` and updated `probe_results`, and mark each explanation retained/eliminated/undetermined. Update the expected field only where supported; check one independent neighboring or held-out observation when available. If repeated comparable neighbors reveal a boundary, resume the ordinary Detect → Hypothesize → Report route. If not, call it an `expectation_mismatch` or unresolved expectation, not a spatial gradient. Do not reuse the finance-specific `expectations_gap` ontology identity for a general discrepancy.
 6. **Bound and report.** At most two discriminating probes per question. Stop on operator-declared irrelevance, decisive discrimination, insufficient evidence, unavailable oracle, denied authority, or budget exhaustion. Report the original expectation (prospective or retrospective), mismatch or vagueness, competing predictions, probe result, revised expectation or explicit unknown, and the observation that would change the verdict. Improvement means fewer *independently contradicted* expectations on subsequent cases, not a higher count of surprises; without a subsequent case the benefit is `unverified`. Re-enter at step 1 only if the result changes the prior and another authorized probe remains.
@@ -106,8 +112,15 @@ Start this route at intake for a substantive uncertain inquiry by selecting a qu
 ## Improvement Measure
 
 **Gate (`GH-1`, D)**: the Phase 6 list-computing check over the measured gradient maps, with shapes named from the closed vocabulary of the `gradient-detect.j2` Step 2 shape table so they compare as lists (never pre-collapsed scalar booleans):
-- form (`GH-1`): `(begin (define count-new (lambda (cs ps) (if (is_null cs) 0 (+ (if (member (car cs) ps) 0 1) (count-new (cdr cs) ps))))) (define same-list (lambda (a b) (if (is_null a) (is_null b) (if (is_null b) nil (and (string= (car a) (car b)) (same-list (cdr a) (cdr b))))))) (and (= (count-new curr_shapes prev_shapes) 0) (same-list curr_top_k prev_top_k)))`
+- form (`GH-1`): `(begin (define count-new (lambda (cs ps) (if (is_null cs) 0 (+ (if (member (car cs) ps) 0 1) (count-new (cdr cs) ps))))) (define same-list (lambda (a b) (if (is_null a) (is_null b) (if (is_null b) nil (and (stringp (car a)) (stringp (car b)) (string= (car a) (car b)) (same-list (cdr a) (cdr b))))))) (and (listp curr_shapes) (listp prev_shapes) (listp curr_top_k) (listp prev_top_k) (= (count-new curr_shapes prev_shapes) 0) (same-list curr_top_k prev_top_k)))`
 - env: `{ "curr_shapes": <list of shape names in current map>, "prev_shapes": <list of shape names in prior map>, "curr_top_k": <ordered list of top-K gradient ids/locations in current report>, "prev_top_k": <ordered list of top-K gradient ids/locations in prior report> }`
+- receipts:
+  ```lisp-receipts
+  {"gate":"GH-1","case":"stable-subset-and-top-k-passes","env":{"curr_shapes":["sharp_cliff"],"prev_shapes":["sharp_cliff","oracle_gap"],"curr_top_k":["a","b"],"prev_top_k":["a","b"]},"expected":true}
+  {"gate":"GH-1","case":"new-shape-fails","env":{"curr_shapes":["sharp_cliff","topological_hole"],"prev_shapes":["sharp_cliff"],"curr_top_k":["a"],"prev_top_k":["a"]},"expected":false}
+  {"gate":"GH-1","case":"top-k-changed-fails","env":{"curr_shapes":["sharp_cliff"],"prev_shapes":["sharp_cliff"],"curr_top_k":["b","a"],"prev_top_k":["a","b"]},"expected":false}
+  {"gate":"GH-1","case":"non-list-input-fails","env":{"curr_shapes":"bad","prev_shapes":["sharp_cliff"],"curr_top_k":["a"],"prev_top_k":["a"]},"expected":false}
+  ```
 **Bound**: the first map plus at most 2 prior refinements (3 maps in all). This governs the field-mapping route only; the expectation-led route above has its own bound (`GH-2`: at most two probes per question).
 
 (The former composite estimate — process stabilization plus field coverage, threshold 0.25 — was deleted 2026-09-28: no tool computed it, no output slot consumed it, and it never decided convergence.)
@@ -159,13 +172,62 @@ Field-mapping route: render `gradient-hunter/gradient-prior` with `target_region
 
 To render a template, call the `render_template` tool with the template ref (e.g., `gradient-hunter/gradient-prior`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `gradient-prior.j2`: `target_region`, `field_type`, `prior_iteration` (absent on the first pass; gradient-report's `lessons_learned`/`pattern_signatures` on re-entry)
-- `gradient-map.j2`: `target_region`, `field_type`, `prior`
-- `gradient-detect.j2`: `prior`, `actual_field`, `target_region`
-- `gradient-hypothesize.j2`: `gradients`, `prior`
-- `gradient-report.j2`: `gradients`, `gradient_hypotheses`, `prior`
-- `expectation-inquiry.j2`: `active_goal` (required string, the user's words), `operator_feedback` (explicit string or null), `expectation`, `observation`, `probe_results` (empty array on first pass; carry actual results on re-render)
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`gradient-hunter/gradient-prior`:
+```json
+{
+  "target_region": {},
+  "field_type": "<tests|spans|error_branches>",
+  "prior_iteration": null
+}
+```
+
+`gradient-hunter/gradient-map`:
+```json
+{
+  "target_region": {},
+  "field_type": "<tests|spans|error_branches>",
+  "prior": {}
+}
+```
+
+`gradient-hunter/gradient-detect`:
+```json
+{
+  "prior": {},
+  "actual_field": {},
+  "target_region": {}
+}
+```
+
+`gradient-hunter/gradient-hypothesize`:
+```json
+{
+  "gradients": [],
+  "prior": {}
+}
+```
+
+`gradient-hunter/gradient-report`:
+```json
+{
+  "gradients": [],
+  "gradient_hypotheses": [],
+  "prior": {}
+}
+```
+
+`gradient-hunter/expectation-inquiry`:
+```json
+{
+  "active_goal": "<user's stated outcome>",
+  "operator_feedback": null,
+  "expectation": {},
+  "observation": {},
+  "probe_results": []
+}
+```
 
 
 ## Constraints

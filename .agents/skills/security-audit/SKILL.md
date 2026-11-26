@@ -143,7 +143,7 @@ enforcement point in the same change.
    `kask/scripts/check-*.sh` gates that already apply to the target —
    already-enforced checks are skipped, not re-found.
 3. Call `render_template`:
-   - template: `security-audit/map-surface`
+   - template_ref: `"security-audit/map-surface"`
    - context (every contract field):
      ```
      {
@@ -161,7 +161,7 @@ enforcement point in the same change.
    `bash kask/scripts/security-audit-probe-suite.sh --target <target> --surfaces <the intersecting S2,S3,S4,S5,S7,S8 classes>`
    The harness self-validates every probe against planted fixtures (a broken instrument fails the run — never a silent pass) and emits JSONL: a `run` header (version-pinned), one `probe` row per surface class (file:line matches with the production/test-scoped split done mechanically), and a `summary` footer. Every production match must be adjudicated in step 3; a surface class claimed `checked` MUST have validated harness rows — SA-2 enforces this.
 2. Call `render_template`:
-   - template: `security-audit/probe`
+   - template_ref: `"security-audit/probe"`
    - context: `{ "task": "<task>", "surface_map": <step 1 output> }`
    The harness output is the primary sweep ledger; agent-chosen sweeps run on top and MUST be prefixed `supplementary:` in their `sweep_command`.
 3. Execute any prescribed supplementary sweeps via `terminal`/`grep` with the known-positive rule as before; fold their results into the ledger.
@@ -171,7 +171,7 @@ enforcement point in the same change.
 ### Step 3 — Adjudicate (Check: interpretation and severity)
 
 1. Call `render_template`:
-   - template: `security-audit/adjudicate`
+   - template_ref: `"security-audit/adjudicate"`
    - context: `{ "task": "<task>", "surface_map": <step 1 output>, "raw_findings": <step 2 output> }`
 2. Follow the rendered prompt: classify each verified finding against the
    OWASP LLM 2025 / ATLAS anchors, attach a falsifier (the probe that would
@@ -183,12 +183,21 @@ enforcement point in the same change.
 
 Call `lisp_eval` (SA-1):
 - form:
-  `(begin (define count-uncited (lambda (fs) (if (is_null fs) 0 (+ (if (or (is_null (assoc "file_line" (car fs))) (string= "" (assoc "file_line" (car fs)))) 1 0) (count-uncited (cdr fs)))))) (define count-unverified (lambda (fs) (if (is_null fs) 0 (+ (if (assoc "verified" (car fs)) 0 1) (count-unverified (cdr fs)))))) (define count-open-surface (lambda (ss) (if (is_null ss) 0 (+ (if (or (is_null (assoc "status" (car ss))) (string= "" (assoc "status" (car ss)))) 1 0) (count-open-surface (cdr ss)))))) (define count-open-layer (lambda (ls) (if (is_null ls) 0 (+ (if (or (is_null (assoc "verdict" (car ls))) (string= "" (assoc "verdict" (car ls)))) 1 0) (count-open-layer (cdr ls)))))) (let ((u (count-uncited findings)) (v (count-unverified findings)) (s (count-open-surface surfaces)) (l (count-open-layer layers))) (list u v s l (if (= (+ u (+ v (+ s l))) 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate))))))`
+  `(begin (define count-uncited (lambda (fs) (if (is_null fs) 0 (+ (if (or (not (stringp (assoc "file_line" (car fs)))) (string= "" (assoc "file_line" (car fs)))) 1 0) (count-uncited (cdr fs)))))) (define count-unverified (lambda (fs) (if (is_null fs) 0 (+ (if (eq (assoc "verified" (car fs)) true) 0 1) (count-unverified (cdr fs)))))) (define count-open-surface (lambda (ss) (if (is_null ss) 0 (+ (if (or (not (stringp (assoc "status" (car ss)))) (string= "" (assoc "status" (car ss)))) 1 0) (count-open-surface (cdr ss)))))) (define count-open-layer (lambda (ls) (if (is_null ls) 0 (+ (if (or (not (stringp (assoc "verdict" (car ls)))) (string= "" (assoc "verdict" (car ls)))) 1 0) (count-open-layer (cdr ls)))))) (if (not (and (listp findings) (listp surfaces) (listp layers) (numberp iteration) (>= iteration 1))) (list 0 0 0 0 (quote invalid-sa1-inputs)) (let ((u (count-uncited findings)) (v (count-unverified findings)) (s (count-open-surface surfaces)) (l (count-open-layer layers))) (list u v s l (if (= (+ u (+ v (+ s l))) 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate)))))))`
 - env: `{ "findings": <adjudicated.findings>, "surfaces": <adjudicated.surfaces>, "layers": <adjudicated.defense_layer_coverage.layers>, "iteration": <1-based> }`
+- receipts:
+  ```lisp-receipts
+  {"gate":"SA-1","case":"clean-done","env":{"findings":[{"file_line":"a.rs:1","verified":true}],"surfaces":[{"id":"S1","status":"checked"}],"layers":[{"id":1,"verdict":"live"}],"iteration":1},"expected":[0,0,0,0,"done"]}
+  {"gate":"SA-1","case":"uncited-iterates","env":{"findings":[{"file_line":"","verified":true}],"surfaces":[{"id":"S1","status":"checked"}],"layers":[{"id":1,"verdict":"live"}],"iteration":1},"expected":[1,0,0,0,"iterate"]}
+  {"gate":"SA-1","case":"string-verified-counted-unverified","env":{"findings":[{"file_line":"a.rs:1","verified":"false"}],"surfaces":[{"id":"S1","status":"checked"}],"layers":[{"id":1,"verdict":"live"}],"iteration":1},"expected":[0,1,0,0,"iterate"]}
+  {"gate":"SA-1","case":"iteration-3-open-stops","env":{"findings":[{"file_line":"","verified":true}],"surfaces":[{"id":"S1","status":"checked"}],"layers":[{"id":1,"verdict":"live"}],"iteration":3},"expected":[1,0,0,0,"stop-and-report"]}
+  {"gate":"SA-1","case":"zero-iteration-refused","env":{"findings":[],"surfaces":[],"layers":[],"iteration":0},"expected":[0,0,0,0,"invalid-sa1-inputs"]}
+  ```
 
 `done` → step 5. `iterate` → re-enter the step owning the open count (sweeps,
 verification, or adjudication); bound: **2 re-loops** (iteration 3 reads
 `stop-and-report`). `stop-and-report` → step 5 with open items listed.
+`invalid-sa1-inputs` → stop and re-check the gate inputs (`findings`, `surfaces`, `layers` must be lists and `iteration >= 1`).
 
 Then SA-2 (the harness floor gate, D): call `lisp_eval` over the harness JSONL as written (`jq -s . <harness.jsonl>`) and the adjudicated surfaces:
 - form: `(begin (define pinned "1.0") (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (listp harness_rows) harness_rows (list))) (define of-kind (lambda (kind rs) (if (is_null rs) (list) (if (string= (text-of (car rs) "row") kind) (cons (car rs) (of-kind kind (cdr rs))) (of-kind kind (cdr rs)))))) (define runs (of-kind "run" rows)) (define probes (of-kind "probe" rows)) (define version (if (is_null runs) "" (text-of (car runs) "version"))) (define unvalidated (lambda (ps) (if (is_null ps) (list) (if (eq (assoc "instrument_validated" (car ps)) t) (unvalidated (cdr ps)) (cons (text-of (car ps) "probe_id") (unvalidated (cdr ps))))))) (define validated-surfaces (lambda (ps) (if (is_null ps) (list) (if (eq (assoc "instrument_validated" (car ps)) t) (cons (text-of (car ps) "surface") (validated-surfaces (cdr ps))) (validated-surfaces (cdr ps)))))) (define covered (validated-surfaces probes)) (define classes (if (and (listp harness_classes) (not (is_null harness_classes))) harness_classes (list "S2" "S3" "S4" "S5" "S7" "S8"))) (define ss (if (listp surfaces) surfaces (list))) (define unbacked (lambda (xs) (if (is_null xs) (list) (let ((s (car xs))) (if (and (string= (text-of s "status") "checked") (member (text-of s "id") classes) (not (member (text-of s "id") covered))) (cons (text-of s "id") (unbacked (cdr xs))) (unbacked (cdr xs))))))) (define problems (append (if (is_null runs) (list "harness_run_header_missing") (list)) (if (or (is_null runs) (string= version pinned)) (list) (list "harness_version_not_pinned")) (if (is_null (unvalidated probes)) (list) (list "unvalidated_probes")) (if (is_null (unbacked ss)) (list) (list "checked_surfaces_without_validated_rows")))) (list (list "verdict" (if (is_null problems) "floor_met" "invalid")) (list "problems" problems) (list "version" version) (list "unvalidated_probes" (unvalidated probes)) (list "unbacked_surfaces" (unbacked ss)) (list "probes" (length probes))))`
@@ -210,7 +219,7 @@ SA-2 false → the run is INVALID: re-run the harness for the missing surface cl
 ### Step 5 — Report and hardening proposals (Act)
 
 1. Call `render_template`:
-   - template: `security-audit/report`
+   - template_ref: `"security-audit/report"`
    - context: `{ "task": "<task>", "surface_map": <step 1 output>, "adjudicated": <step 3 output> }`
 2. Produce the report: verdict driven by blocker presence, findings grouped by
    severity, coverage honesty (`checked` / `not_checked` / `residual_risk` —
@@ -253,11 +262,11 @@ Act:   report — coverage honesty + ratchet proposals; re-enter the step owning
 
 ## Regression case
 
-Run SA-1 through `lisp_eval` in both directions: a clean env (all findings
+`SA-1` receipts (its `lisp-receipts` block beside the form): a clean env (all findings
 cited and verified, all surfaces statused, all layers verdicted, iteration 1)
-→ `done` with zero counts; one uncited finding → `iterate` with `[1 0 0 0]`;
-iteration 3 with any open count → `stop-and-report`. Verify each of the four
-open-count paths independently (uncited, unverified, open surface, open layer).
+→ `done` with zero counts; one uncited finding → `iterate` with `[1, 0, 0, 0]`;
+string `"false"` in `verified` → counted unverified `[0, 1, 0, 0, "iterate"]`;
+iteration 3 with any open count → `stop-and-report`; `iteration: 0` → `invalid-sa1-inputs`.
 SA-2 receipts (its `lisp-receipts` block beside the form,
 harness-shaped rows): a run row at `1.1`, an
 unvalidated probe row, a `checked` S3 with no validated S3 row, a missing
@@ -290,5 +299,5 @@ probes detect their planted fixtures).
   without naming its new live enforcement point.
 - Ratchet proposals are proposals: the operator ratifies; the skill never
   writes `.rules`, check scripts, or tests.
-- Registry is authoritative — when this SKILL.md disagrees with the registry
-  templates, the registry wins.
+- `SKILL.md` is the source of truth — when this `SKILL.md` disagrees with the registry
+  templates, `SKILL.md` wins.
