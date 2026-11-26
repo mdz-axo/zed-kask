@@ -166,7 +166,7 @@ Copyable `render_template` contexts (variable names from each template's `[infer
 
 `coding-guidelines/guidelines-verify`:
 ```json
-{ "task_description": "<the same text>", "assumptions": [], "success_criteria": [], "constrained_plan": [], "diff_preview": "<the diff text>", "scope": { "<the whole scope.json>": "" } }
+{ "task_description": "<the same text>", "assumptions": [], "success_criteria": [], "constrained_plan": [], "diff_preview": "<the diff text>", "scope": { "changed": [], "unplanned": [], "forbidden_touched": [], "untouched_planned": [], "prior_audits": [] } }
 ```
 
 `anti-patterns.j2` is a fragment — do not render it directly.

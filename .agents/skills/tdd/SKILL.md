@@ -61,7 +61,7 @@ entity driven through `TestAppContext`, a CLI or script exit code.
 
 **Test only at agreed seams.** Before writing any test, render `tdd/tdd-seams` to propose the seams under test, validate the proposal deterministically via `lisp_eval` (`TDD-1`), and confirm them with the user. No test is written at an unconfirmed seam. Ask: "What's the public interface, and which seams should we test?" When the interface's shape is itself in question, consult `deep-module`.
 
-- `TDD-1` form: `(begin (define rows (lambda (v) (if (listp v) v (list)))) (define text (lambda (v) (if (stringp v) v ""))) (define layers (list "example" "property" "proof" "loop-closure")) (define boundaries (list "Fs" "HttpClient" "Clock" "Rng")) (define field (lambda (s k) (if (listp s) (assoc k s) nil))) (define bad-fakes (lambda (fs) (if (is_null fs) (list) (if (and (stringp (car fs)) (or (member (car fs) boundaries) (ends-with "Port" (car fs)))) (bad-fakes (cdr fs)) (cons (car fs) (bad-fakes (cdr fs))))))) (define walk (lambda (ss i acc-layers acc-oracles acc-mocks) (if (is_null ss) (list acc-layers acc-oracles acc-mocks) (let ((s (car ss))) (walk (cdr ss) (+ i 1) (if (member (text (field s "layer")) layers) acc-layers (cons i acc-layers)) (if (and (stringp (field s "oracle")) (not (string= (field s "oracle") "implementation"))) acc-oracles (cons i acc-oracles)) (if (is_null (bad-fakes (rows (field s "boundary_fakes")))) acc-mocks (cons i acc-mocks))))))) (define r (walk (rows seams) 0 (list) (list) (list))) (define n (length (rows seams))) (list (list "pass" (and (> n 0) (is_null (car r)) (is_null (car (cdr r))) (is_null (car (cdr (cdr r)))))) (list "seams_count" n) (list "invalid_layer_seams" (reverse (car r))) (list "implementation_oracle_seams" (reverse (car (cdr r)))) (list "internal_mock_seams" (reverse (car (cdr (cdr r)))))))`
+- `TDD-1` form: `(begin (define rows (lambda (v) (if (listp v) v (list)))) (define text (lambda (v) (if (stringp v) v ""))) (define layers (list "example" "property" "proof" "loop-closure")) (define boundaries (list "Fs" "HttpClient" "Clock" "Rng")) (define field (lambda (s k) (if (listp s) (assoc k s) nil))) (define bad-fakes (lambda (fs) (if (is_null fs) (list) (if (and (stringp (car fs)) (or (member (car fs) boundaries) (ends-with "Port" (car fs)))) (bad-fakes (cdr fs)) (cons (car fs) (bad-fakes (cdr fs))))))) (define walk (lambda (ss i acc-layers acc-oracles acc-mocks) (if (is_null ss) (list acc-layers acc-oracles acc-mocks) (let ((s (car ss))) (walk (cdr ss) (+ i 1) (if (member (text (field s "layer")) layers) acc-layers (cons i acc-layers)) (if (and (stringp (field s "oracle")) (not (string= (field s "oracle") "implementation")) (not (string= (field s "oracle") ""))) acc-oracles (cons i acc-oracles)) (if (is_null (bad-fakes (rows (field s "boundary_fakes")))) acc-mocks (cons i acc-mocks))))))) (define r (walk (rows seams) 0 (list) (list) (list))) (define n (length (rows seams))) (list (list "pass" (and (> n 0) (is_null (car r)) (is_null (car (cdr r))) (is_null (car (cdr (cdr r)))))) (list "seams_count" n) (list "invalid_layer_seams" (reverse (car r))) (list "implementation_oracle_seams" (reverse (car (cdr r)))) (list "internal_mock_seams" (reverse (car (cdr (cdr r)))))))`
 - env: `{ "seams": <the tdd-seams render's seams array, as returned> }` — the form reads each seam's `layer`, `oracle` and `boundary_fakes` itself and returns `{pass, seams_count, invalid_layer_seams, implementation_oracle_seams, internal_mock_seams}` (indices into the array). `pass` needs at least one seam, every `layer` in `example|property|proof|loop-closure`, every `oracle` a string other than `implementation` (a null or missing oracle fails — the tautology guard of the cycle gate, applied at proposal time), and every `boundary_fakes` entry a system-boundary port — a name ending in `Port` (`InferencePort`, `ToolPort`, `MemoryPort`, …) or one of `Fs`, `HttpClient`, `Clock`, `Rng`. Anything else named as a fake is an internal collaborator (the Mocking section) and fails the seam.
 - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
   ```lisp-receipts
@@ -73,6 +73,7 @@ entity driven through `TestAppContext`, a CLI or script exit code.
 {"gate":"TDD-1","case":"implementation_oracle_seams","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"literal","boundary_fakes":["InferencePort"]},{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"implementation","boundary_fakes":["InferencePort"]}]},"expected":{"pass":false,"seams_count":2,"invalid_layer_seams":[],"implementation_oracle_seams":[1],"internal_mock_seams":[]}}
 {"gate":"TDD-1","case":"pass-5","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":null,"boundary_fakes":["InferencePort"]}]},"expected":{"pass":false,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[0],"internal_mock_seams":[]}}
 {"gate":"TDD-1","case":"pass-6","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","boundary_fakes":["InferencePort"]}]},"expected":{"pass":false,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[0],"internal_mock_seams":[]}}
+{"gate":"TDD-1","case":"empty-oracle","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"","boundary_fakes":["InferencePort"]}]},"expected":{"pass":false,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[0],"internal_mock_seams":[]}}
 {"gate":"TDD-1","case":"pass-7","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"literal","boundary_fakes":["InferencePort","SessionStore"]}]},"expected":{"pass":false,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[],"internal_mock_seams":[0]}}
 {"gate":"TDD-1","case":"internal_mock_seams","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"literal","boundary_fakes":["InferencePort","SessionStore"]}]},"expected":{"pass":false,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[],"internal_mock_seams":[0]}}
 {"gate":"TDD-1","case":"pass-8","env":{"seams":[{"behavior":"b","seam":"crate::f","layer":"example","expectation":"e","falsifier":"f","oracle":"literal","boundary_fakes":["MemoryPort","Fs","Clock","HttpClient","Rng"]}]},"expected":{"pass":true,"seams_count":1,"invalid_layer_seams":[],"implementation_oracle_seams":[],"internal_mock_seams":[]}}
@@ -127,14 +128,33 @@ failure. Inject boundaries through traits the code already takes
 - **Close each cycle with evidence.** Call `lisp_eval` with the cycle record;
   the next slice starts only on `closed`:
 
-  form: `(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (stringp oracle) (not (string= oracle "implementation"))) (quote closed) (quote open))`
+  form: `(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (stringp oracle) (not (string= oracle "implementation")) (not (string= oracle ""))) (quote closed) (quote open))`
 
-  env: `{"red": "<observed result of the first run>", "green": "<observed result after the change>", "seam_confirmed": "yes|no", "oracle": "literal|worked-example|spec|implementation"}` — the oracle must be a present, non-null string: the `stringp` term exists because a null oracle silently passed the old `(not (string= oracle "implementation"))` guard (a null is not the implementation, so the double negative approved it — the tautology guard bypassed exactly when the provenance is missing; an absent key refuses with the engine's unbound-symbol error, which is honest).
+  env: `{"red": "<observed result of the first run>", "green": "<observed result after the change>", "seam_confirmed": "yes|no", "oracle": "literal|worked-example|spec|implementation"}` — the oracle must be a present, non-empty string: the `stringp` and non-empty checks exist because a null or empty oracle would silently pass the old non-implementation check (a null is not the implementation, so the double negative approved it — the tautology guard bypassed exactly when the provenance is missing; an absent key refuses with the engine's unbound-symbol error, which is honest).
+
+  ```lisp-receipts
+  {"gate":"cycle","case":"closed","env":{"red":"failed","green":"passed","seam_confirmed":"yes","oracle":"literal"},"expected":"closed"}
+  {"gate":"cycle","case":"tautology-implementation","env":{"red":"failed","green":"passed","seam_confirmed":"yes","oracle":"implementation"},"expected":"open"}
+  {"gate":"cycle","case":"null-oracle","env":{"red":"failed","green":"passed","seam_confirmed":"yes","oracle":null},"expected":"open"}
+  {"gate":"cycle","case":"empty-oracle","env":{"red":"failed","green":"passed","seam_confirmed":"yes","oracle":""},"expected":"open"}
+  {"gate":"cycle","case":"unconfirmed-seam","env":{"red":"failed","green":"passed","seam_confirmed":"no","oracle":"literal"},"expected":"open"}
+  ```
 
   An `open` cycle names what is missing: a test that never failed, a seam
   never agreed, an expected value derived from the code, or a provenance
-  value that is absent or not a string.
-- **Close the slice with `TDD-2` (`lisp_eval`).** After all cycles for the slice close and `./script/clippy` plus the crate's tests run, verify `(and (= open_cycles_count 0) (> closed_cycles_count 0) (= clippy_exit_code 0) (= test_exit_code 0))`.
+  value that is absent, empty, or not a string.
+- **Close the slice with `TDD-2` (`lisp_eval`).** After all cycles for the slice close and `./script/clippy` plus the crate's tests run, verify:
+  - form: `(and (numberp open_cycles_count) (numberp closed_cycles_count) (numberp clippy_exit_code) (numberp test_exit_code) (= open_cycles_count 0) (> closed_cycles_count 0) (= clippy_exit_code 0) (= test_exit_code 0))`
+  - env: `{"open_cycles_count": 0, "closed_cycles_count": 1, "clippy_exit_code": 0, "test_exit_code": 0}`
+  - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+    ```lisp-receipts
+    {"gate":"TDD-2","case":"pass","env":{"open_cycles_count":0,"closed_cycles_count":1,"clippy_exit_code":0,"test_exit_code":0},"expected":true}
+    {"gate":"TDD-2","case":"open-cycles-nonzero","env":{"open_cycles_count":1,"closed_cycles_count":1,"clippy_exit_code":0,"test_exit_code":0},"expected":false}
+    {"gate":"TDD-2","case":"zero-closed-cycles","env":{"open_cycles_count":0,"closed_cycles_count":0,"clippy_exit_code":0,"test_exit_code":0},"expected":false}
+    {"gate":"TDD-2","case":"clippy-failed","env":{"open_cycles_count":0,"closed_cycles_count":1,"clippy_exit_code":1,"test_exit_code":0},"expected":false}
+    {"gate":"TDD-2","case":"test-failed","env":{"open_cycles_count":0,"closed_cycles_count":1,"clippy_exit_code":0,"test_exit_code":101},"expected":false}
+    {"gate":"TDD-2","case":"non-numeric-exit-code","env":{"open_cycles_count":0,"closed_cycles_count":1,"clippy_exit_code":"0","test_exit_code":0},"expected":false}
+    ```
 
 ## Registry Templates
 
@@ -147,6 +167,11 @@ Render with `render_template` and the context the template's contract names.
 Template context variables (from each template's `[inference]` contract):
 - `tdd-seams.j2`: `task`, `crate_scope`, `public_interface` (optional)
 - `tdd-cycle.j2`: `behavior`, `seam`, `layer`, `falsifier`, `oracle`, `crate_scope`
+
+Copyable `render_template` contexts (field names from each contract):
+
+- `tdd/tdd-seams`: `{"task": "<behavior to add or bug to fix>", "crate_scope": "<crate or module path>", "public_interface": "<optional public API signature>"}`
+- `tdd/tdd-cycle`: `{"behavior": "<single observable behavior>", "seam": "<confirmed public seam>", "layer": "example", "falsifier": "<how the test can fail>", "oracle": "literal", "crate_scope": "<crate or module path>"}`
 
 ## Regression case
 

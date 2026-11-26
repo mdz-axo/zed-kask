@@ -75,9 +75,9 @@ Create the run directory `~/Documents/zk-data/skills/essentialist/{date}-{run}/`
 
 `essentialist/essentialist-flow`: `{ "artifact": { "name": "<name>", "source": "<source>" }, "code_context": { "callers": {}, "dependencies": {}, "structure": [] }, "mode": "advisory", "scope": "auto" }`
 
-`deep-module/deep-module-assess`: `{ "module_path": "<path>", "module_source": "<source>", "caller_paths": [<paths>], "codebase_context": <code_context> }`
+`deep-module/deep-module-assess`: `{ "module_path": "<path>", "module_source": "<source>", "caller_paths": ["<path>"], "codebase_context": { "callers": {}, "dependencies": {}, "structure": [] } }`
 
-`deep-module/deep-module-delete`: `{ "module_assessment": <the whole assess output>, "caller_code": <code_context.callers>, "dependency_code": <code_context.dependencies>, "codebase_context": <code_context> }`
+`deep-module/deep-module-delete`: `{ "module_assessment": { "interface_inventory": [], "behavior_estimate": {}, "depth_ratio": "<ratio>" }, "caller_code": {}, "dependency_code": {}, "codebase_context": { "callers": {}, "dependencies": {}, "structure": [] } }`
 
 ## Constraints
 
