@@ -115,6 +115,14 @@ env: `W` = raw weights (one per criterion, non-negative with positive sum), `ALT
 8. Gate — call `lisp_eval` with:
    - form: `(or (and (stringp min_flip) (string= min_flip "none")) (and (numberp min_flip) (> min_flip 0.05)))`
    - env: `{ "min_flip": <the lisp_eval min_flip result> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"MCDA-converge","case":"robust-none-closes","env":{"min_flip":"none"},"expected":true}
+     {"gate":"MCDA-converge","case":"moderate-on-grid-0.1-closes","env":{"min_flip":0.1},"expected":true}
+     {"gate":"MCDA-converge","case":"exact-0.05-fragile-fails","env":{"min_flip":0.05},"expected":false}
+     {"gate":"MCDA-converge","case":"fragile-0.03-fails","env":{"min_flip":0.03},"expected":false}
+     {"gate":"MCDA-converge","case":"invalid-string-fails","env":{"min_flip":"bad"},"expected":false}
+     ```
    Robust or moderate outcomes (no flip at 5% or less) close the loop. A
    fragile outcome re-enters weight-and-score once with the critical-weight
    findings — add a veto criterion or restructure the criteria. Bound: max 2 restructurings; a third
@@ -130,9 +138,30 @@ env: `W` = raw weights (one per criterion, non-negative with positive sum), `ALT
 
 To render a template, call the `render_template` tool with the template ref (e.g., `mcda/identify-criteria`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `identify-criteria.j2`: `decision_question`, `alternatives`, `criteria_hints`
-- `sensitivity-analysis.j2`: `decision_question`, `ranking`, `weights`, `normalized_scores`, `criteria`, `danger_threshold`, `min_flip`, `critical_weights`
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`mcda/identify-criteria`:
+```json
+{
+  "decision_question": "<decision question>",
+  "alternatives": [],
+  "criteria_hints": []
+}
+```
+
+`mcda/sensitivity-analysis`:
+```json
+{
+  "decision_question": "<decision question>",
+  "ranking": [],
+  "weights": [],
+  "normalized_scores": [],
+  "criteria": [],
+  "danger_threshold": 0.3,
+  "min_flip": "none",
+  "critical_weights": []
+}
+```
 
 ## Regression case
 

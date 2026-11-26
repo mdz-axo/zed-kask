@@ -82,6 +82,14 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 1. Route the user's explicit `decision` signal deterministically via `lisp_eval` `RA-1` (do not use an LLM template to route a 3-way enum):
    - form: `(cond ((string= decision "proceed_to_refactor") (list "proceed_to_refactor" "ra-audit")) ((string= decision "need_more_data") (list "need_more_data" "diagnose")) ((string= decision "defer_or_reject") (list "defer_or_reject" "record_adr")) (true (list "invalid" "ask_operator")))`
    - env: `{ "decision": <user decision string> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"RA-1","case":"proceed-to-refactor","env":{"decision":"proceed_to_refactor"},"expected":["proceed_to_refactor","ra-audit"]}
+     {"gate":"RA-1","case":"need-more-data","env":{"decision":"need_more_data"},"expected":["need_more_data","diagnose"]}
+     {"gate":"RA-1","case":"defer-or-reject","env":{"decision":"defer_or_reject"},"expected":["defer_or_reject","record_adr"]}
+     {"gate":"RA-1","case":"unknown-string-asks-operator","env":{"decision":"maybe"},"expected":["invalid","ask_operator"]}
+     {"gate":"RA-1","case":"null-decision-asks-operator","env":{"decision":null},"expected":["invalid","ask_operator"]}
+     ```
 2. If `"proceed_to_refactor"`: continue to the audit phase (`ra-audit`) to classify duplication and plan the strangler-fig migration.
 3. If `"need_more_data"`: recommend the `diagnose` skill, and specify what measurements are needed, how to instrument, and what thresholds would confirm or refute the hypothesis.
 4. If `"defer_or_reject"`: produce a decision summary with reasoning, and if a load-bearing reason was given, recommend recording it as an ADR with a suggested title and body.
@@ -148,12 +156,61 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 
 To render a template, call the `render_template` tool with the template ref (e.g., `refactor-architecture/ra-explore`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `ra-audit.j2`: `focus_area`, `code_context`, `known_adrs`, `constraint_forces`
-- `ra-deepen.j2`: `selected_candidate`, `focus_area`, `known_adrs`, `glossary_terms`
-- `ra-explore.j2`: `focus_area`, `code_context`, `known_adrs`
-- `ra-strangle.j2`: `domain`, `target_condition`, `service_module_name`, `current_cli_path`, `current_api_path`, `known_adrs`, `constraint_forces`
-- `ra-verify.j2`: `domain`, `migration_phase`, `initial_condition`, `target_condition`, `code_context`, `known_adrs`
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`refactor-architecture/ra-explore`:
+```json
+{
+  "focus_area": "<focus area>",
+  "code_context": {},
+  "known_adrs": []
+}
+```
+
+`refactor-architecture/ra-deepen`:
+```json
+{
+  "selected_candidate": {},
+  "focus_area": "<focus area>",
+  "known_adrs": [],
+  "glossary_terms": []
+}
+```
+
+`refactor-architecture/ra-audit`:
+```json
+{
+  "focus_area": "<focus area>",
+  "code_context": {},
+  "known_adrs": [],
+  "constraint_forces": []
+}
+```
+
+`refactor-architecture/ra-strangle`:
+```json
+{
+  "domain": "<domain>",
+  "target_condition": {},
+  "service_module_name": "<service module>",
+  "current_cli_path": "<cli path>",
+  "current_api_path": "<api path>",
+  "known_adrs": [],
+  "constraint_forces": []
+}
+```
+
+`refactor-architecture/ra-verify`:
+```json
+{
+  "domain": "<domain>",
+  "migration_phase": "<phase>",
+  "initial_condition": {},
+  "target_condition": {},
+  "code_context": {},
+  "known_adrs": []
+}
+```
 
 ## Regression case
 

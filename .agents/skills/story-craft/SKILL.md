@@ -214,11 +214,16 @@ Act:   Phase 5 (SC-3 convergence, max 2 review cycles; author Final Say & Local 
 2. Run **`lisp_eval` gate `SC-1` (Prose Budget Gate)** over the
    `slop_scan.sh` JSON metrics (adjusting `min_words`/`max_words` to the
    project's target band):
-   - form: `(let ((len-ok (and (>= words min_words) (<= words max_words))) (over-ok (= over_explanation_hits 0)) (filter-ok (<= filter_per_1k max_filter_per_1k)) (mono-ok (<= monotony_runs max_monotony_runs))) (list (list "pass" (and len-ok over-ok filter-ok mono-ok)) (list "len_ok" len-ok) (list "over_explanation_ok" over-ok) (list "filter_ok" filter-ok) (list "monotony_ok" mono-ok)))`
+   - form: `(if (not (and (numberp words) (>= words 0) (numberp min_words) (> min_words 0) (numberp max_words) (>= max_words min_words) (numberp over_explanation_hits) (>= over_explanation_hits 0) (numberp filter_per_1k) (>= filter_per_1k 0) (numberp max_filter_per_1k) (>= max_filter_per_1k 0) (numberp monotony_runs) (>= monotony_runs 0) (numberp max_monotony_runs) (>= max_monotony_runs 0))) (list (list "pass" false) (list "error" "invalid_sc1_inputs")) (let ((len-ok (and (>= words min_words) (<= words max_words))) (over-ok (= over_explanation_hits 0)) (filter-ok (<= filter_per_1k max_filter_per_1k)) (mono-ok (<= monotony_runs max_monotony_runs))) (list (list "pass" (and len-ok over-ok filter-ok mono-ok)) (list "len_ok" len-ok) (list "over_explanation_ok" over-ok) (list "filter_ok" filter-ok) (list "monotony_ok" mono-ok))))`
    - env: `{ "words": <int>, "min_words": 900, "max_words": 1500, "over_explanation_hits": <int>, "filter_per_1k": <float>, "max_filter_per_1k": 12.0, "monotony_runs": <int>, "max_monotony_runs": 1 }`
-   - Every failure is an **advisory signal** subject to the author's Local
-     Rule-Breaking Toggle (deliberate stylistic choices override the
-     linter).
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SC-1","case":"clean-draft-passes","env":{"words":1150,"min_words":900,"max_words":1500,"over_explanation_hits":0,"filter_per_1k":6.2,"max_filter_per_1k":12.0,"monotony_runs":0,"max_monotony_runs":1},"expected":{"pass":true,"len_ok":true,"over_explanation_ok":true,"filter_ok":true,"monotony_ok":true}}
+     {"gate":"SC-1","case":"dirty-draft-fails","env":{"words":24,"min_words":900,"max_words":1500,"over_explanation_hits":1,"filter_per_1k":0.0,"max_filter_per_1k":12.0,"monotony_runs":0,"max_monotony_runs":1},"expected":{"pass":false,"len_ok":false,"over_explanation_ok":false,"filter_ok":true,"monotony_ok":true}}
+     {"gate":"SC-1","case":"negative-words-refused","env":{"words":-5,"min_words":900,"max_words":1500,"over_explanation_hits":0,"filter_per_1k":6.2,"max_filter_per_1k":12.0,"monotony_runs":0,"max_monotony_runs":1},"expected":{"pass":false,"error":"invalid_sc1_inputs"}}
+     {"gate":"SC-1","case":"non-numeric-words-refused","env":{"words":"abc","min_words":900,"max_words":1500,"over_explanation_hits":0,"filter_per_1k":6.2,"max_filter_per_1k":12.0,"monotony_runs":0,"max_monotony_runs":1},"expected":{"pass":false,"error":"invalid_sc1_inputs"}}
+     ```
+   - `{"pass": false, "error": "invalid_sc1_inputs"}` is a malformed-input refusal — fix the scanner inputs and re-run rather than waiving it. Stylistic threshold failures are **advisory signals** subject to the author's Local Rule-Breaking Toggle (deliberate stylistic choices override the linter).
 
 #### Step 4b — Decoupled Editorial Critique (P + D Citation Gate)
 
@@ -255,17 +260,31 @@ Act:   Phase 5 (SC-3 convergence, max 2 review cycles; author Final Say & Local 
 3. Run **`lisp_eval` gate `SC-2` (Citation Grounding Gate)** to verify
    every finding quotes a real span from `episode_text` and carries a
    non-blank `L<n>` line marker:
-   - form: `(begin (define valid-item (lambda (item text) (let ((ln (assoc "line" item)) (qt (assoc "quote" item))) (and (stringp ln) (starts-with "L" ln) (stringp qt) (not (string= "" qt)) (string-contains qt text))))) (define all-valid (lambda (xs text) (if (is_null xs) true (and (valid-item (car xs) text) (all-valid (cdr xs) text))))) (all-valid findings episode_text))`
+   - form: `(begin (define valid-item (lambda (item text) (if (not (listp item)) false (let ((ln (assoc "line" item)) (qt (assoc "quote" item))) (and (stringp ln) (starts-with "L" ln) (> (length ln) 1) (stringp qt) (not (string= "" qt)) (string-contains qt text)))))) (define all-valid (lambda (xs text) (if (is_null xs) true (and (valid-item (car xs) text) (all-valid (cdr xs) text))))) (and (listp findings) (stringp episode_text) (all-valid findings episode_text)))`
    - env: `{ "findings": <concatenated list of all critique items>, "episode_text": <raw episode body string> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SC-2","case":"grounded-finding-passes","env":{"findings":[{"line":"L5","quote":"which meant that"}],"episode_text":"He paused, which meant that the room fell quiet."},"expected":true}
+     {"gate":"SC-2","case":"fabricated-quote-fails","env":{"findings":[{"line":"L5","quote":"shadows danced"}],"episode_text":"He paused, which meant that the room fell quiet."},"expected":false}
+     {"gate":"SC-2","case":"bare-L-marker-fails","env":{"findings":[{"line":"L","quote":"which meant that"}],"episode_text":"He paused, which meant that the room fell quiet."},"expected":false}
+     {"gate":"SC-2","case":"non-list-findings-fails","env":{"findings":"bad","episode_text":"real text"},"expected":false}
+     ```
    - If `SC-2` returns `false`, drop or repair the ungrounded finding
      before showing the critique to the author.
 
 ### Phase 5 — Converge, Continuity & Learning (Act)
 
 1. Run **`lisp_eval` gate `SC-3` (PDCA Convergence Gate)**:
-   - form: `(cond ((= open_findings 0) (quote done)) ((>= iteration 2) (quote stop-and-report)) (t (quote iterate)))`
+   - form: `(if (not (and (numberp open_findings) (>= open_findings 0) (numberp iteration) (>= iteration 1))) (quote invalid-sc3-inputs) (cond ((= open_findings 0) (quote done)) ((>= iteration 2) (quote stop-and-report)) (t (quote iterate))))`
    - env: `{ "open_findings": <count of unresolved findings not waived by author>, "iteration": <1-based review pass> }`
-   - `done`: deliver the clean report. `iterate`: return to the author
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SC-3","case":"zero-open-done","env":{"open_findings":0,"iteration":1},"expected":"done"}
+     {"gate":"SC-3","case":"pass-1-open-iterates","env":{"open_findings":3,"iteration":1},"expected":"iterate"}
+     {"gate":"SC-3","case":"pass-2-stops-and-reports","env":{"open_findings":2,"iteration":2},"expected":"stop-and-report"}
+     {"gate":"SC-3","case":"negative-open-refused","env":{"open_findings":-1,"iteration":1},"expected":"invalid-sc3-inputs"}
+     ```
+   - `invalid-sc3-inputs`: stop and re-check `open_findings` (>= 0) and `iteration` (>= 1) before branching. `done`: deliver the clean report. `iterate`: return to the author
      for their manual revision, then re-run Phase 4 once.
      `stop-and-report`: stop at pass 2 and list remaining items for the
      author's Final Say.
