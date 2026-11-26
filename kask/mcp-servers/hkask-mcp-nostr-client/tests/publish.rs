@@ -295,3 +295,55 @@ async fn blossom_upload_verifies_bud02_descriptor_and_publishes_nip92_imeta_note
         "stored event carries the NIP-92 imeta tag"
     );
 }
+
+/// A7 (`exp_a2be8e6e7445464585ad131f4519eed4`) task 1: `acn_ask_publish_loopback`.
+///
+/// expect: a signed ACN Ask commitment event carrying conditions_of_satisfaction,
+/// disqualifier, deadline, and price_sats tags round-trips cleanly over the local
+/// loopback TestRelay with exact content and tag fidelity.
+#[tokio::test]
+async fn acn_ask_publish_loopback() {
+    let requester_keys = Keys::generate();
+    let ask_payload = serde_json::json!({
+        "protocol": "acn/v0",
+        "phase": "ask",
+        "commitment_id": "a7-loopback-ask-001",
+        "conditions_of_satisfaction": [
+            "all deterministic boundary invariants pass",
+            "spend crosses ApprovalPort::request_spend_approval"
+        ],
+        "disqualifier": "unattended settlement or automated goal closure",
+        "deadline": "2026-12-01T00:00:00Z",
+        "price_sats": 0
+    })
+    .to_string();
+
+    let ask_event = EventBuilder::new(Kind::from_u16(1), &ask_payload)
+        .tags([
+            Tag::parse(["t", "acn-ask"]).expect("acn-ask tag"),
+            Tag::parse(["d", "a7-loopback-ask-001"]).expect("d tag"),
+            Tag::parse(["disqualifier", "unattended-spend-or-closure"]).expect("disqualifier tag"),
+        ])
+        .custom_created_at(Timestamp::from_secs(1_700_000_100))
+        .finalize(&requester_keys)
+        .expect("throwaway requester key signs ACN Ask");
+
+    let seed = TestRelay::start().await.expect("loopback relay starts");
+    let session = Session::open(&config(&seed), BUILD_ADDRESS_POLICY).await;
+    let reports = session.send(&ask_event).await;
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert_eq!(reports[0]["state"], "accepted", "{reports:?}");
+
+    let reading = session.read(&[Filter::new().id(ask_event.id)], 1).await;
+    assert_eq!(reading.events.len(), 1, "loopback read-back finds ACN Ask");
+    let stored = &reading.events[0].0;
+    assert_eq!(stored.id, ask_event.id);
+    assert_eq!(stored.content, ask_payload);
+    assert!(
+        stored
+            .tags
+            .iter()
+            .any(|t| t.as_slice() == ["disqualifier", "unattended-spend-or-closure"]),
+        "stored ACN Ask preserves disqualifier tag"
+    );
+}

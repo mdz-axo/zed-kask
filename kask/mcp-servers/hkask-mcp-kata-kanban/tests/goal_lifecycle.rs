@@ -898,3 +898,43 @@ fn retired_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged() {
         .expect("fixture row survives the failed read");
     assert_eq!(row.value, value, "{field}: stored bytes changed");
 }
+
+/// A7 (`exp_a2be8e6e7445464585ad131f4519eed4`) task 3: `acn_verdict_human_closure_boundary`.
+///
+/// expect: even when a worker ACN verdict reports `GoalVerdictValue::Done` with
+/// 100% criteria passing, `goal_judge` leaves the canonical goal open (`closure == None`),
+/// preserving non-delegable human PI closure via `goal_close_native`.
+#[test]
+fn acn_verdict_human_closure_boundary() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create ACN commitment goal");
+    assert!(goal.closure.is_none(), "fresh goal starts open");
+
+    let verdict = GoalVerdict {
+        verdict: GoalVerdictValue::Done,
+        confidence: 0.95,
+        criterion_results: vec![CriterionJudgment {
+            index: 0,
+            passed: true,
+            note: "All ACN loopback invariants passed".into(),
+        }],
+        reasoning: "ACN Layer 1-3 verdict passed; awaiting human PI closure".into(),
+    };
+
+    let judged = f
+        .service
+        .goal_judge(goal.id, &verdict, f.owner)
+        .expect("worker verdict accepted");
+    assert_eq!(judged.revision, goal.revision);
+    assert!(
+        judged.closure.is_none(),
+        "worker Done verdict must never close a canonical goal"
+    );
+    assert!(
+        f.goal(goal.id).closure.is_none(),
+        "persisted goal stays open until native human ActionChoice closure"
+    );
+}

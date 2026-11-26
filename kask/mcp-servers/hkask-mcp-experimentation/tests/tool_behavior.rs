@@ -1959,3 +1959,113 @@ async fn affirmative_selection_requires_seal_and_recorded_runs_while_voids_stay_
     .expect("measured challenger on sealed experiment selects cleanly");
     assert_eq!(resolved["status"], "resolved");
 }
+
+/// A7 (`exp_a2be8e6e7445464585ad131f4519eed4`) task 4: `acn_disqualifier_void_refusal`.
+///
+/// expect: a disqualifier rubric with pinned authority (`deterministic`) is accepted,
+/// fingerprinted into the seal, rejects unknown authority substitution, preserves
+/// `declared_assumptions` on `fitness_record`, and voids selection cleanly when
+/// triggered via `rejected`.
+#[tokio::test]
+async fn acn_disqualifier_void_refusal() {
+    use hkask_experimentation::types::{
+        RUBRIC_AUTHORITY_DETERMINISTIC, RUBRIC_AUTHORITY_PINNED_AI_JUDGE, RUBRIC_KIND_DISQUALIFIER,
+    };
+
+    let server = make_server();
+
+    // Unknown authority substitution is refused before proposal.
+    let mut bad = proposal("scientific_hypothesis");
+    bad.rubrics.push(Rubric {
+        id: "no_unattended_spend".to_string(),
+        description: "Hard void if spend bypasses ApprovalPort::request_spend_approval".to_string(),
+        kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+        verification: RubricVerification::Contains {
+            spec: "request_spend_approval".to_string(),
+        },
+        authority: Some("self_certified_agent".to_string()),
+    });
+    let err = server
+        .experiment_propose(Parameters(bad))
+        .await
+        .expect_err("unknown rubric authority must be refused");
+    assert!(err.to_string().contains("authority"), "{err}");
+
+    // Valid pinned disqualifier + deterministic / pinned_ai_judge authorities succeed.
+    let mut good = proposal("scientific_hypothesis");
+    good.rubrics[0].authority = Some(RUBRIC_AUTHORITY_PINNED_AI_JUDGE.to_string());
+    good.rubrics.push(Rubric {
+        id: "no_unattended_spend".to_string(),
+        description: "Hard void if spend bypasses ApprovalPort::request_spend_approval".to_string(),
+        kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+        verification: RubricVerification::Contains {
+            spec: "request_spend_approval".to_string(),
+        },
+        authority: Some(RUBRIC_AUTHORITY_DETERMINISTIC.to_string()),
+    });
+    let proposed = invoke_tool!(server, experiment_propose, good);
+    let exp_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("exp id")
+        .to_string();
+
+    let baseline =
+        register_variant_with_role(&server, &exp_id, "baseline", None, Some("baseline")).await;
+    let baseline_id = baseline["variant"]["id"]
+        .as_str()
+        .expect("variant id")
+        .to_string();
+
+    let fit = invoke_tool!(
+        server,
+        fitness_record,
+        FitnessRecordRequest {
+            experiment_id: exp_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["cargo_test_nostr_wallet_acn_spike:run1".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({"disqualifier_triggered": true})),
+            seal_id: None,
+            declared_assumptions: vec![
+                "loopback relay only; zero mainnet or real sats spend".to_string()
+            ],
+        }
+    );
+    assert_eq!(
+        fit["fitness"]["declared_assumptions"],
+        serde_json::json!(["loopback relay only; zero mainnet or real sats spend"])
+    );
+
+    // Disqualifier void resolves as rejected and blocks subsequent selection.
+    let rejected = invoke_tool!(
+        server,
+        selection_record,
+        SelectionRecordRequest {
+            experiment_id: exp_id.clone(),
+            verdict: Some("rejected".to_string()),
+            scientific_outcome: None,
+            selected_variant_id: None,
+            reject_reasons: vec![
+                "disqualifier no_unattended_spend triggered: payout voided".to_string()
+            ],
+            algedonic_reference: None,
+        }
+    );
+    assert_eq!(rejected["status"], "resolved");
+
+    let bypass_err = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: exp_id,
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
+            selected_variant_id: Some(baseline_id),
+            reject_reasons: Vec::new(),
+            algedonic_reference: None,
+        }))
+        .await
+        .expect_err("voided experiment cannot be subsequently selected");
+    assert!(
+        bypass_err.to_string().contains("already resolved"),
+        "{bypass_err}"
+    );
+}

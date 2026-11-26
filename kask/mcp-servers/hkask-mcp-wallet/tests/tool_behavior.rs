@@ -159,3 +159,52 @@ async fn locked_wallet_server_reports_locked_status_and_refuses_balance() {
     let decoded = parse_envelope(&decoded_json);
     assert_eq!(decoded["kind"], "lightning_address");
 }
+
+/// A7 (`exp_a2be8e6e7445464585ad131f4519eed4`) task 2: `acn_commit_escrow_approval_gate`.
+///
+/// expect: an unattended ACN escrow spend through `wallet_send_ecash` without
+/// native editor `ApprovalPort::request_spend_approval` approval deterministically
+/// fails closed with zero sats spent and zero settled transactions.
+#[tokio::test]
+async fn acn_commit_escrow_approval_gate() {
+    let server = test_server().await;
+
+    let send_err = server
+        .wallet_send_ecash(Parameters(WalletSendEcashParams {
+            idempotency_key: "a7-acn-escrow-001".to_string(),
+            amount_sats: 100,
+            mint_url: None,
+            memo: Some("ACN commit escrow lock: a7-loopback-ask-001".to_string()),
+            p2pk_pubkey: None,
+        }))
+        .await
+        .expect_err("unattended ACN escrow spend must be refused without ApprovalPort");
+    assert!(
+        !send_err.to_string().is_empty(),
+        "refusal carries a diagnostic reason"
+    );
+
+    let pay_err = server
+        .wallet_pay_invoice(Parameters(WalletPayInvoiceParams {
+            idempotency_key: "a7-acn-pay-001".to_string(),
+            rail: "nwc".to_string(),
+            bolt11: "lnbcrt100n1p0test".to_string(),
+            mint_url: None,
+        }))
+        .await
+        .expect_err("unattended NWC settlement must be refused without ApprovalPort");
+    assert!(
+        !pay_err.to_string().is_empty(),
+        "NWC refusal carries a diagnostic reason"
+    );
+
+    let tx_json = server
+        .wallet_transactions(Parameters(WalletTransactionsParams::default()))
+        .await
+        .expect("wallet_transactions");
+    let tx = parse_envelope(&tx_json);
+    assert_eq!(
+        tx["count"], 0,
+        "zero transactions settle when ApprovalPort is absent"
+    );
+}
