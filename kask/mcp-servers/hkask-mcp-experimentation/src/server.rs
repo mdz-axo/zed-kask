@@ -60,6 +60,7 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::RubricsRequired
         | ExperimentationError::RubricsMissingKind(_)
         | ExperimentationError::UnknownRubricKind(_)
+        | ExperimentationError::UnknownRubricAuthority(_)
         | ExperimentationError::DuplicateRubricId(_)
         | ExperimentationError::RubricIdInvalid(_)
         | ExperimentationError::UnknownVariantRole(_)
@@ -255,6 +256,11 @@ pub struct FitnessRecordRequest {
     /// The experiment's seal id. Required once the experiment is sealed;
     /// omitted before, when only the baseline variant may record.
     pub seal_id: Option<String>,
+    /// Optional explicit assumptions declared alongside this fitness record
+    /// (Notes on Architectural Grounding, Implication 18: turns silent
+    /// guesses into checkable provenance). Blank entries are rejected.
+    #[serde(default)]
+    pub declared_assumptions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -485,6 +491,7 @@ impl ExperimentationServer {
             run_count,
             scores,
             seal_id,
+            declared_assumptions,
         }): Parameters<FitnessRecordRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "fitness_record", async {
@@ -501,6 +508,7 @@ impl ExperimentationServer {
                     run_count,
                     &scores,
                     seal_id.as_deref(),
+                    &declared_assumptions,
                 )
                 .map_err(map_experimentation_error)?;
             Ok(crate::ontology::annotate(

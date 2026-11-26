@@ -202,12 +202,19 @@ pub struct GoalJudgeRequest {
     pub criterion_results: Vec<CriterionJudgmentInput>,
     /// Overall reasoning, grounded in the observed outcome.
     pub reasoning: String,
+    /// Optional explicit assumptions declared alongside the verdict
+    /// (Notes on Architectural Grounding, Implication 18: turns silent
+    /// guesses into checkable provenance). Blank entries are rejected.
+    #[serde(default)]
+    pub declared_assumptions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct GoalJudgeResponse {
     pub goal_id: String,
     pub verdict: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_assumptions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

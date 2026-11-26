@@ -46,6 +46,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
                 verification: RubricVerification::ReportRef {
                     harness: "eval_harness".to_string(),
                 },
+                authority: None,
             },
             Rubric {
                 id: "uses_lisp_gate".to_string(),
@@ -54,6 +55,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
                 verification: RubricVerification::Contains {
                     spec: "lisp_eval".to_string(),
                 },
+                authority: None,
             },
         ],
         prediction: Prediction {
@@ -158,6 +160,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("baseline fitness_record succeeds");
@@ -191,6 +194,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200})),
             seal_id: Some(seal_id.clone()),
+            declared_assumptions: Vec::new(),
         }
     );
     assert_eq!(fitness["fitness"]["variant_id"], challenger_id.as_str());
@@ -381,6 +385,7 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("baseline fitness");
@@ -415,6 +420,7 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect_err("missing citation refused");
@@ -429,6 +435,7 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8})),
             seal_id: Some(seal_id.clone()),
+            declared_assumptions: Vec::new(),
         }
     );
     assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
@@ -462,6 +469,7 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 1.0})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("saturated baseline fitness");
@@ -501,6 +509,7 @@ async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("baseline fitness");
@@ -528,6 +537,7 @@ async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8})),
             seal_id: Some(seal_id.clone()),
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("challenger fitness");
@@ -626,6 +636,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect_err("empty runs rejected");
@@ -642,6 +653,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
             run_count: 0,
             scores: AnyJsonValue(serde_json::json!({})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect_err("zero run_count rejected");
@@ -790,6 +802,7 @@ async fn budget_max_runs_is_enforced_through_the_tool_seam() {
                 run_count: 9,
                 scores: AnyJsonValue(serde_json::json!({})),
                 seal_id: None,
+                declared_assumptions: Vec::new(),
             }))
             .await
             .expect("records up to the ceiling are allowed");
@@ -802,6 +815,7 @@ async fn budget_max_runs_is_enforced_through_the_tool_seam() {
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect_err("over-ceiling record refused");
@@ -906,6 +920,7 @@ async fn oversized_run_count_is_rejected_through_the_tool_seam() {
             run_count: 9223372036854775808u64,
             scores: AnyJsonValue(serde_json::json!({})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect_err("oversized run_count rejected");
@@ -936,6 +951,7 @@ fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
                 verification: RubricVerification::ReportRef {
                     harness: "eval_harness".to_string(),
                 },
+                authority: None,
             },
             Rubric {
                 id: "design_spec_present".to_string(),
@@ -944,6 +960,7 @@ fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
                 verification: RubricVerification::Contains {
                     spec: "design_spec_version".to_string(),
                 },
+                authority: None,
             },
         ],
         prediction: Prediction {
@@ -1013,6 +1030,7 @@ async fn scientific_headroom_seals_through_the_tool_seam() {
             run_count: 2,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("baseline fitness");
@@ -1060,6 +1078,7 @@ async fn scientific_headroom_seals_through_the_tool_seam() {
             run_count: 2,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }))
         .await
         .expect("baseline fitness");
@@ -1153,6 +1172,7 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({"effect": 0.01})),
             seal_id: None,
+            declared_assumptions: Vec::new(),
         }
     );
     invoke_tool!(

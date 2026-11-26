@@ -100,17 +100,33 @@ pub struct ScientificHeadroom {
     pub evidence: Vec<String>,
 }
 
-/// Rubric kinds (the v3 create-idea rules): every declaration carries at
-/// least one `metric` rubric and at least one `implementation` or
-/// `grounded_report` rubric.
+/// Rubric kinds (the v3 create-idea rules + fish-papers A4 disqualifier):
+/// every declaration carries at least one `metric` rubric and at least one
+/// `implementation` or `grounded_report` rubric, and may carry `disqualifier`
+/// rubrics naming hard-void Goodhart traps.
 pub const RUBRIC_KIND_METRIC: &str = "metric";
 pub const RUBRIC_KIND_IMPLEMENTATION: &str = "implementation";
 pub const RUBRIC_KIND_GROUNDED_REPORT: &str = "grounded_report";
+pub const RUBRIC_KIND_DISQUALIFIER: &str = "disqualifier";
 
 pub const RUBRIC_KINDS: &[&str] = &[
     RUBRIC_KIND_METRIC,
     RUBRIC_KIND_IMPLEMENTATION,
     RUBRIC_KIND_GROUNDED_REPORT,
+    RUBRIC_KIND_DISQUALIFIER,
+];
+
+/// Pinned assessment authority classes (fish-papers A4): keeps deterministic
+/// checks, pinned AI judges, and named human signers strictly separated so one
+/// never stands in for another.
+pub const RUBRIC_AUTHORITY_DETERMINISTIC: &str = "deterministic";
+pub const RUBRIC_AUTHORITY_PINNED_AI_JUDGE: &str = "pinned_ai_judge";
+pub const RUBRIC_AUTHORITY_NAMED_HUMAN: &str = "named_human";
+
+pub const RUBRIC_AUTHORITIES: &[&str] = &[
+    RUBRIC_AUTHORITY_DETERMINISTIC,
+    RUBRIC_AUTHORITY_PINNED_AI_JUDGE,
+    RUBRIC_AUTHORITY_NAMED_HUMAN,
 ];
 
 // The vocabulary follows the derived-registry `rubric` entry (operator
@@ -134,6 +150,15 @@ fn rubric_kind_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type": "string", "enum": RUBRIC_KINDS})
 }
 
+fn optional_rubric_authority_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [
+            {"type": "string", "enum": RUBRIC_AUTHORITIES},
+            {"type": "null"}
+        ]
+    })
+}
+
 /// One pass/fail criterion, declared before measurement.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Rubric {
@@ -147,6 +172,12 @@ pub struct Rubric {
     pub kind: String,
     /// How the rubric is checked.
     pub verification: RubricVerification,
+    /// Optional pinned assessment authority class (`deterministic`,
+    /// `pinned_ai_judge`, or `named_human`) so one authority never stands in
+    /// for another. Sealed into the contract fingerprint when supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "optional_rubric_authority_schema")]
+    pub authority: Option<String>,
 }
 
 /// Validate a declaration's rubric bundle (the v3 create-idea rules):
@@ -178,6 +209,11 @@ pub fn validate_rubrics(rubrics: &[Rubric]) -> Result<(), ExperimentationError> 
         }
         if !RUBRIC_KINDS.contains(&rubric.kind.as_str()) {
             return Err(ExperimentationError::UnknownRubricKind(rubric.kind.clone()));
+        }
+        if let Some(ref auth) = rubric.authority
+            && !RUBRIC_AUTHORITIES.contains(&auth.as_str())
+        {
+            return Err(ExperimentationError::UnknownRubricAuthority(auth.clone()));
         }
     }
     if !rubrics.iter().any(|r| r.kind == RUBRIC_KIND_METRIC) {
@@ -311,6 +347,10 @@ pub struct FitnessRecord {
     /// The seal this record cites (P2) — required for post-seal records;
     /// NULL for the baseline's own pre-seal measurement.
     pub seal_id: Option<String>,
+    /// Explicit assumptions declared by the caller alongside this fitness
+    /// record (Notes on Architectural Grounding, Implication 18).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_assumptions: Vec<String>,
     pub created_at: String,
 }
 
@@ -487,6 +527,8 @@ pub enum ExperimentationError {
     RubricsMissingKind(&'static str),
     #[error("rubric kind must be one of {}; got {:?}", RUBRIC_KINDS.join(", "), .0)]
     UnknownRubricKind(String),
+    #[error("rubric authority must be one of {}; got {:?}", RUBRIC_AUTHORITIES.join(", "), .0)]
+    UnknownRubricAuthority(String),
     #[error("duplicate rubric id {0:?} — rubric ids must be unique and stable")]
     DuplicateRubricId(String),
     #[error(

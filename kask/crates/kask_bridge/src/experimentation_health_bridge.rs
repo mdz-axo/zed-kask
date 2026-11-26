@@ -102,6 +102,7 @@ mod tests {
                 verification: RubricVerification::ReportRef {
                     harness: "harness:evals/foo_bar".to_string(),
                 },
+                authority: None,
             },
             Rubric {
                 id: "uses_lisp_gate".to_string(),
@@ -110,6 +111,7 @@ mod tests {
                 verification: RubricVerification::Contains {
                     spec: "lisp_eval".to_string(),
                 },
+                authority: None,
             },
         ]
     }
@@ -159,6 +161,7 @@ mod tests {
                 9,
                 &serde_json::json!({"pass_rate": 0.5}),
                 None,
+                &[],
             )
             .expect("fitness at the ceiling");
 

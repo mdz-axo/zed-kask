@@ -127,6 +127,7 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, ExperimentationError> 
         run_count: required_int(row, 5)?,
         scores: row.get_json(4)?,
         seal_id: optional_text(row, 7),
+        declared_assumptions: row.get_json(8)?,
         created_at: row.get_str(6)?.to_string(),
     })
 }
@@ -239,6 +240,7 @@ impl ExperimentationStore {
                  scores TEXT NOT NULL, \
                  run_count INTEGER NOT NULL, \
                  seal_id TEXT, \
+                 declared_assumptions TEXT NOT NULL DEFAULT '[]', \
                  created_at TEXT NOT NULL \
              ); \
              CREATE TABLE IF NOT EXISTS selection_records (\
@@ -275,6 +277,16 @@ impl ExperimentationStore {
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
              CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
         )?;
+        let fitness_cols = driver.query("PRAGMA table_info(fitness_records)", &[])?;
+        let has_assumptions = fitness_cols
+            .iter()
+            .any(|row| row.get_str(1).ok() == Some("declared_assumptions"));
+        if !has_assumptions {
+            driver.execute(
+                "ALTER TABLE fitness_records ADD COLUMN declared_assumptions TEXT NOT NULL DEFAULT '[]'",
+                &[],
+            )?;
+        }
         Ok(Self { driver })
     }
 
@@ -723,6 +735,7 @@ impl ExperimentationStore {
     /// referenced reports cover; the store sums recorded run counts against
     /// the experiment's declared `max_runs` ceiling and refuses the record
     /// with a typed `BudgetExhausted` error — never a silent overshoot.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_fitness(
         &self,
         experiment_id: &str,
@@ -731,7 +744,11 @@ impl ExperimentationStore {
         run_count: u64,
         scores: &serde_json::Value,
         seal_id: Option<&str>,
+        declared_assumptions: &[String],
     ) -> Result<FitnessRecord, ExperimentationError> {
+        if declared_assumptions.iter().any(|a| a.trim().is_empty()) {
+            return Err(ExperimentationError::Empty("declared_assumptions entry"));
+        }
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
             return Err(ExperimentationError::ExperimentResolved(
@@ -791,8 +808,8 @@ impl ExperimentationStore {
                 final_evaluation: false,
             },
             "INSERT INTO fitness_records \
-             (id, experiment_id, variant_id, runs, run_count, scores, seal_id, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (id, experiment_id, variant_id, runs, run_count, scores, seal_id, declared_assumptions, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             &[
                 DbValue::Text(id.clone()),
                 DbValue::Text(experiment_id.to_string()),
@@ -801,6 +818,7 @@ impl ExperimentationStore {
                 db_int(run_count)?,
                 DbValue::Text(value_column(scores)?),
                 text_or_null(seal_column.as_deref()),
+                DbValue::Text(value_column(&declared_assumptions)?),
                 DbValue::Text(created_at.clone()),
             ],
         )?;
@@ -812,6 +830,7 @@ impl ExperimentationStore {
             run_count,
             scores: scores.clone(),
             seal_id: seal_column,
+            declared_assumptions: declared_assumptions.to_vec(),
             created_at,
         })
     }
@@ -821,7 +840,7 @@ impl ExperimentationStore {
         experiment_id: &str,
     ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at, seal_id \
+            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at, seal_id, declared_assumptions \
              FROM fitness_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -1360,6 +1379,7 @@ mod tests {
                 verification: RubricVerification::ReportRef {
                     harness: "eval_harness".to_string(),
                 },
+                authority: None,
             },
             Rubric {
                 id: "uses_lisp_gate".to_string(),
@@ -1368,6 +1388,7 @@ mod tests {
                 verification: RubricVerification::Contains {
                     spec: "lisp_eval".to_string(),
                 },
+                authority: None,
             },
         ]
     }
@@ -1474,6 +1495,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.6}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         let seal = store
@@ -1487,6 +1509,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200}),
                 Some(&seal.id),
+                &[],
             )
             .expect("fitness");
         assert_eq!(fitness.variant_id, challenger.id);
@@ -1754,6 +1777,7 @@ mod tests {
                 9,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("first half");
         // 9 more: exactly at the ceiling (18) — allowed (§P8.9 step 2: the
@@ -1766,6 +1790,7 @@ mod tests {
                 9,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("at ceiling");
         // One more run would make 19 > 18 — typed refusal naming the
@@ -1778,6 +1803,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect_err("over ceiling");
         assert!(
@@ -1851,6 +1877,7 @@ mod tests {
                 oversized,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect_err("oversized run_count rejected, never wrapped");
         assert!(
@@ -1889,6 +1916,7 @@ mod tests {
                 3,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         // Seal so a final evaluation is possible.
@@ -1917,6 +1945,7 @@ mod tests {
                 9,
                 &serde_json::json!({}),
                 Some(&seal.id),
+                &[],
             )
             .expect_err("fitness after final evaluation must count both");
         assert!(
@@ -1950,6 +1979,7 @@ mod tests {
                 9,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("fitness");
         store
@@ -2125,6 +2155,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         store
@@ -2201,6 +2232,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect("first baseline fitness");
 
@@ -2218,6 +2250,7 @@ mod tests {
                         1,
                         &serde_json::json!({}),
                         None,
+                        &[],
                     )
                 }));
             }
@@ -2341,6 +2374,7 @@ mod tests {
             verification: RubricVerification::ReportRef {
                 harness: "eval_harness".to_string(),
             },
+            authority: None,
         };
         let implementation = || Rubric {
             id: "uses_gate".to_string(),
@@ -2349,6 +2383,7 @@ mod tests {
             verification: RubricVerification::Contains {
                 spec: "lisp_eval".to_string(),
             },
+            authority: None,
         };
         // Empty bundle.
         assert!(matches!(
@@ -2375,6 +2410,7 @@ mod tests {
                 verification: RubricVerification::ReportRef {
                     harness: "eval_harness".to_string(),
                 },
+                authority: None,
             },
         ];
         assert!(matches!(
@@ -2390,6 +2426,7 @@ mod tests {
                 verification: RubricVerification::Contains {
                     spec: "x".to_string(),
                 },
+                authority: None,
             },
             implementation(),
         ];
@@ -2523,6 +2560,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect_err("pre-seal challenger fitness refused");
         assert!(matches!(
@@ -2539,6 +2577,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.6}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         let seal = store
@@ -2569,6 +2608,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.8}),
                 Some(&seal.id),
+                &[],
             )
             .expect("post-seal challenger fitness");
         assert_eq!(fitness.seal_id.as_deref(), Some(seal.id.as_str()));
@@ -2582,6 +2622,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 None,
+                &[],
             )
             .expect_err("missing citation refused");
         assert!(matches!(
@@ -2598,6 +2639,7 @@ mod tests {
                 1,
                 &serde_json::json!({}),
                 Some("seal_other"),
+                &[],
             )
             .expect_err("wrong seal refused");
         assert!(matches!(error, ExperimentationError::SealMismatch(_, _)));
@@ -2623,6 +2665,7 @@ mod tests {
                 1,
                 &serde_json::json!({"pass_rate": 1.0}),
                 None,
+                &[],
             )
             .expect("saturated baseline fitness");
 
@@ -2690,6 +2733,7 @@ mod tests {
                     1,
                     &serde_json::json!({"pass_rate": 0.5}),
                     None,
+                    &[],
                 )
                 .expect("baseline fitness");
             store
@@ -2765,6 +2809,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.6}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         let seal = store
@@ -2779,6 +2824,7 @@ mod tests {
                 3,
                 &serde_json::json!({"pass_rate": 0.8}),
                 Some(&seal.id),
+                &[],
             )
             .expect("challenger fitness");
 
@@ -2895,6 +2941,7 @@ mod tests {
                 2,
                 &serde_json::json!({"pass_rate": pass_rate}),
                 None,
+                &[],
             )
             .expect("baseline fitness");
         baseline
@@ -3130,5 +3177,109 @@ mod tests {
         assert_eq!(selection.verdict, VERDICT_SELECTED);
         assert!(selection.scientific_outcome.is_none());
         assert_eq!(updated.status, STATUS_RESOLVED);
+    }
+
+    #[test]
+    fn disqualifier_and_pinned_authority_validate_and_reject_unknown() {
+        use crate::types::{
+            RUBRIC_AUTHORITIES, RUBRIC_AUTHORITY_DETERMINISTIC, RUBRIC_AUTHORITY_NAMED_HUMAN,
+            RUBRIC_AUTHORITY_PINNED_AI_JUDGE, RUBRIC_KIND_DISQUALIFIER,
+        };
+        let bundle = vec![
+            Rubric {
+                id: "pass_rate".to_string(),
+                description: "pass rate reaches threshold".to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "eval_harness".to_string(),
+                },
+                authority: Some(RUBRIC_AUTHORITY_DETERMINISTIC.to_string()),
+            },
+            Rubric {
+                id: "grounded_report_ok".to_string(),
+                description: "blinded report passes rubric".to_string(),
+                kind: RUBRIC_KIND_GROUNDED_REPORT.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "blinded_assessor".to_string(),
+                },
+                authority: Some(RUBRIC_AUTHORITY_PINNED_AI_JUDGE.to_string()),
+            },
+            Rubric {
+                id: "no_hardcoded_bypass".to_string(),
+                description: "voids payout if agent hardcodes test outputs".to_string(),
+                kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+                verification: RubricVerification::NotContains {
+                    spec: "HARDCODED_BYPASS".to_string(),
+                },
+                authority: Some(RUBRIC_AUTHORITY_NAMED_HUMAN.to_string()),
+            },
+        ];
+        assert_eq!(RUBRIC_AUTHORITIES.len(), 3);
+        assert!(validate_rubrics(&bundle).is_ok());
+
+        let bad_auth = vec![
+            Rubric {
+                authority: Some("self_graded".to_string()),
+                ..bundle[0].clone()
+            },
+            bundle[1].clone(),
+        ];
+        assert!(matches!(
+            validate_rubrics(&bad_auth),
+            Err(ExperimentationError::UnknownRubricAuthority(a)) if a == "self_graded"
+        ));
+    }
+
+    #[test]
+    fn fitness_declared_assumptions_round_trip_and_reject_blank() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        let baseline = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"v": "base"}),
+                None,
+                VARIANT_ROLE_BASELINE,
+                None,
+            )
+            .expect("baseline");
+        let assumptions = vec![
+            "assumes fixed OpenRouter embedding model".to_string(),
+            "assumes single-tenant local SQLCipher store".to_string(),
+        ];
+        let recorded = store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["run-1".to_string()],
+                1,
+                &serde_json::json!({"pass_rate": 0.5}),
+                None,
+                &assumptions,
+            )
+            .expect("fitness with assumptions");
+        assert_eq!(recorded.declared_assumptions, assumptions);
+
+        let loaded = store
+            .fitness_for_experiment(&experiment.id)
+            .expect("load fitness");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].declared_assumptions, assumptions);
+
+        let blank_err = store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["run-2".to_string()],
+                1,
+                &serde_json::json!({"pass_rate": 0.6}),
+                None,
+                &["  ".to_string()],
+            )
+            .expect_err("blank assumption must be rejected");
+        assert!(matches!(
+            blank_err,
+            ExperimentationError::Empty("declared_assumptions entry")
+        ));
     }
 }

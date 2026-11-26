@@ -503,11 +503,17 @@ impl KanbanServer {
             confidence,
             criterion_results,
             reasoning,
+            declared_assumptions,
         }): Parameters<GoalJudgeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_judge", async {
             let gid = parse_goal_id(&goal_id)?;
             let verdict_value = parse_goal_verdict(&verdict)?;
+            if declared_assumptions.iter().any(|a| a.trim().is_empty()) {
+                return Err(McpToolError::invalid_argument(
+                    "declared_assumptions entries must not be blank",
+                ));
+            }
             let goal_verdict = GoalVerdict {
                 verdict: verdict_value,
                 confidence,
@@ -526,6 +532,7 @@ impl KanbanServer {
                 |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
                     verdict: verdict_value.as_str().to_string(),
+                    declared_assumptions,
                 },
             )
         })

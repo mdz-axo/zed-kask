@@ -517,11 +517,36 @@ async fn goal_judge_returns_the_canonical_verdict() {
                     note: "evidence".into(),
                 }],
                 reasoning: "reason".into(),
+                declared_assumptions: vec!["single-tenant local store".into()],
             }))
             .await
             .expect("judge ok"),
     );
     assert_eq!(judged["verdict"], "done", "{judged}");
+    assert_eq!(
+        judged["declared_assumptions"],
+        serde_json::json!(["single-tenant local store"]),
+        "{judged}"
+    );
+    let blank_err = server
+        .kanban_goal_judge(Parameters(GoalJudgeRequest {
+            goal_id: created["id"].as_str().expect("goal id").to_string(),
+            verdict: "continue".into(),
+            confidence: 0.5,
+            criterion_results: vec![CriterionJudgmentInput {
+                index: 0,
+                passed: false,
+                note: "in progress".into(),
+            }],
+            reasoning: "still working".into(),
+            declared_assumptions: vec!["   ".into()],
+        }))
+        .await
+        .expect_err("blank declared assumption must be rejected");
+    assert!(
+        blank_err.to_string().contains("declared_assumptions"),
+        "{blank_err}"
+    );
 }
 
 /// mcp-tool-review KK-21 pin: the board listing says which boards gate Done

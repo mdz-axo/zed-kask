@@ -362,6 +362,7 @@ Copy these complete contexts at the render call sites; do not reconstruct them f
 ## Constraints
 
 - No confirmatory data inspection before the design is complete and handed to `hypothesis-testing` for declaration. `experiment_propose` is preregistration; `experiment_seal` is the later fingerprint/headroom attestation.
+- **Pre-seal adversarial validation (`derived:adversarial_validation`, `A4`):** before sealing, red-team the rubric bundle for Goodhart shortcuts; add explicit `disqualifier` rubrics where corner-cutting would void the outcome, and pin each rubric's assessment `authority` (`deterministic`, `pinned_ai_judge`, or `named_human`) so one authority never stands in for another.
 - Never “blame the instrument first.” Localize faults among hypothesis, instrument, reference data, analysis and domain shift using calibration, controls, orthogonal measurements and rival predictions.
 - Observational causal claims require a causal model and explicit residual-confounding limitations.
 - Cost and speed do not compensate for known validity, ethics or feasibility problems; state the evidence and unresolved constraints.
