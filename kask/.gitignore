@@ -26,6 +26,7 @@ Thumbs.db
 # Retired documents recoverable via: git log --diff-filter=D -- <path>
 # See DOCUMENTATION_STANDARDS.md §3 for lifecycle policy
 docs/archive/
+docs/fish-papers/
 
 # Style corpus download cache — populated by `kask embed-corpus run`
 # Raw source texts cached to avoid re-downloading
