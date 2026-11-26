@@ -72,6 +72,12 @@ Template context variables (from each template's [inference] contract):
 - `finer-evaluate.j2`: `broad_topic`, `domain`, `research_context`, `question_hint`
 - `hypothesis-operationalize.j2`: `structured_question`, `pico_elements`, `domain`, `finer_result`
 - `pico-structure.j2`: `research_question`, `domain`, `finer_result`, `population_hints`
+
+Copyable `render_template` contexts:
+
+- `hypothesis-framer/finer-evaluate`: `{"broad_topic": "Automated code review latency", "domain": "software engineering", "research_context": "CI pipelines on Rust monorepos", "question_hint": "Does incremental caching reduce review latency?"}`
+- `hypothesis-framer/pico-structure`: `{"research_question": "Does incremental caching reduce CI latency?", "domain": "software engineering", "finer_result": {"overall_finer_rating": "adequate"}, "population_hints": "Rust workspaces with >50 crates"}`
+- `hypothesis-framer/hypothesis-operationalize`: `{"structured_question": "In Rust workspaces with >50 crates, does incremental caching reduce CI build time compared to cold builds?", "pico_elements": {"population": "Rust workspaces >50 crates", "intervention": "incremental caching", "comparison": "cold builds", "outcome": "wall-clock CI seconds"}, "domain": "software engineering", "finer_result": {"overall_finer_rating": "adequate"}}`
 ## Regression case
 
 `HF-3` receipts over the renders' real shapes (`finer_scores.{feasible,interesting,novel,ethical,relevant}.score`, the whole `hypothesis-operationalize` object, `admissible`), executed 2026-11-13 through the `hkask_lisp` evaluator and re-evaluated by `~/Documents/zk-data/skills/hypothesis-framer/2026-11-13-hf-repair/receipts.sh` — now the `lisp-receipts` block beside the form, evaluated by `check-skill-lisp-forms.sh` (fixture: all scores 8–9, superiority, two objectives, no misalignments, feasibility confirmed, admissible true → `converged` true, rating `strong`). Each row changes one thing:

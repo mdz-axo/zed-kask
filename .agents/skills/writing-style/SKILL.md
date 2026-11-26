@@ -84,7 +84,13 @@ report), not just the tone.
 Before running Mode 1 or Mode 2 (or recommending a generation voice via `writing-style/style-recommend` with `document_brief` and `available_styles`), check with `lisp_eval` that the requested `style_name` is one of the 5 literary generation voices and not a non-generation technical corpus (`gentle-lovelace`, `david-dunning`):
 
 ```lisp
-(member style_name (list "hemingway" "woolf" "agatha-eliot" "jane-wilde" "ulysses-s-twain"))
+(and (stringp style_name) (member style_name (list "hemingway" "woolf" "agatha-eliot" "jane-wilde" "ulysses-s-twain")))
+```
+
+```lisp-receipts
+{"gate":"WS-1","case":"hemingway","env":{"style_name":"hemingway"},"expected":true}
+{"gate":"WS-1","case":"gentle-lovelace","env":{"style_name":"gentle-lovelace"},"expected":false}
+{"gate":"WS-1","case":"null-style","env":{"style_name":null},"expected":false}
 ```
 
 If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `writing-style/conversational-turn` and explain that `gentle-lovelace` and `david-dunning` are evaluation/centroid corpora without generation configs (for dimension-specific documentation rewrites, use `corpus_rewrite` directly with `dimension`).
@@ -107,9 +113,16 @@ If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `wr
    verbatim is reported unvalidated, never pretended measured. Run it when
    the operator asks for authenticity and the turn may be rewritten.
 4. **Gate `WS-2` (D — `lisp_eval` verbatim technical-content check):** Verify that every item in the `technical_content` array appears verbatim in `styled_reply` using `string-contains` (needle first, haystack second — replaces self-reported `technical_verbatim`):
-   - form: `(begin (define all-present (lambda (items reply) (if (is_null items) true (and (string-contains (car items) reply) (all-present (cdr items) reply))))) (all-present technical_content styled_reply))`
+   - form: `(begin (define all-present (lambda (items reply) (if (is_null items) true (and (stringp (car items)) (<= (length (car items)) (length reply)) (string-contains (car items) reply) (all-present (cdr items) reply))))) (and (listp technical_content) (stringp styled_reply) (all-present technical_content styled_reply)))`
    - env: `{ "technical_content": <array of technical strings>, "styled_reply": <restyled reply string> }`
-   If `WS-2` returns `false`, restore the corrupted technical token from `draft_reply` and re-run `WS-2` before sending.
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"WS-2","case":"all-present","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"Run cargo test on src/lib.rs."},"expected":true}
+     {"gate":"WS-2","case":"missing-token","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"Run cargo test."},"expected":false}
+     {"gate":"WS-2","case":"short-ascii-reply","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"short"},"expected":false}
+     {"gate":"WS-2","case":"non-string-reply","env":{"technical_content":["cargo test"],"styled_reply":null},"expected":false}
+     ```
+   Known `hkask-lisp` boundaries: `length` counts Unicode characters while `string-contains` compares UTF-8 byte lengths, so the length pre-check prevents short-reply crashes for ASCII tokens while a multi-byte UTF-8 token longer in bytes than `styled_reply` still surfaces a runtime error (blocking delivery visibly, never failing open); and JSON `null` and `[]` both map to Lisp `nil`, so callers must supply a non-null `technical_content` array when tokens are present. If `WS-2` returns `false`, restore the corrupted technical token from `draft_reply` and re-run `WS-2` before sending.
 5. Style off: the operator says so, or the session ends. Like adhd-mode,
    the style applies to output shape, never to technical content —
    facts, code, file paths stay verbatim under any voice.
@@ -157,8 +170,17 @@ If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `wr
 5. Verify that every heading, code fence, and table from the source
    survived. Count with `terminal` on both files — `grep -c '^#'`,
    ``grep -c '^```'``, `grep -c '^|'` — then call `lisp_eval` with the six
-   counts: `(and (= h_src h_rec) (= f_src f_rec) (= t_src t_rec))`. The
-   counts come from grep, not from the model. `^#` also counts `#` lines
+   counts:
+   - form: `(and (numberp h_src) (numberp h_rec) (numberp f_src) (numberp f_rec) (numberp t_src) (numberp t_rec) (>= h_src 0) (>= h_rec 0) (>= f_src 0) (>= f_rec 0) (>= t_src 0) (>= t_rec 0) (= h_src h_rec) (= f_src f_rec) (= t_src t_rec))`
+   - env: `{"h_src": <int>, "h_rec": <int>, "f_src": <int>, "f_rec": <int>, "t_src": <int>, "t_rec": <int>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"mode-3-parity","case":"green-parity","env":{"h_src":12,"h_rec":12,"f_src":8,"f_rec":8,"t_src":3,"t_rec":3},"expected":true}
+     {"gate":"mode-3-parity","case":"heading-lost","env":{"h_src":12,"h_rec":11,"f_src":8,"f_rec":8,"t_src":3,"t_rec":3},"expected":false}
+     {"gate":"mode-3-parity","case":"negative-counts","env":{"h_src":12,"h_rec":12,"f_src":8,"f_rec":8,"t_src":-1,"t_rec":-1},"expected":false}
+     {"gate":"mode-3-parity","case":"non-numeric","env":{"h_src":"12","h_rec":12,"f_src":8,"f_rec":8,"t_src":3,"t_rec":3},"expected":false}
+     ```
+   The counts come from grep, not from the model. `^#` also counts `#` lines
    inside code fences; parity still holds because both files carry the
    same fences. Parity is a necessary floor, not a sufficiency proof —
    equal counts do not show the headings are the *same* headings; the
@@ -210,6 +232,11 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's `[inference]` contract):
 - `style-recommend.j2`: `document_brief`, `available_styles`
 - `conversational-turn.j2`: `style_name`, `style_mechanics`, `draft_reply`, `technical_content`
+
+Copyable `render_template` contexts:
+
+- `writing-style/style-recommend`: `{"document_brief": "Release notes for v0.4", "available_styles": ["hemingway", "woolf", "agatha-eliot", "jane-wilde", "ulysses-s-twain"]}`
+- `writing-style/conversational-turn`: `{"style_name": "hemingway", "style_mechanics": "Short declarative sentences, parataxis_ratio_min 0.6", "draft_reply": "Run cargo test in src/lib.rs.", "technical_content": ["cargo test", "src/lib.rs"]}`
 
 ## Regression case
 
