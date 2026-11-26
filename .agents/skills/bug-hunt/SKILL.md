@@ -81,8 +81,14 @@ Charter design, crate-model description, the probe step-0 prediction (`predicted
 9. Enforce no-fiction at the gate: every finding MUST include `location.file`, `location.line_approx`, and a verbatim `evidence` snippet (≤5 lines). Findings without citations are REJECTED and recorded in `rejected_findings` as `{"id": "...", "reason": "missing_citation"}`.
 10. Respond from the template with `evaluated_findings` and `rejected_findings` (array of `{id, reason}`).
 11. **Deterministic oracle summary (`BH-1`, D — `lisp_eval`):** after `bug-hunt-oracle.j2` returns `evaluated_findings` and `rejected_findings`, compute `confirmed_bugs`, `potential_bugs`, `contract_gaps`, `rejected_findings` count, and the `by_category` and `by_severity` counts (`oracle_summary`) with `lisp_eval`:
-    - form: `(begin (define count-field (lambda (fs k v) (if (is_null fs) 0 (+ (if (string= (assoc k (car fs)) v) 1 0) (count-field (cdr fs) k v))))) (list (list "confirmed_bugs" (count-field evaluated_findings "verdict" "BUG")) (list "potential_bugs" (count-field evaluated_findings "verdict" "POTENTIAL_BUG")) (list "contract_gaps" (count-field evaluated_findings "verdict" "OBSERVATION")) (list "rejected_findings" (length rejected_findings)) (list "by_category" (list (list "requirements" (count-field evaluated_findings "beizer_category" "requirements")) (list "structural" (count-field evaluated_findings "beizer_category" "structural")) (list "data" (count-field evaluated_findings "beizer_category" "data")) (list "coding" (count-field evaluated_findings "beizer_category" "coding")) (list "interface" (count-field evaluated_findings "beizer_category" "interface")) (list "integration" (count-field evaluated_findings "beizer_category" "integration")) (list "timing" (count-field evaluated_findings "beizer_category" "timing")) (list "configuration" (count-field evaluated_findings "beizer_category" "configuration")))) (list "by_severity" (list (list "CRITICAL" (count-field evaluated_findings "severity" "CRITICAL")) (list "HIGH" (count-field evaluated_findings "severity" "HIGH")) (list "MEDIUM" (count-field evaluated_findings "severity" "MEDIUM")) (list "LOW" (count-field evaluated_findings "severity" "LOW"))))))`
+    - form: `(begin (define count-field (lambda (fs k v) (if (or (not (listp fs)) (is_null fs)) 0 (+ (if (and (listp (car fs)) (stringp (assoc k (car fs))) (string= (assoc k (car fs)) v)) 1 0) (count-field (cdr fs) k v))))) (list (list "confirmed_bugs" (count-field evaluated_findings "verdict" "BUG")) (list "potential_bugs" (count-field evaluated_findings "verdict" "POTENTIAL_BUG")) (list "contract_gaps" (count-field evaluated_findings "verdict" "OBSERVATION")) (list "rejected_findings" (if (listp rejected_findings) (length rejected_findings) 0)) (list "by_category" (list (list "requirements" (count-field evaluated_findings "beizer_category" "requirements")) (list "structural" (count-field evaluated_findings "beizer_category" "structural")) (list "data" (count-field evaluated_findings "beizer_category" "data")) (list "coding" (count-field evaluated_findings "beizer_category" "coding")) (list "interface" (count-field evaluated_findings "beizer_category" "interface")) (list "integration" (count-field evaluated_findings "beizer_category" "integration")) (list "timing" (count-field evaluated_findings "beizer_category" "timing")) (list "configuration" (count-field evaluated_findings "beizer_category" "configuration")))) (list "by_severity" (list (list "CRITICAL" (count-field evaluated_findings "severity" "CRITICAL")) (list "HIGH" (count-field evaluated_findings "severity" "HIGH")) (list "MEDIUM" (count-field evaluated_findings "severity" "MEDIUM")) (list "LOW" (count-field evaluated_findings "severity" "LOW"))))))`
     - env: `{ "evaluated_findings": <array>, "rejected_findings": <array> }`
+    - receipts:
+      ```lisp-receipts
+      {"gate":"BH-1","case":"empty-findings","env":{"evaluated_findings":[],"rejected_findings":[]},"expected":{"confirmed_bugs":0,"potential_bugs":0,"contract_gaps":0,"rejected_findings":0,"by_category":{"requirements":0,"structural":0,"data":0,"coding":0,"interface":0,"integration":0,"timing":0,"configuration":0},"by_severity":{"CRITICAL":0,"HIGH":0,"MEDIUM":0,"LOW":0}}}
+      {"gate":"BH-1","case":"mixed-findings-and-rejected","env":{"evaluated_findings":[{"verdict":"BUG","beizer_category":"coding","severity":"HIGH"},{"verdict":"POTENTIAL_BUG","beizer_category":"timing","severity":"MEDIUM"},{"verdict":"OBSERVATION","beizer_category":"interface","severity":"LOW"}],"rejected_findings":[{"id":"RAW-1","reason":"missing_citation"}]},"expected":{"confirmed_bugs":1,"potential_bugs":1,"contract_gaps":1,"rejected_findings":1,"by_category":{"requirements":0,"structural":0,"data":0,"coding":1,"interface":1,"integration":0,"timing":1,"configuration":0},"by_severity":{"CRITICAL":0,"HIGH":1,"MEDIUM":1,"LOW":1}}}
+      {"gate":"BH-1","case":"malformed-row-safely-skipped","env":{"evaluated_findings":[{"verdict":"BUG","beizer_category":"coding","severity":"HIGH"},"bad_row"],"rejected_findings":[{"id":"RAW-1","reason":"missing_citation"}]},"expected":{"confirmed_bugs":1,"potential_bugs":0,"contract_gaps":0,"rejected_findings":1,"by_category":{"requirements":0,"structural":0,"data":0,"coding":1,"interface":0,"integration":0,"timing":0,"configuration":0},"by_severity":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0}}}
+      ```
 
 ### bug-hunt-report
 
@@ -113,11 +119,58 @@ Charter design, crate-model description, the probe step-0 prediction (`predicted
 
 To render a template, call the `render_template` tool with the template ref (e.g., `bug-hunt/bug-hunt-charter`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `bug-hunt-charter.j2`: `target`, `quality_criteria`, `prior_expedition`, `mutation_report`, `precomputed_analysis`, `crate_model`
-- `bug-hunt-probe.j2`: `charter`, `probe_findings`, `probe_depth`, `files_read`, `tests_run`, `probes_executed`, `crates_examined`
-- `bug-hunt-oracle.j2`: `charter`, `probe_findings`, `quality_criteria`
-- `bug-hunt-report.j2`: `charter`, `evaluated_findings`, `oracle_summary`, `quality_criteria`, `probes_executed`, `files_read`, `tests_run`, `crates_examined`, `prior_expedition`, `predicted_findings`, `predicted_category`
+Copyable `render_template` context blocks (field names and types verified against each template's `[inference]` contract):
+
+`bug-hunt/bug-hunt-charter`:
+```json
+{
+  "target": { "crate": "<crate>", "path": "<path>" },
+  "quality_criteria": "<user quality criteria>",
+  "prior_expedition": null,
+  "mutation_report": {},
+  "precomputed_analysis": null,
+  "crate_model": null
+}
+```
+
+`bug-hunt/bug-hunt-probe`:
+```json
+{
+  "charter": { "charter_statement": "<statement>", "target_area": "<area>", "strategy": "<HTSM>", "beizer_focus": ["coding"] },
+  "probe_findings": null,
+  "probe_depth": "static",
+  "files_read": 0,
+  "tests_run": 0,
+  "probes_executed": 0,
+  "crates_examined": ["<crate>"]
+}
+```
+
+`bug-hunt/bug-hunt-oracle`:
+```json
+{
+  "charter": { "charter_statement": "<statement>", "target_area": "<area>" },
+  "probe_findings": "<structured probe findings>",
+  "quality_criteria": "<user quality criteria>"
+}
+```
+
+`bug-hunt/bug-hunt-report`:
+```json
+{
+  "charter": { "charter_statement": "<statement>", "target_area": "<area>" },
+  "evaluated_findings": [],
+  "oracle_summary": { "confirmed_bugs": 0, "potential_bugs": 0, "contract_gaps": 0, "rejected_findings": 0, "by_category": {}, "by_severity": {} },
+  "quality_criteria": "<user quality criteria>",
+  "probes_executed": 1,
+  "files_read": 1,
+  "tests_run": 0,
+  "crates_examined": ["<crate>"],
+  "prior_expedition": null,
+  "predicted_findings": 0,
+  "predicted_category": "coding"
+}
+```
 
 ## Regression case
 
@@ -138,7 +191,14 @@ The skill's forms are executed at use time, never anchored in code.
 - `bug-hunt-probe.j2`: Do not generate fictional findings. The static pattern list is a floor, not a ceiling — dynamic expansion is required when `crate_model.observed_characteristics` are present. Missing tests must be recorded as a finding, not a silent no-op. Critical findings must emit `probe_escalation` entries.
 - `bug-hunt-oracle.j2`: Every finding must carry IS/OUGHT, epistemic mode, provenance, reproducibility, `beizer_category`, `severity`, `pattern_signature`, AND `fix_suggestion` fields. Every finding has exactly one Beizer category; severity must be justified by evidence; pattern signatures must be concrete (grep-able or structural), not vague; do not fabricate fix suggestions (`"needs investigation"` is valid). Every finding must cite a concrete file:line and include a verbatim code snippet (≤5 lines); uncited findings are rejected into `rejected_findings` (`{id, reason}`), not silently dropped. Reproducibility does NOT downgrade confidence. If confidence < 0.60, the finding is an OBSERVATION. `BH-1` `lisp_eval` computes `oracle_summary`.
 - `bug-hunt-report.j2`: Each finding must include all required fields. Summary counts come from `oracle_summary` (`BH-1`), including `rejected_findings`. `lessons_learned` must be concrete and actionable; `pattern_signatures` must be derived from actual findings, not fabricated. Write the report to `~/Documents/zk-data/skills/bug-hunt/{date}-{run}/bug-hunt-report.json`.
-- **Convergence (D over P findings):** after each expedition, compute with `lisp_eval` (1) the new confirmed or potential findings, compared by `location` (file:line) against the prior expedition's — not by `pattern_signature`, which is free text and changes with rewording; and (2) the no-fiction and tier-consistency defects — a Tier 1 BUG without a cited contract, or any finding without a location:
-  - form: `(begin (define new-locs (lambda (cur prior) (if (is_null cur) (quote ()) (if (member (car cur) prior) (new-locs (cdr cur) prior) (cons (car cur) (new-locs (cdr cur) prior)))))) (define bad (lambda (fs) (if (is_null fs) 0 (+ (if (and (string= (assoc "verdict" (car fs)) "BUG") (is_null (assoc "contract" (car fs)))) 1 0) (if (is_null (assoc "location" (car fs))) 1 0) (bad (cdr fs)))))) (list (new-locs current_locations prior_locations) (bad findings)))`
+- **Convergence (D over P findings):** after each expedition, compute with `lisp_eval` (1) the new confirmed or potential findings, compared by `location` (file:line) against the prior expedition's — not by `pattern_signature`, which is free text and changes with rewording; and (2) the no-fiction and tier-consistency defects — a Tier 1 BUG without a non-blank cited contract, any finding without a non-blank location, or any malformed non-object finding entry:
+  - form: `(begin (define new-locs (lambda (cur prior) (if (or (not (listp cur)) (is_null cur)) (quote ()) (if (member (car cur) prior) (new-locs (cdr cur) prior) (cons (car cur) (new-locs (cdr cur) prior)))))) (define blank (lambda (v) (or (is_null v) (and (stringp v) (string= "" v))))) (define bad (lambda (fs) (if (not (listp fs)) 1 (if (is_null fs) 0 (+ (if (not (listp (car fs))) 1 (+ (if (and (stringp (assoc "verdict" (car fs))) (string= (assoc "verdict" (car fs)) "BUG") (blank (assoc "contract" (car fs)))) 1 0) (if (blank (assoc "location" (car fs))) 1 0))) (bad (cdr fs))))))) (list (new-locs current_locations (if (listp prior_locations) prior_locations (list))) (bad findings)))`
   - env: `{ "current_locations": [<file:line of this expedition's CONFIRMED or POTENTIAL findings only — OBSERVATIONs are excluded from the convergence signal>], "prior_locations": [<file:line from prior_expedition>], "findings": [<oracle findings with verdict, contract, location>] }`
+  - receipts:
+    ```lisp-receipts
+    {"gate":"BH-converge","case":"clean-no-new-locations","env":{"current_locations":["a.rs:1"],"prior_locations":["a.rs:1"],"findings":[{"verdict":"BUG","contract":"c1","location":"a.rs:1"}]},"expected":[[],0]}
+    {"gate":"BH-converge","case":"new-location-and-missing-location","env":{"current_locations":["a.rs:1","cache"],"prior_locations":["a.rs:1"],"findings":[{"verdict":"BUG","contract":"c1","location":"a.rs:1"},{"verdict":"BUG","contract":"c2","location":null}]},"expected":[["cache"],1]}
+    {"gate":"BH-converge","case":"blank-contract-counted-defect","env":{"current_locations":["a.rs:1"],"prior_locations":["a.rs:1"],"findings":[{"verdict":"BUG","contract":"","location":"a.rs:1"}]},"expected":[[],1]}
+    {"gate":"BH-converge","case":"malformed-finding-entry-fail-closed","env":{"current_locations":["a.rs:1"],"prior_locations":["a.rs:1"],"findings":["not_a_finding_object"]},"expected":[[],1]}
+    ```
   A defect count above 0 sends the offending findings back to the oracle, at most twice per expedition; findings still malformed after the second return are escalated and listed in the report, not sent back again. Converged when an expedition after the first adds no new locations. The process metrics once named here (`process_stabilization`, `coverage_estimate`) are not computed by any step; report `taxonomy_coverage` from the report instead. Bound: minimum 2 expeditions, maximum 10 (the operator can set a lower cost budget); escalate if not converged. The tier boundaries follow the oracle's categorical criteria (a cited contract for Tier 1); the confidence number is P and is not re-checked.
