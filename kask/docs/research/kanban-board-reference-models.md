@@ -249,7 +249,7 @@ The **concept model and server implementation already satisfy** R1 (partially
   (`kask/crates/hkask-kata-kanban/src/kanban/service_impl/service.rs:680@KanbanService::task_create`) — R5 is enforced at the service
   seam, not just the schema; `task_create_rejects_unknown_board` pins this.
 - `kanban_task_create` requires a `board_id`
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:570@KanbanServer::kanban_task_create`),
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:576@KanbanServer::kanban_task_create`),
   and the board index prefix `BOARD_TASKS_PREFIX`
   (`kask/crates/hkask-kata-kanban/src/kanban/service_impl/service.rs:74@BOARD_TASKS_PREFIX`) ties tasks to their board.
 - The panel's create-board form is name-first (placeholder "Board name",
