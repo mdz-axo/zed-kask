@@ -45,7 +45,15 @@ Generate Mermaid diagrams from code, using Diátaxis to choose the documentation
 
 3. **Generate Mermaid syntax.** Convert extracted entities and relationships into valid Mermaid source. Apply type-specific conventions: Crow's Foot cardinality (`||--||`, `||--o{`, `}o--o{`) for ERDs; node shapes (`[rectangle]`, `{rhombus}`, `([rounded])`) for flowcharts; `[*]` start/end markers and transition labels for state diagrams; `participant`, `->>`, `-->>`, and block constructs (`alt`, `loop`, `opt`, `par`) for sequences; `<<interface>>` and `<<enumeration>>` markers with `<|--`, `o--`, `..>` relationships for class diagrams; `service`/`junction`/`group` notation with port-based edges for architecture; `columns` and nested `block` syntax for block diagrams; `axis`/`curve` notation for radar; indentation-based hierarchy with `"label": value` for treemap; `sankey-beta` CSV edges with front-matter config for sankey; `kanban` column/task notation with `@{}` metadata for kanban; `gantt` sections with date/duration syntax for gantt; `pie` slices for pie; `gitGraph` branch/commit/merge for gitgraph; `mindmap` root and indentation for mindmap; `timeline` sections and events for timeline; `quadrantChart` axes and points for quadrant; `xychart-beta` axes and series for xychart; `journey` sections and scored tasks for journey. Respect Zed rendering constraints — no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR`. Use the `-beta` suffix where required (`architecture-beta`, `radar-beta`, `treemap-beta`, `sankey-beta`, `xychart-beta`; `block-beta` and `block` are both accepted). Output only Mermaid source without markdown fences. Apply refinement directives from previous evaluation if present, and pass `extraction_notes` from the extract step (it carries the source-coverage caveats the generation should preserve).
 
-4. **Evaluate against a local diagram rubric (P, not Diátaxis's quality formula).** Diátaxis distinguishes measurable functional quality from judged deep quality and prescribes no numeric weights. Use the following project-specific six dimensions only to prioritize revisions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Score each criterion from 0 (perfect) to 1 (severely deficient). Compute `weighted_total` solely via `lisp_eval` `DD-1` (`(+ (* c1 0.30) (* c2 0.25) (* c3 0.15) (* c4 0.15) (* c5 0.10) (* c6 0.05))`), never by hand or inside the template output. The total is the model's estimate of its own diagram, used only to choose what to refine; it is not a stop condition. Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix. Do not emit directives for criteria scored at 0.00. Pass `related_docs` as the checked paths actually found; an empty list is not a request to invent a link.
+4. **Evaluate against a local diagram rubric (P, not Diátaxis's quality formula).** Diátaxis distinguishes measurable functional quality from judged deep quality and prescribes no numeric weights. Use the following project-specific six dimensions only to prioritize revisions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Score each criterion from 0 (perfect) to 1 (severely deficient). Compute `weighted_total` solely via `lisp_eval` gate **`DD-1`**, never by hand or inside the template output:
+   - form: `(+ (* c1 0.30) (* c2 0.25) (* c3 0.15) (* c4 0.15) (* c5 0.10) (* c6 0.05))`
+   - env: `{ "c1": <entity completeness>, "c2": <relationship accuracy>, "c3": <label readability>, "c4": <type appropriateness>, "c5": <diataxis voice>, "c6": <cross-linking> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"DD-1","case":"documented-deficient-case","env":{"c1":0.2,"c2":0.1,"c3":0,"c4":0,"c5":0,"c6":0},"expected":0.08499999999999999}
+     {"gate":"DD-1","case":"all-zero-perfect","env":{"c1":0,"c2":0,"c3":0,"c4":0,"c5":0,"c6":0},"expected":0.0}
+     ```
+   The total is the model's estimate of its own diagram, used only to choose what to refine; it is not a stop condition. Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix. Do not emit directives for criteria scored at 0.00. Pass `related_docs` as the checked paths actually found; an empty list is not a request to invent a link.
 
 5. **Check against sources, not substrings.** First run deterministic gate `DD-2` via `lisp_eval` to verify that `diagram_type` is one of the 19 supported types and that `mermaid_source` is non-empty and contains no forbidden `%%{init` directive, `classDef`, or markdown fence (three backticks — the form carries the literal needle, which is why it sits in a fenced block rather than an inline span):
 
@@ -87,13 +95,72 @@ Generate Mermaid diagrams from code, using Diátaxis to choose the documentation
 | `diataxis-diagram-write.j2` | Propose markdown with quadrant-appropriate description and sourced optional cross-links at a caller-supplied path; the invoking agent writes it separately and retains the receipt. |
 | `present-diagram.j2` | Rendering template — surfaces the finalized diagram markdown (containing the fenced ```mermaid block) as the process's final output string. Without this step, the write step's JSON object {file_path, file_content, description_paragraph} is the final step output and the model must discover and extract the file_content field. This render step flattens it to a raw markdown string so the model sees the mermaid block directly. Deterministic (no LLM call). |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `diataxis-diagram/diataxis-diagram-classify`) and a context object with the required variables:
-- `diataxis-diagram-classify.j2`: `target`, `hint`
-- `diataxis-diagram-extract.j2`: `diagram_type`, `target`, `source_files`, `extracted_entities`
-- `diataxis-diagram-generate.j2`: `diagram_type`, `entities`, `relationships`, `refinement_directives`, `extraction_notes`
-- `diataxis-diagram-evaluate.j2`: `diagram_type`, `diataxis_quadrant`, `mermaid_source`, `entities`, `relationships`, `extraction_notes`, `related_docs`
-- `diataxis-diagram-write.j2`: `diagram_type`, `diataxis_quadrant`, `mermaid_source`, `target`, `entity_count`, `relationship_count`, `related_docs`, `output_path`
-- `present-diagram.j2`: `file_content`, `file_path`, `written`
+Copyable `render_template` context blocks (field names and types verified against each template's `[inference]` contract):
+
+`diataxis-diagram/diataxis-diagram-classify`:
+```json
+{
+  "target": "<target path or topic>",
+  "hint": ""
+}
+```
+
+`diataxis-diagram/diataxis-diagram-extract`:
+```json
+{
+  "diagram_type": "flowchart",
+  "target": "<target>",
+  "source_files": [],
+  "extracted_entities": ""
+}
+```
+
+`diataxis-diagram/diataxis-diagram-generate`:
+```json
+{
+  "diagram_type": "flowchart",
+  "entities": [],
+  "relationships": [],
+  "refinement_directives": [],
+  "extraction_notes": ""
+}
+```
+
+`diataxis-diagram/diataxis-diagram-evaluate`:
+```json
+{
+  "diagram_type": "flowchart",
+  "diataxis_quadrant": "reference",
+  "mermaid_source": "flowchart TD\n  A --> B",
+  "entities": [],
+  "relationships": [],
+  "extraction_notes": "",
+  "related_docs": []
+}
+```
+
+`diataxis-diagram/diataxis-diagram-write`:
+```json
+{
+  "diagram_type": "flowchart",
+  "diataxis_quadrant": "reference",
+  "mermaid_source": "flowchart TD\n  A --> B",
+  "target": "<target>",
+  "entity_count": 2,
+  "relationship_count": 1,
+  "related_docs": [],
+  "output_path": "<output path>"
+}
+```
+
+`diataxis-diagram/present-diagram`:
+```json
+{
+  "file_content": "```mermaid\nflowchart TD\n  A --> B\n```",
+  "file_path": "<output path>",
+  "written": false
+}
+```
 
 ## Regression case
 

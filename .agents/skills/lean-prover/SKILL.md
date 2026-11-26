@@ -123,8 +123,27 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 {"gate":"LP-1","case":"pass-10","env":{"exit_code":0,"diagnostics":[],"axioms":"'t' depends on axioms: [propext]","completion_status":"axiom_free"},"expected":{"pass":false,"exit_ok":true,"sorry_diagnostics":0,"audit_free":false,"forbidden_axioms":[],"status_ok":true}}
 {"gate":"LP-1","case":"pass-11","env":{"exit_code":0,"diagnostics":[],"axioms":"'t' does not depend on any axioms","completion_status":"warnings"},"expected":{"pass":false,"exit_ok":true,"sorry_diagnostics":0,"audit_free":true,"forbidden_axioms":[],"status_ok":false}}
      ```
-   - `LP-2`: `(if (and (string= universe "Prop") eliminates_into_type) allows_large_elim true)`
-   - Bookkeeping: `(and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`
+   - `LP-2`:
+     - form: `(and (stringp universe) (member universe (list "Prop" "Type")) (or (eq eliminates_into_type true) (eq eliminates_into_type false)) (or (eq allows_large_elim true) (eq allows_large_elim false)) (if (and (string= universe "Prop") (eq eliminates_into_type true)) (eq allows_large_elim true) true))`
+     - env: `{ "universe": <"Prop"|"Type">, "eliminates_into_type": <bool>, "allows_large_elim": <bool> }`
+     - receipts:
+       ```lisp-receipts
+       {"gate":"LP-2","case":"prop-into-type-without-large-elim-fails","env":{"universe":"Prop","eliminates_into_type":true,"allows_large_elim":false},"expected":false}
+       {"gate":"LP-2","case":"prop-into-type-with-large-elim-passes","env":{"universe":"Prop","eliminates_into_type":true,"allows_large_elim":true},"expected":true}
+       {"gate":"LP-2","case":"type-eliminates-freely","env":{"universe":"Type","eliminates_into_type":true,"allows_large_elim":false},"expected":true}
+       {"gate":"LP-2","case":"string-boolean-refused","env":{"universe":"Prop","eliminates_into_type":"true","allows_large_elim":false},"expected":false}
+       {"gate":"LP-2","case":"null-universe-refused","env":{"universe":null,"eliminates_into_type":"true","allows_large_elim":false},"expected":false}
+       ```
+   - Bookkeeping:
+     - form: `(and (listp obligations) (listp checks) (> (length obligations) 0) (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`
+     - env: `{ "obligations": <non-empty list of obligation names>, "checks": <matching list of check statuses> }`
+     - receipts:
+       ```lisp-receipts
+       {"gate":"LP-bookkeeping","case":"two-verified-passes","env":{"obligations":["thm1","thm2"],"checks":["axiom_free","axiom_free"]},"expected":true}
+       {"gate":"LP-bookkeeping","case":"unverified-fails","env":{"obligations":["thm1","thm2"],"checks":["axiom_free","unverified"]},"expected":false}
+       {"gate":"LP-bookkeeping","case":"count-mismatch-fails","env":{"obligations":["thm1","thm2"],"checks":["axiom_free"]},"expected":false}
+       {"gate":"LP-bookkeeping","case":"empty-obligations-refused","env":{"obligations":[],"checks":[]},"expected":false}
+       ```
    `Exists` cannot expose its witness as `Nat` by pattern matching (`Exists.casesOn` into `Type` is rejected); `Sigma`/`Subtype` retain data. Proof irrelevance is **not** permission to replace a proof by `sorry` or `trivial`. Always retain the corresponding Lean logs and `#print axioms` output. Converge only when all chosen positive declarations pass `LP-1` and `LP-2`, expected negatives fail for the intended reason, and no outcome remains unverified.
 
 ## Registry Templates
@@ -137,10 +156,39 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lean-prover/lean-prover-anchor`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `lean-prover-anchor.j2`: `proof_obligation`, `existing_proof`, `context`, `lean_diagnostics`, `iteration_focus`
-- `lean-prover-construct.j2`: `proof_obligation`, `anchor`, `existing_proof`, `lean_code_actions`, `iteration_focus`
-- `lean-prover-refute.j2`: `proof_obligation`, `proof_attempt`, `anchor`, `lean_diagnostics`
+Copyable `render_template` context blocks (field names and types verified against each template's `[inference]` contract):
+
+`lean-prover/lean-prover-anchor`:
+```json
+{
+  "proof_obligation": "<theorem statement>",
+  "existing_proof": "",
+  "context": {},
+  "lean_diagnostics": {},
+  "iteration_focus": ""
+}
+```
+
+`lean-prover/lean-prover-construct`:
+```json
+{
+  "proof_obligation": "<theorem statement>",
+  "anchor": {},
+  "existing_proof": "",
+  "lean_code_actions": [],
+  "iteration_focus": ""
+}
+```
+
+`lean-prover/lean-prover-refute`:
+```json
+{
+  "proof_obligation": "<theorem statement>",
+  "proof_attempt": {},
+  "anchor": {},
+  "lean_diagnostics": {}
+}
+```
 
 ## Regression case
 

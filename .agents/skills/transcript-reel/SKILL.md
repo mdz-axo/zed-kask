@@ -164,7 +164,18 @@ for short informal recordings. Budget ~$0.02 per intake for the
    changed word cardinality), call `educt_realign_transcript` to store
    the realignment layer — it re-anchors the corrected text onto the
    source timeline so the timed phases below (highlight pass, locate,
-   SRT) work; without it they fail with the unaligned precondition. Verify timing and realignment readiness in `lisp_eval` (`TR-1`): `(and has_word_timings (> words_count 0) (if (string= alignment "unaligned") realignment_stored true))`.
+   SRT) work; without it they fail with the unaligned precondition. Verify timing and realignment readiness in `lisp_eval` gate **`TR-1`**:
+   - form: `(and (eq has_word_timings true) (numberp words_count) (> words_count 0) (stringp alignment) (member alignment (list "aligned" "re_anchored" "unaligned")) (if (string= alignment "unaligned") (eq realignment_stored true) true))`
+   - env: `{ "has_word_timings": <bool>, "words_count": <positive int>, "alignment": <"aligned"|"re_anchored"|"unaligned"|"untimed">, "realignment_stored": <bool> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"TR-1","case":"aligned-with-timings-passes","env":{"has_word_timings":true,"words_count":100,"alignment":"aligned","realignment_stored":false},"expected":true}
+     {"gate":"TR-1","case":"re-anchored-passes","env":{"has_word_timings":true,"words_count":100,"alignment":"re_anchored","realignment_stored":false},"expected":true}
+     {"gate":"TR-1","case":"unaligned-realigned-passes","env":{"has_word_timings":true,"words_count":100,"alignment":"unaligned","realignment_stored":true},"expected":true}
+     {"gate":"TR-1","case":"unaligned-string-false-fails","env":{"has_word_timings":true,"words_count":100,"alignment":"unaligned","realignment_stored":"false"},"expected":false}
+     {"gate":"TR-1","case":"untimed-alignment-refused","env":{"has_word_timings":true,"words_count":100,"alignment":"untimed","realignment_stored":false},"expected":false}
+     {"gate":"TR-1","case":"zero-words-refused","env":{"has_word_timings":true,"words_count":0,"alignment":"aligned","realignment_stored":false},"expected":false}
+     ```
 4. Call `educt_paragraph_pass` for paragraph boundaries. Check the
    rejection_rate in the pass stats — a high rate means the model
    struggled; consider re-running after corrections.

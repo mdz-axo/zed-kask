@@ -82,7 +82,15 @@ unverified routing.
 5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
 6. `epistemic_state` is optional and self-reported by the caller; no skill or tool measures it today. When it is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0]. Record `boost_applied` (true/false) and its reason in the output so the boost can be checked.
 7. Do not recommend skill-discovery as a match — it is a meta-skill.
-8. Respond with a JSON object from the route template (`recommendations`, `uncovered_capabilities`, `boost_applied`) plus the `lisp_eval`-computed `fit_score` and `coverage_assessment`, and verify route consistency via `lisp_eval` (`SD-1`): `(and (<= recs_count max_recs) (if (string= coverage "full") (= uncovered_count 0) true) (if (string= coverage "none") (> uncovered_count 0) true))`.
+8. Respond with a JSON object from the route template (`recommendations`, `uncovered_capabilities`, `boost_applied`) plus the `lisp_eval`-computed `fit_score` and `coverage_assessment`, and verify route consistency via `lisp_eval` gate **`SD-1`**:
+   - form: `(and (numberp recs_count) (>= recs_count 0) (numberp max_recs) (> max_recs 0) (<= recs_count max_recs) (stringp coverage) (member coverage (list "full" "partial" "none")) (numberp uncovered_count) (>= uncovered_count 0) (if (string= coverage "full") (= uncovered_count 0) true) (if (string= coverage "none") (> uncovered_count 0) true))`
+   - env: `{ "recs_count": <len recommendations>, "max_recs": <max_recommendations>, "coverage": <"full"|"partial"|"none">, "uncovered_count": <len uncovered_capabilities> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SD-1","case":"full-zero-uncovered-passes","env":{"recs_count":2,"max_recs":3,"coverage":"full","uncovered_count":0},"expected":true}
+     {"gate":"SD-1","case":"none-zero-uncovered-fails","env":{"recs_count":0,"max_recs":3,"coverage":"none","uncovered_count":0},"expected":false}
+     {"gate":"SD-1","case":"bogus-coverage-refused","env":{"recs_count":2,"max_recs":3,"coverage":"bogus","uncovered_count":0},"expected":false}
+     ```
 9. Re-entry: when coverage is partial or none AND the catalog has changed since this route ran (a candidate was installed), re-run route once against the grown catalog. Bound: max 2 routing passes per task; a second partial result emits the gap signals and stops.
 
 ### skill-discovery-detect-gap
@@ -97,7 +105,15 @@ unverified routing.
 8. Evaluate every task pattern without skipping niche patterns.
 9. Ensure each gap references exactly one category, even if it spans multiple task patterns.
 10. Justify impact scoring using task pattern frequency and consequence.
-11. Do not recommend `ignore` for any gap with `critical` or `high` impact. Verify completeness and non-ignore invariants in `lisp_eval` (`SD-2`): `(and (= patterns_evaluated total_patterns) (= high_critical_ignored_count 0))`.
+11. Do not recommend `ignore` for any gap with `critical` or `high` impact. Verify completeness and non-ignore invariants in `lisp_eval` gate **`SD-2`**:
+    - form: `(and (numberp patterns_evaluated) (>= patterns_evaluated 0) (numberp total_patterns) (> total_patterns 0) (= patterns_evaluated total_patterns) (numberp high_critical_ignored_count) (= high_critical_ignored_count 0))`
+    - env: `{ "patterns_evaluated": <int>, "total_patterns": <int>, "high_critical_ignored_count": <int> }`
+    - receipts:
+      ```lisp-receipts
+      {"gate":"SD-2","case":"complete-zero-ignored-passes","env":{"patterns_evaluated":5,"total_patterns":5,"high_critical_ignored_count":0},"expected":true}
+      {"gate":"SD-2","case":"pattern-mismatch-fails","env":{"patterns_evaluated":4,"total_patterns":5,"high_critical_ignored_count":0},"expected":false}
+      {"gate":"SD-2","case":"high-critical-ignored-fails","env":{"patterns_evaluated":5,"total_patterns":5,"high_critical_ignored_count":1},"expected":false}
+      ```
 12. Classify `epistemic` gaps distinctly from `knowledge` gaps: `knowledge` means missing facts or information; `epistemic` means missing certainty-finding methods or perspective-rotation tools. An `epistemic` gap is flagged when an agent reports low confidence and no installed skill addresses the uncertainty type (perspective_blind, context_loss, conflict).
 
 ### skill-discovery-evaluate
@@ -111,6 +127,13 @@ unverified routing.
 7. Score every check without omitting any.
 8. Compute `overall_score` and the recommendation in `lisp_eval`, never by hand. Bind `fmt`, `q` and `s` to the format, quality and safety score lists and `threshold` to the installable minimum:
    `(begin (define sum (lambda (xs) (if (= (length xs) 0) 0 (+ (car xs) (sum (cdr xs)))))) (let ((total (+ (sum fmt) (sum q) (sum s)))) (list total (if (member 0 s) "reject" (if (< total threshold) "revise" "install")))))`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SD-eval","case":"all-twos-install","env":{"fmt":[2,2,2,2],"q":[2,2,2,2,2],"s":[2,2,2,2,2,2,2],"threshold":24},"expected":[32,"install"]}
+     {"gate":"SD-eval","case":"safety-zero-rejects","env":{"fmt":[2,2,2,2],"q":[2,2,2,2,2],"s":[2,2,2,2,2,2,0],"threshold":24},"expected":[30,"reject"]}
+     {"gate":"SD-eval","case":"all-ones-revise","env":{"fmt":[1,1,1,1],"q":[1,1,1,1,1],"s":[1,1,1,1,1,1,1],"threshold":24},"expected":[16,"revise"]}
+     {"gate":"SD-eval","case":"exact-24-install","env":{"fmt":[2,2,1,1],"q":[2,2,1,1,1],"s":[2,2,2,2,1,1,1],"threshold":24},"expected":[24,"install"]}
+     ```
    Tested: all 2s → `[32, install]`; one safety 0 → `reject`; all 1s at threshold 24 → `[16, revise]`. Any safety score of 0 rejects deterministically, including judgment checks such as P3. A format or quality 0 does NOT gate — it only diminishes the total (a candidate failing a format check can still reach `install` if the total clears 24 with no safety 0; verified live) — the safety checks are the gate.
 9. The installable threshold is 24 of 32 (operator ruling 2026-09-26), keeping the roughly 73% bar that 16 of 22 set when the template miscounted 11 checks.
 
@@ -154,10 +177,33 @@ Installation is an operator decision; this skill recommends, it never installs.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-discovery/skill-discovery-route`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `skill-discovery-route.j2`: `task_description`, `task_context`, `skill_catalog`, `max_recommendations`, `epistemic_state`
-- `skill-discovery-detect-gap.j2`: `task_patterns`, `skill_catalog`
-- `skill-discovery-evaluate.j2`: `candidate_skill_content`
+Copyable `render_template` context blocks (field names and types verified against each template's `[inference]` contract):
+
+`skill-discovery/skill-discovery-route`:
+```json
+{
+  "task_description": "<task description>",
+  "task_context": "<context>",
+  "skill_catalog": [],
+  "max_recommendations": 3,
+  "epistemic_state": {}
+}
+```
+
+`skill-discovery/skill-discovery-detect-gap`:
+```json
+{
+  "task_patterns": [],
+  "skill_catalog": []
+}
+```
+
+`skill-discovery/skill-discovery-evaluate`:
+```json
+{
+  "candidate_skill_content": "<SKILL.md content>"
+}
+```
 
 ## Regression case
 
