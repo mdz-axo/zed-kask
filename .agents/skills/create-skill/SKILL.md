@@ -48,9 +48,9 @@ The SKILL.md contains:
 
 Templates are `.j2` files. There are two ways to use them:
 
-1. **`render_template`** — the built-in rendering tool. Pass the template
-   ref as `<skill-name>/<file>` (e.g. `my-skill/analyze`; the resolver
-   tries the `.j2` extension) and a `variables` map. The tool renders the
+1. **`render_template`** — the built-in rendering tool. Pass `template_ref`
+   as `<skill-name>/<file>` (e.g. `my-skill/analyze`; the resolver
+   tries the `.j2` extension) and a JSON `context` object. The tool renders the
    Jinja2 template with minijinja from `kask/registry/templates/<name>/`
    and returns the rendered string. Use this when the template has Jinja2
    variables that should be substituted from prior step results.
@@ -293,7 +293,17 @@ Generate the skill artifacts:
      scaffold carrying either defect is a scaffold defect: fix before
      Phase 4.
    - The expected JSON output shape.
-3. **Pre-check before handing over:** verify naming rules and Registry Templates row parity in `lisp_eval` (`CS-1`: `(and (>= name_len 2) (<= name_len 40) (not (starts-with "hkask-" sk_name)) (not (starts-with "regulation-" sk_name)) (not (starts-with "mcp-" sk_name)) (= templates_count registry_rows_count))`), write the templates, then run
+3. **Pre-check before handing over:** verify naming rules and Registry Templates row parity in `lisp_eval` gate **`CS-1`**:
+   - form: `(and (stringp sk_name) (>= (length sk_name) 2) (<= (length sk_name) 40) (not (starts-with "hkask-" sk_name)) (not (starts-with "regulation-" sk_name)) (not (starts-with "mcp-" sk_name)) (numberp templates_count) (>= templates_count 0) (numberp registry_rows_count) (= templates_count registry_rows_count))`
+   - env: `{ "sk_name": <proposed skill name>, "templates_count": <written .j2 count>, "registry_rows_count": <Registry Templates table row count> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"CS-1","case":"valid-name-and-parity","env":{"sk_name":"my-skill","templates_count":2,"registry_rows_count":2},"expected":true}
+     {"gate":"CS-1","case":"reserved-prefix-refused","env":{"sk_name":"hkask-foo","templates_count":2,"registry_rows_count":2},"expected":false}
+     {"gate":"CS-1","case":"short-name-refused","env":{"sk_name":"a","templates_count":2,"registry_rows_count":2},"expected":false}
+     {"gate":"CS-1","case":"row-mismatch-refused","env":{"sk_name":"my-skill","templates_count":2,"registry_rows_count":1},"expected":false}
+     ```
+   Write the templates, then run
    `bash kask/scripts/audit/skill-corpus-prescreen.sh` and
    `bash kask/scripts/audit/skill-corpus-contract-audit.sh` via `terminal`.
    A new template that either script flags is a scaffold defect: fix it and
@@ -327,8 +337,8 @@ Each instruction step should be concrete and tool-oriented. A render call point 
 ### Step: Analyze (example)
 
 1. Call `render_template` to render the analysis template:
-   template: my-skill/analyze (resolves to kask/registry/templates/my-skill/analyze.j2)
-   variables: { "target": "{{ target }}", "prior_results": <step 2 output> }
+   template_ref: "my-skill/analyze" (resolves to kask/registry/templates/my-skill/analyze.j2)
+   context: { "target": "{{ target }}", "prior_results": <step 2 output> }
 
 2. Following the template's output schema, analyze the research from
    step 2. Produce a JSON object with the fields specified in the template.
@@ -451,9 +461,18 @@ is checkably wrong.
 ### Phase 5 — Converge
 
 Call `lisp_eval` with the Phase 4 counts and the number of re-entries so far:
-  form: "(cond ((and (= scaffold 0) (= research 0) (= functional 1)) (quote done)) ((>= reentries 2) (quote stop-and-report)) ((> research 0) (quote reenter-phase-1)) (t (quote reenter-phase-3)))"
-  env: { "scaffold": <scaffold_findings>, "research": <research_findings>, "functional": <0 or 1>, "reentries": <0-based count> }
+- form: `(if (not (and (numberp scaffold) (>= scaffold 0) (numberp research) (>= research 0) (numberp functional) (or (= functional 0) (= functional 1)) (numberp reentries) (>= reentries 0))) (quote invalid-convergence-inputs) (cond ((and (= scaffold 0) (= research 0) (= functional 1)) (quote done)) ((>= reentries 2) (quote stop-and-report)) ((> research 0) (quote reenter-phase-1)) (t (quote reenter-phase-3))))`
+- env: `{ "scaffold": <scaffold_findings>, "research": <research_findings>, "functional": <0 or 1>, "reentries": <0-based count> }`
+- receipts:
+  ```lisp-receipts
+  {"gate":"CS-converge","case":"all-clean-done","env":{"scaffold":0,"research":0,"functional":1,"reentries":0},"expected":"done"}
+  {"gate":"CS-converge","case":"reentries-exhausted-stops","env":{"scaffold":2,"research":0,"functional":0,"reentries":2},"expected":"stop-and-report"}
+  {"gate":"CS-converge","case":"anchors-first-reenter-1","env":{"scaffold":1,"research":1,"functional":0,"reentries":0},"expected":"reenter-phase-1"}
+  {"gate":"CS-converge","case":"artifact-only-reenter-3","env":{"scaffold":1,"research":0,"functional":0,"reentries":0},"expected":"reenter-phase-3"}
+  {"gate":"CS-converge","case":"negative-count-refused","env":{"scaffold":-1,"research":0,"functional":1,"reentries":0},"expected":"invalid-convergence-inputs"}
+  ```
 
+- `invalid-convergence-inputs`: stop and re-check the Phase 4 counts before branching (`scaffold`, `research`, `reentries` must be non-negative numbers and `functional` must be `0` or `1`).
 - `done`: report the skill with its counts and the trial evidence.
 - `reenter-phase-3`: fix the artifacts against the listed findings or the
   trial failure, then rerun Phase 4. Do not redo research for an artifact
@@ -483,9 +502,23 @@ Render `create-skill/scaffold` with a one-line `skill_description` (e.g. "a chun
 | `scaffold.j2` | Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows and typed `[inference]` contracts; validation is left to the Phase 3 scripts and Phase 4. |
 | `translate.j2` | Translate a classified source skill from another agent system into a SKILL.md body plus .j2 templates under the same artifact contract, marking concepts with no kask equivalent as unresolved. |
 
-To render a template, call `render_template` with the ref (e.g. `create-skill/scaffold`):
-- `scaffold.j2`: `skill_description`, `scope`
-- `translate.j2`: `source_skill`, `target_domain`
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`create-skill/scaffold`:
+```json
+{
+  "skill_description": "<natural-language skill description>",
+  "scope": "<domain and boundaries>"
+}
+```
+
+`create-skill/translate`:
+```json
+{
+  "source_skill": {},
+  "target_domain": "<target kask domain>"
+}
+```
 
 ## Constraints
 

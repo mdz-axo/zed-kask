@@ -111,8 +111,17 @@ quantified backbone.
    (`importance >= 4` and `uncertainty >= 4` for high/high) and verify both
    `critical_uncertainties` fall in the high-importance, high-uncertainty
    quadrant:
-   - form: `(begin (define hi-hi (lambda (fs) (if (is_null fs) (list) (let ((f (car fs))) (if (and (>= (assoc "importance" f) 4) (>= (assoc "uncertainty" f) 4)) (cons (assoc "force" f) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces))) (list q1 (= (length critical_uncertainties) 2) (member (assoc "force" (nth 0 critical_uncertainties)) q1) (member (assoc "force" (nth 1 critical_uncertainties)) q1))))`
+   - form: `(begin (define hi-hi (lambda (fs) (if (or (not (listp fs)) (is_null fs)) (list) (let ((f (car fs))) (if (and (listp f) (stringp (assoc "force" f)) (numberp (assoc "importance" f)) (numberp (assoc "uncertainty" f)) (>= (assoc "importance" f) 4) (>= (assoc "uncertainty" f) 4)) (cons (assoc "force" f) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces)) (two (and (listp critical_uncertainties) (= (length critical_uncertainties) 2) (listp (nth 0 critical_uncertainties)) (listp (nth 1 critical_uncertainties)) (stringp (assoc "force" (nth 0 critical_uncertainties))) (stringp (assoc "force" (nth 1 critical_uncertainties))) (not (string= (assoc "force" (nth 0 critical_uncertainties)) (assoc "force" (nth 1 critical_uncertainties))))))) (list q1 two (if two (member (assoc "force" (nth 0 critical_uncertainties)) q1) false) (if two (member (assoc "force" (nth 1 critical_uncertainties)) q1) false))))`
    - env: `{ "driving_forces": <driving_forces>, "critical_uncertainties": <critical_uncertainties> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SP-1","case":"two-distinct-hi-hi-pass","env":{"driving_forces":[{"force":"F1","importance":5,"uncertainty":5},{"force":"F2","importance":4,"uncertainty":4}],"critical_uncertainties":[{"force":"F1"},{"force":"F2"}]},"expected":[["F1","F2"],true,true,true]}
+     {"gate":"SP-1","case":"one-uncertainty-fails","env":{"driving_forces":[{"force":"F1","importance":5,"uncertainty":5},{"force":"F2","importance":4,"uncertainty":4}],"critical_uncertainties":[{"force":"F1"}]},"expected":[["F1","F2"],false,false,false]}
+     {"gate":"SP-1","case":"second-axis-not-hi-hi","env":{"driving_forces":[{"force":"F1","importance":5,"uncertainty":5},{"force":"F2","importance":2,"uncertainty":4}],"critical_uncertainties":[{"force":"F1"},{"force":"F2"}]},"expected":[["F1"],true,true,false]}
+     {"gate":"SP-1","case":"duplicate-axes-and-bad-rating-refused","env":{"driving_forces":[{"force":"F1","importance":5,"uncertainty":5},{"force":"F2","importance":"high","uncertainty":5}],"critical_uncertainties":[{"force":"F1"},{"force":"F1"}]},"expected":[["F1"],false,false,false]}
+     {"gate":"SP-1","case":"non-list-driving-forces-safe","env":{"driving_forces":"bad","critical_uncertainties":[{"force":"F1"},{"force":"F2"}]},"expected":[[],true,false,false]}
+     {"gate":"SP-1","case":"empty-uncertainties-safe","env":{"driving_forces":[{"force":"F1","importance":5,"uncertainty":5},{"force":"F2","importance":4,"uncertainty":4}],"critical_uncertainties":[]},"expected":[["F1","F2"],false,false,false]}
+     ```
 11. Render `scenario-planning/axes-and-narratives` with `focal_question`,
    `critical_uncertainties`, and `planning_horizon` for the four quadrant
    narratives, then `scenario-planning/scenario-quality-gate` with
@@ -237,7 +246,7 @@ declarations remain unscored history; never repair them by post-outcome admissio
 
 ## Regression case
 
-`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the authored `SP-2` and `SP-3` (their `lisp-receipts` blocks beside the forms): `SP-2` over four divergent scenarios at 0.8/0.7/0.6 (pass), divergence 0.59 and 0.5 (revise, named), three scenarios, the parametric flag set, a render whose findings disagree with the computed verdict, a textual score and a score above 1 (malformed); `SP-3` over two past-deadline events both scored (complete), a third past-deadline event unscored (unresolved, named), an unmatched outcome id, zero scored, a null response, and twelve scored (calibration claimable). `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib scenario_planning_` runs the authored `due.jq` over events before, on and after today.
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the authored `SP-1`, `SP-2`, and `SP-3` (their `lisp-receipts` blocks beside the forms): `SP-1` over two distinct high-importance/high-uncertainty axes, fewer than two uncertainties, an axis outside Q1, duplicate axes with a non-numeric rating, and malformed `driving_forces`; `SP-2` over four divergent scenarios at 0.8/0.7/0.6 (pass), divergence 0.59 and 0.5 (revise, named), three scenarios, the parametric flag set, a render whose findings disagree with the computed verdict, a textual score and a score above 1 (malformed); `SP-3` over two past-deadline events both scored (complete), a third past-deadline event unscored (unresolved, named), an unmatched outcome id, zero scored, a null response, and twelve scored (calibration claimable). `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib scenario_planning_` runs the authored `due.jq` over events before, on and after today.
 
 Render `scenario-planning/type-framing` once per MAIA type
 (company_update, company_analysis, emerging_economic,
@@ -261,12 +270,52 @@ run here.
 | `scenario-quality-gate.j2` | Separate gate scoring divergence, consistency and coverage (0–1) with fix notes; `gate_pass` computed by `SP-2` `lisp_eval`. |
 | `implications-indicators.j2` | Robust and contingent strategies with observable early-warning indicators. |
 
-To render a template, call `render_template` with the ref (e.g. `scenario-planning/driving-forces`) and these inputs:
-- `type-framing.j2`: `scenario_type`, `subject`
-- `driving-forces.j2`: `focal_question`, `planning_horizon`, `domain`, `market_context`
-- `axes-and-narratives.j2`: `focal_question`, `critical_uncertainties`, `planning_horizon`
-- `scenario-quality-gate.j2`: `scenarios`, `focal_question`, `axis_1`, `axis_2`
-- `implications-indicators.j2`: `focal_question`, `scenarios`
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`scenario-planning/type-framing`:
+```json
+{
+  "scenario_type": "<company_update|company_analysis|emerging_economic|economic_potential>",
+  "subject": "<subject>"
+}
+```
+
+`scenario-planning/driving-forces`:
+```json
+{
+  "focal_question": "<focal question>",
+  "planning_horizon": "<tactical|strategic|long_term>",
+  "domain": "<domain>",
+  "market_context": null
+}
+```
+
+`scenario-planning/axes-and-narratives`:
+```json
+{
+  "focal_question": "<focal question>",
+  "critical_uncertainties": [],
+  "planning_horizon": "<tactical|strategic|long_term>"
+}
+```
+
+`scenario-planning/scenario-quality-gate`:
+```json
+{
+  "scenarios": [],
+  "focal_question": "<focal question>",
+  "axis_1": {},
+  "axis_2": {}
+}
+```
+
+`scenario-planning/implications-indicators`:
+```json
+{
+  "focal_question": "<focal question>",
+  "scenarios": []
+}
+```
 
 ## Constraints
 

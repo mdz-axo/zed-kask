@@ -504,14 +504,29 @@ All receipts executed live (2026-10-01, batch-13 audit):
 
 The pre-run isolation/timeout gate (`GPB-1`) and post-run work-conservation & frame-budget gate (`GPB-2`, grounded in Georges, Buytaert & Eeckhout, "Statistically rigorous Java performance evaluation", OOPSLA 2007 `doi:10.1145/1297027.1297033` and `derived:frame_budget` / `derived:instructions_per_cycle`) execute over flat scalar bindings in `lisp_eval`:
 
-```
-GPB-1 form: "(and (= test_support_occurrences 0) (<= timeout_ms 300000) (= concurrent_bench_runs 0))"
-GPB-1 env:  { "test_support_occurrences": 0, "timeout_ms": 180000, "concurrent_bench_runs": 0 }
+- **`GPB-1`** (pre-run isolation and timeout gate):
+  - form: `(and (numberp test_support_occurrences) (= test_support_occurrences 0) (numberp timeout_ms) (> timeout_ms 0) (<= timeout_ms 300000) (numberp concurrent_bench_runs) (= concurrent_bench_runs 0))`
+  - env: `{ "test_support_occurrences": <grep count>, "timeout_ms": <positive timeout <= 300000>, "concurrent_bench_runs": <concurrent bench process count> }`
+  - receipts:
+    ```lisp-receipts
+    {"gate":"GPB-1","case":"clean-isolated-run","env":{"test_support_occurrences":0,"timeout_ms":180000,"concurrent_bench_runs":0},"expected":true}
+    {"gate":"GPB-1","case":"zero-timeout-refused","env":{"test_support_occurrences":0,"timeout_ms":0,"concurrent_bench_runs":0},"expected":false}
+    {"gate":"GPB-1","case":"over-five-minute-timeout-refused","env":{"test_support_occurrences":0,"timeout_ms":300001,"concurrent_bench_runs":0},"expected":false}
+    {"gate":"GPB-1","case":"test-support-leak-refused","env":{"test_support_occurrences":1,"timeout_ms":180000,"concurrent_bench_runs":0},"expected":false}
+    {"gate":"GPB-1","case":"concurrent-run-refused","env":{"test_support_occurrences":0,"timeout_ms":180000,"concurrent_bench_runs":1},"expected":false}
+    ```
 
-GPB-2 form: "(and (= work_enqueued work_completed) (= work_dropped 0) (= ordering_violations 0) (<= candidate_p99_ms frame_budget_ms))"
-GPB-2 env:  { "work_enqueued": <fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>,
-              "ordering_violations": <fixture counter>, "candidate_p99_ms": <observed p99 frame ms>, "frame_budget_ms": <predeclared target ms, e.g. 8.33 at 120 FPS> }
-```
+- **`GPB-2`** (post-run work-conservation and frame-budget gate):
+  - form: `(and (numberp work_enqueued) (> work_enqueued 0) (numberp work_completed) (= work_enqueued work_completed) (numberp work_dropped) (= work_dropped 0) (numberp ordering_violations) (= ordering_violations 0) (numberp candidate_p99_ms) (> candidate_p99_ms 0) (numberp frame_budget_ms) (> frame_budget_ms 0) (<= candidate_p99_ms frame_budget_ms))`
+  - env: `{ "work_enqueued": <positive fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>, "ordering_violations": <fixture counter>, "candidate_p99_ms": <positive observed p99 frame ms>, "frame_budget_ms": <positive predeclared target ms, e.g. 8.33 at 120 FPS> }`
+  - receipts:
+    ```lisp-receipts
+    {"gate":"GPB-2","case":"clean-conserved-within-budget","env":{"work_enqueued":1000,"work_completed":1000,"work_dropped":0,"ordering_violations":0,"candidate_p99_ms":6.2,"frame_budget_ms":8.33},"expected":true}
+    {"gate":"GPB-2","case":"empty-workload-refused","env":{"work_enqueued":0,"work_completed":0,"work_dropped":0,"ordering_violations":0,"candidate_p99_ms":5.0,"frame_budget_ms":8.33},"expected":false}
+    {"gate":"GPB-2","case":"dropped-work-refused","env":{"work_enqueued":1000,"work_completed":998,"work_dropped":2,"ordering_violations":0,"candidate_p99_ms":6.2,"frame_budget_ms":8.33},"expected":false}
+    {"gate":"GPB-2","case":"ordering-violation-refused","env":{"work_enqueued":1000,"work_completed":1000,"work_dropped":0,"ordering_violations":1,"candidate_p99_ms":6.2,"frame_budget_ms":8.33},"expected":false}
+    {"gate":"GPB-2","case":"over-frame-budget-refused","env":{"work_enqueued":1000,"work_completed":1000,"work_dropped":0,"ordering_violations":0,"candidate_p99_ms":9.5,"frame_budget_ms":8.33},"expected":false}
+    ```
 
 The skill's forms are executed at use time, never anchored in code.
 

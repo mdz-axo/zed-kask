@@ -166,7 +166,6 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 | `kanban_task_move` | operate | Post-step: execute status transitions |
 | `kanban_task_verify` | operate | Operator-confirmed Review pass only; nonempty evidence moves task to Done |
 | `kanban_task_reopen` | operate | Post-step: reopen for rework |
-| `kanban_task_comments_since` | operate | Pre-step: read incremental updates |
 | `kanban_goal_judge` | operate | Record an evidence-grounded criterion result without substituting for operator confirmation |
 | `kanban_goal_close` | operate | Native host ActionChoice only; submit goal identity and evidence, never an outcome |
 | `kanban_goal_correct_outcome` | operate | Separate native human correction |
@@ -216,6 +215,70 @@ When `pass` is true, the recorded evidence string carries the tier prefix (`[ora
 | `escalate.j2` | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/decompose-tasks`) and a context object with the required variables — each template's `[inference]` contract is the authoritative input list. The contract audit checks each template's contract-to-body agreement; cross-template producer→consumer seams (one step's output feeding the next step's input) are this skill's own chain to verify at render time.
+
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`kanban-task-management/decompose-tasks`:
+```json
+{
+  "project_description": "<project description>",
+  "target_task_hours": null,
+  "goals": [],
+  "constraints": [],
+  "resources": []
+}
+```
+
+`kanban-task-management/review-tasks`:
+```json
+{
+  "tasks": [],
+  "project_name": "<project name>"
+}
+```
+
+`kanban-task-management/configure-spawn`:
+```json
+{
+  "task": {},
+  "available_skills": []
+}
+```
+
+`kanban-task-management/coordinate-agents`:
+```json
+{
+  "board_name": "<board name>",
+  "active_tasks": []
+}
+```
+
+`kanban-task-management/track-deliverables`:
+```json
+{
+  "task": {},
+  "deliverables": []
+}
+```
+
+`kanban-task-management/verify-completion`:
+```json
+{
+  "task_id": "<task id>",
+  "task_title": "<task title>",
+  "criteria": [],
+  "deliverables": [],
+  "evidence": "<observed evidence>"
+}
+```
+
+`kanban-task-management/escalate`:
+```json
+{
+  "board_name": "<board name>",
+  "escalation_candidates": []
+}
+```
 
 ## Regression case
 
