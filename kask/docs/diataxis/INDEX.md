@@ -54,7 +54,7 @@ How-to quadrant alone.
 
 ## Out of scope for additional per-crate sets
 
-### MCP server crates — complete 11-server inventory
+### MCP server crates — complete 12-server inventory
 
 The managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
@@ -63,24 +63,24 @@ than receiving another per-crate set:
 `hkask-mcp-corpus`, `hkask-mcp-curator`,
 `hkask-mcp-experimentation`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`,
 `hkask-mcp-nostr-blossom`, `hkask-mcp-nostr-client`, `hkask-mcp-nostr-relay`,
-`hkask-mcp-prediction-markets`, `hkask-mcp-research`, and
-`hkask-mcp-scenarios`.
+`hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
+and `hkask-mcp-wallet`.
 
-The authoritative managed registry contains the same 11 IDs at
-`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` (the companies server was removed
+The authoritative managed registry contains the same 12 IDs at
+`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-445@BUILT_IN_MCP_SERVERS` (the companies server was removed
 2026-10-18, commit `3439db5e00`).
 
-### hKask library and composition crates — complete 21-crate inventory
+### hKask library and composition crates — complete 23-crate inventory
 
 The composition-root inventory under `kask/crates/` is:
 
 `dme-harness`, `hkask-bridge-ontology`, `hkask-condenser`,
 `hkask-experimentation`, `hkask-forecast`, `hkask-inference`,
-`hkask-kata-kanban`, `hkask-keystore`, `hkask-lisp`, `hkask-mcp`,
-`hkask-mcp-server`, `hkask-mcp-test-support`, `hkask-media`,
+`hkask-ipc-wire`, `hkask-kata-kanban`, `hkask-keystore`, `hkask-lisp`,
+`hkask-mcp`, `hkask-mcp-server`, `hkask-mcp-test-support`, `hkask-media`,
 `hkask-memory`, `hkask-nostr-core`, `hkask-nostr-signer`,
 `hkask-regulation`, `hkask-steer-core`, `hkask-storage`, `hkask-types`,
-and `kask_bridge`.
+`hkask-wallet-core`, and `kask_bridge`.
 
 Seven have retained crate-named sets above; `hkask-bridge-ontology` is covered
 by [`ontology-bridge.md`](../reference/ontology-bridge.md). The remaining small

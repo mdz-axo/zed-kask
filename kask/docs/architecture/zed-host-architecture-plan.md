@@ -40,7 +40,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ---
 
-> **Current state (2026-11-24):** `kask/crates/` contains 22 crates (`20 hkask-*` + `dme-harness` + `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages (264 registered tools). The editor-side integration includes the Kanban, Media, and Nostr Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
+> **Current state (2026-11-25):** `kask/crates/` contains 23 crates (`21 hkask-*` + `dme-harness` + `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages (264 registered tools). The editor-side integration includes the Kanban, Media, and Nostr Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
 
 ---
 
@@ -75,11 +75,12 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-> **Status (re-verified 2026-11-24):** **22 kask crates** under `kask/crates/` (`20 hkask-*` + `dme-harness` + `kask_bridge`; the corpus settings reader resides in `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`) plus **12 MCP server crates** under `kask/mcp-servers/` (264 tools) and zed-side crates (`kanban_panel`, `media_panel`, `nostr_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-panel-ui`). Twelve MCP servers remain on disk (`curator` may be unloaded via `kask.mcp.overrides`).
+> **Status (re-verified 2026-11-25):** **23 kask crates** under `kask/crates/` (`21 hkask-*` + `dme-harness` + `kask_bridge`; the corpus settings reader resides in `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`) plus **12 MCP server crates** under `kask/mcp-servers/` (264 tools) and zed-side crates (`kanban_panel`, `media_panel`, `nostr_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-panel-ui`). Twelve MCP servers remain on disk (`curator` may be unloaded via `kask.mcp.overrides`).
 
 | Crate | Why irreducible |
 | --- | --- |
-| `hkask-types` | Foundation: IDs, `InferencePort` / `MemoryPort` traits (`kask/crates/hkask-types/src/ports/inference_port.rs:136-486`), `RegulationSpan`, `InferenceMethod` IPC wire, closed vocabularies, `nostr_wire`, `media_wire`. |
+| `hkask-types` | Foundation: IDs, `InferencePort` / `MemoryPort` traits (`kask/crates/hkask-types/src/ports/inference_port.rs:136-486`), `RegulationSpan`, closed vocabularies, `server_env`, `json_extract`. |
+| `hkask-ipc-wire` | Shared IPC protocol (`inference_ipc`) and domain wire constants/types (`kanban_wire`, `media_wire`, `nostr_wire`, `wallet_wire`) for MCP servers, GPUI panels, and `kask_bridge`, isolated from `hkask-types` so wire edits do not rebuild core crates (`kask/crates/hkask-ipc-wire/src/hkask_ipc_wire.rs:1-15`). |
 | `hkask-storage` | **Sovereignty:** SQLCipher-encrypted SQLite with `sqlite-vec` int8 virtual tables and shared SQLite helpers (`kask/crates/hkask-storage/src/core/connection.rs:331`, `kask/crates/hkask-storage/src/vec0.rs`, `kask/crates/hkask-storage/src/database/helpers.rs`). |
 | `hkask-memory` | Unified memory (`curator.db` + `curator-private.db` via `SelfHealingStore`), confidence-based consolidation, and forgetting passes. |
 | `hkask-regulation` | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). |
@@ -321,8 +322,8 @@ zed-kask/
 ├── crates/            # upstream zed + isolated D-seam edits
 ├── extensions/        # upstream
 └── kask/              # ── OURS (additive; upstream never touches here) ──
-    ├── crates/        # 21 crates (19 hkask-* + dme-harness + kask_bridge)
-    ├── mcp-servers/   # the 11 on-disk servers (243 tools; curator may be unloaded via override)
+    ├── crates/        # 23 crates (21 hkask-* + dme-harness + kask_bridge)
+    ├── mcp-servers/   # the 12 on-disk servers (264 tools; curator may be unloaded via override)
     ├── registry/      # 53 prompt-template directories (215 .j2 templates) under registry/templates/
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts
     └── docs/          # ← documentation home (see 14.3)

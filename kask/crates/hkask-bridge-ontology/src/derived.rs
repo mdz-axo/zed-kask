@@ -2547,6 +2547,14 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-11-20 (MCP research server troubleshooting session); CSO 3.5 (cso:regression_testing, cso:conformance_testing); Meszaros, xUnit Test Patterns (2007); ISO/IEC/IEEE 29119-1 (cite-only)",
     },
+    DerivedConcept {
+        term: "software_refactoring",
+        aliases: &["refactoring", "code refactoring"],
+        identity: "behavior-preserving transformation of a software system's internal structure to reduce complexity, improve modularity, and make future change cheaper",
+        definition: "Martin Fowler, Refactoring: Improving the Design of Existing Code (2nd ed., 2018), Ch. 2: a change made to the internal structure of software to make it easier to understand and cheaper to modify without changing its observable behavior; paired with John Ousterhout, A Philosophy of Software Design (2018), Ch. 4 & Ch. 7, where structural improvement targets deeper modules and lower change amplification. The nameable violation: labeling an unverified behavioral change or a shallow pass-through reshuffle as refactoring.",
+        constituents: &["deep_module", "deletion_test", "change_amplification"],
+        authority: "operator ruling 2026-11-25; Fowler, Refactoring: Improving the Design of Existing Code (2nd ed., 2018); Ousterhout, A Philosophy of Software Design (2018)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.

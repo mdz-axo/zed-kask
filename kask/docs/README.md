@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 11 managed MCP servers are launched as child processes over stdio by the governed `McpRuntime` (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 12 managed MCP servers are launched as child processes over stdio by the governed `McpRuntime` (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-445@BUILT_IN_MCP_SERVERS`).
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
@@ -33,7 +33,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — numbered D-seam integration authority, composition root, 21-crate `kask/crates/` inventory, 11 MCP servers, deletion history. |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — numbered D-seam integration authority, composition root, 23-crate `kask/crates/` inventory, 12 MCP servers, deletion history. |
 | [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md) | **D28** — canonical path layout for persistent Kask databases (`data_dir`) and visible artifacts (`artifacts_dir`). |
 | [`memory-system-specification.md`](architecture/memory-system-specification.md) | **Memory system specification** — dual-lane `curator.db` + `curator-private.db`, INT8 `vec0` schema, ingestion, recall, consolidation, decay, hygiene, sovereignty, and embedded diagrams. |
 | [`skills-and-composition.md`](architecture/skills-and-composition.md) | **Agent system** — five prompt surfaces (base + four overlays), skill body injection, composition principles, and testing. |
@@ -43,7 +43,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles and their `principle-constraints.yaml` enforcement ledger. |
 | [`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md) | Magnifica Humanitas — the values charter grounding P1–P12 in human dignity (source: Leo XIV, 2026). |
 | [`core/co-research-environment.md`](architecture/core/co-research-environment.md) | The Co-Research Environment — the thesis charter: what zed-kask is (identity, anatomy, lineage, collaboration test); completes the charter triad with the Magna Carta (liberties) and Magnifica Humanitas (values). |
-| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 21 library/composition crates, and 11 MCP servers. |
+| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 23 library/composition crates, and 12 MCP servers. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, lifecycle, Mermaid alignment, citation, and writing standards, including operator-retained Proposed plans. |
 
 ## Reference
