@@ -420,9 +420,9 @@ impl MetacognitionLoop {
         // technically successful but increasingly useless). This catches that
         // case — the outcome channel alone cannot (adversarial review finding 3).
         let op_skill_ids = ledger.skill_ids_with_feedback("operator_feedback").await;
-        for skill_id in op_skill_ids {
+        for skill_id in &op_skill_ids {
             let spans = ledger
-                .query_skill_feedback(&skill_id, "operator_feedback")
+                .query_skill_feedback(skill_id, "operator_feedback")
                 .await;
             let observations = operator_acceptance_observations(&spans);
             let window = self.config.feedback_drift_window;
@@ -451,6 +451,51 @@ impl MetacognitionLoop {
                         current_rate * 100.0
                     ),
                 });
+            }
+        }
+
+        // System 4 rubric label-validity divergence check (A5 / Sadi et al. 2026,
+        // Notes on Architectural Grounding Implication 16): high internal outcome
+        // pass rate paired with persistently low operator acceptance indicates
+        // rubric/label invalidity rather than transient decline.
+        for skill_id in &op_skill_ids {
+            let outcome_spans = ledger.query_skill_feedback(skill_id, "outcome").await;
+            let op_spans = ledger
+                .query_skill_feedback(skill_id, "operator_feedback")
+                .await;
+            let op_obs = operator_acceptance_observations(&op_spans);
+            let min_n = self.config.feedback_drift_min_samples;
+            if outcome_spans.len() < min_n || op_obs.len() < min_n {
+                continue;
+            }
+            let recent_out_start = outcome_spans
+                .len()
+                .saturating_sub(self.config.feedback_drift_window.max(min_n));
+            let recent_op_start = op_obs
+                .len()
+                .saturating_sub(self.config.feedback_drift_window.max(min_n));
+            let out_rate = success_rate(&outcome_spans[recent_out_start..]);
+            let op_rate = acceptance_rate(&op_obs[recent_op_start..]);
+            if out_rate >= 0.85 && op_rate <= 0.50 {
+                let already_alerted = alerts.iter().any(|a| {
+                    matches!(&a.trigger, EscalationTrigger::FeedbackDrift { skill_id: id } if id == skill_id)
+                });
+                if !already_alerted {
+                    alerts.push(EscalationAlert {
+                        trigger: EscalationTrigger::FeedbackDrift {
+                            skill_id: skill_id.clone(),
+                        },
+                        severity: EscalationSeverity::Warning,
+                        value: op_rate,
+                        threshold: 0.50,
+                        message: format!(
+                            "Skill '{skill_id}' label-validity divergence: internal outcome rate \
+                             {:.0}% vs operator acceptance {:.0}% — audit rubric/label validity",
+                            out_rate * 100.0,
+                            op_rate * 100.0
+                        ),
+                    });
+                }
             }
         }
 

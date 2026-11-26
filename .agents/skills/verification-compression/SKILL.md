@@ -231,6 +231,12 @@ verification code.
    baseline signal:
    - form: `(and (= (assoc "missing_expectations" gate) 0) (= (assoc "unfalsifiable_expectations" gate) 0))`
    - env: `{ "gate": <inventory coverage gate> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"VC-inventory","case":"zero-missing-zero-unfalsifiable-passes","env":{"gate":{"missing_expectations":0,"unfalsifiable_expectations":0}},"expected":true}
+     {"gate":"VC-inventory","case":"missing-expectation-blocks","env":{"gate":{"missing_expectations":1,"unfalsifiable_expectations":0}},"expected":false}
+     {"gate":"VC-inventory","case":"unfalsifiable-expectation-blocks","env":{"gate":{"missing_expectations":0,"unfalsifiable_expectations":1}},"expected":false}
+     ```
    - A false result blocks compression and returns to step 1.
 
 ### DO — Falsify, architect, and eliminate
@@ -345,7 +351,15 @@ verification code.
     A file changed
     after checking requires re-verification; no attacker with access to both
     trusted pin and snapshots is covered by this boundary. Then call `lisp_eval`: 
-    - Preservation: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t))`; env `{ "check": <preservation block> }`.
+    - Preservation:
+      - form: `(and (= (assoc "missing_expectations" check) 0) (= (assoc "lost_falsifiers" check) 0) (= (assoc "lost_oracle_kinds" check) 0) (= (assoc "lost_failure_classes" check) 0) (= (assoc "downgraded_provenance" check) 0) (= (assoc "failed_harmful_cases" check) 0) (= (assoc "allowed_change_control_failures" check) 0) (eq (assoc "lean_proof_passed" check) t))`
+      - env: `{ "check": <preservation block> }`
+      - receipts:
+        ```lisp-receipts
+        {"gate":"VC-preservation","case":"all-preserved-and-proof-passed","env":{"check":{"missing_expectations":0,"lost_falsifiers":0,"lost_oracle_kinds":0,"lost_failure_classes":0,"downgraded_provenance":0,"failed_harmful_cases":0,"allowed_change_control_failures":0,"lean_proof_passed":true}},"expected":true}
+        {"gate":"VC-preservation","case":"lost-falsifier-fails","env":{"check":{"missing_expectations":0,"lost_falsifiers":1,"lost_oracle_kinds":0,"lost_failure_classes":0,"downgraded_provenance":0,"failed_harmful_cases":0,"allowed_change_control_failures":0,"lean_proof_passed":true}},"expected":false}
+        {"gate":"VC-preservation","case":"lean-proof-failed-fails","env":{"check":{"missing_expectations":0,"lost_falsifiers":0,"lost_oracle_kinds":0,"lost_failure_classes":0,"downgraded_provenance":0,"failed_harmful_cases":0,"allowed_change_control_failures":0,"lean_proof_passed":false}},"expected":false}
+        ```
     - Context and samples: `(define positive (lambda (xs) (if (is_null xs) t (and (> (car xs) 0) (positive (cdr xs)))))) (define same (lambda (a b) (and (> (length a) 0) (member a (list b))))) (define measured (lambda (s) (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (positive (assoc "timing_samples_before_ms" s)) (positive (assoc "timing_samples_after_ms" s)) (> (assoc "time_before_ms" s) 0) (> (assoc "time_after_ms" s) 0)))) (define idle (lambda (s) (and (member "not_run" (list (assoc "status" s))) (= (length (assoc "timing_samples_before_ms" s)) 0) (= (length (assoc "timing_samples_after_ms" s)) 0) (= (assoc "time_before_ms" s) 0) (= (assoc "time_after_ms" s) 0)))) (and (member (assoc "timing_scope" context) (list "cold" "warm" "both")) (same (assoc "toolchain_before" context) (assoc "toolchain_after" context)) (same (assoc "environment_before" context) (assoc "environment_after" context)) (same (assoc "oracle_hash_before" context) (assoc "oracle_hash_after" context)) (same (assoc "contract_hash_before" context) (assoc "contract_hash_after" context)) (or (and (member "analyze" (list (assoc "mode" context))) (same (assoc "source_hash_before" context) (assoc "source_hash_after" context))) (and (member "execute" (list (assoc "mode" context))) (eq (assoc "authorized_diff_verified" context) t))) (eq (assoc "hashes_verified" context) t) (if (member (assoc "timing_scope" context) (list "cold" "both")) (measured (assoc "cold" metrics)) (idle (assoc "cold" metrics))) (if (member (assoc "timing_scope" context) (list "warm" "both")) (measured (assoc "warm" metrics)) (idle (assoc "warm" metrics))) (or (and (member "measured" (list (assoc "code_graph_status" metrics))) (or (and (member "analyze" (list (assoc "mode" context))) (= (assoc "code_nodes_before" metrics) (assoc "code_nodes_after" metrics)) (= (assoc "code_edges_before" metrics) (assoc "code_edges_after" metrics))) (and (member "execute" (list (assoc "mode" context))) (eq (assoc "authorized_diff_verified" context) t) (eq (assoc "source_changed" context) t)))) (and (member "not_run" (list (assoc "code_graph_status" metrics))) (= (assoc "code_nodes_before" metrics) 0) (= (assoc "code_nodes_after" metrics) 0) (= (assoc "code_edges_before" metrics) 0) (= (assoc "code_edges_after" metrics) 0))))`; env `{ "context": <raw identities, mode, trusted checker result>, "metrics": <raw graph counts and cold/warm blocks> }`. `authorized_diff_verified` is set only from a successful checker run with an operator-approved diff, not from the model.
     - Both calls must return true. Ignore a contradictory
       `preservation.measurement_context_equal` summary field. Any failure
@@ -441,21 +455,54 @@ measured remainder to the operator.
 
 To render a template, call the `render_template` tool with the template ref and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `inventory.j2`: `target`, `authorized_contract`, `required_expectations`, `artifact_inventory`, `timing_observations`
-- `elimination.j2`: `inventory`, `falsification_result`, `architecture_result`, `essentialist_result`, `mode`
-- `experiment.j2`: `baseline`, `candidate`, `lean_result`, `before_observations`, `after_observations`, `targets`, `mode`, `receipt`
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`verification-compression/inventory`:
+```json
+{
+  "target": "<verification workflow, paths, and commands>",
+  "authorized_contract": {},
+  "required_expectations": [],
+  "artifact_inventory": [],
+  "timing_observations": []
+}
+```
+
+`verification-compression/elimination`:
+```json
+{
+  "inventory": {},
+  "falsification_result": {},
+  "architecture_result": {},
+  "essentialist_result": {},
+  "mode": "analyze"
+}
+```
+
+`verification-compression/experiment`:
+```json
+{
+  "baseline": {},
+  "candidate": {},
+  "lean_result": {},
+  "before_observations": {},
+  "after_observations": {},
+  "targets": {},
+  "mode": "analyze",
+  "receipt": {}
+}
+```
 
 ## Regression case
 
-`bash kask/scripts/check-skill-lisp-forms.sh` evaluates `VC-1` (its `lisp-receipts` block beside the form) over the
-authored form: a three-artifact
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates `VC-0` (`vc-0-receipts.jsonl`), `VC-1` (`vc-1-receipts.jsonl`), the Step 3 inventory gate (`VC-inventory`), and the Step 10 preservation gate (`VC-preservation`) over the
+authored forms: a three-artifact
 inventory with one covered removal (pass); an artifact left out of every
 class; one in two classes; a mapping row `missing`; a removed artifact with
 no mapping row; a mapping to a retained artifact outside the candidate; a
-removal outside the inventory; an all-retained candidate (pass). Run the
-other pinned `lisp_eval` forms (VC-0 relevance, inventory gate, preservation
-gate, context/samples gate, deltas) through the live tool with representative
+removal outside the inventory; an all-retained candidate (pass); plus the
+inventory and preservation gate pass/fail receipts. Run the
+remaining pinned `lisp_eval` forms (context/samples gate, deltas) through the live tool with representative
 stub envs, BOTH directions per gate, whenever a form changes. The inline
 forms are the authority for expected outcomes — this section does not
 restate them. Stub the discriminating cases the compiled pins do not

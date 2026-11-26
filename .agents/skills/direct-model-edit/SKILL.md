@@ -68,16 +68,16 @@ Refusals shared by these gates, each naming what is missing: `rows-missing`, `ro
 
 1. Measure, do not assume. Before any weight is read, run `dme-harness probe` on practice problems under the current config, then `dme-harness summary` on the rows file. The summary's `counts` are the answer classes: `correct_complete`, `wrong_complete`, `hit_limit` (answers that ran to the token limit without finishing). When relaunching a probe leg after an interrupted or failed attempt, rotate (`mv`) or remove (`rm`) the partial `--out` JSONL file first so receipts from separate server sessions never mix and skew `n`: `dme-harness probe` refuses a non-empty `--out` path by default, and `--append` is an explicit opt-in only when intentionally appending to an existing rows file (re-run `dme-harness summary` afterward).
 2. Save the vendor model card as fetched, with nothing added — no notes, no commentary, no config descriptions in the same file. Read its recommended sampling rows — a card can have several; the Qwen3.5-0.8B card has four (thinking or non-thinking, text or vision-language) — and every warning about failure modes.
-3. Call `render_template` to render the baseline audit prompt:
+3. Call `render_template` with `template_ref: "direct-model-edit/baseline"` and `context`:
 
-```
-template: direct-model-edit/baseline
-variables:
-  model_name: <target model name>
-  model_card_notes: <the saved vendor card text>
-  run_config: <the run config file's content>
-  baseline_counts: <the summary's counts object>
-  benchmark_name: <the practice benchmark family>
+```json
+{
+  "model_name": "<target model name>",
+  "model_card_notes": "<the saved vendor card text>",
+  "run_config": {},
+  "baseline_counts": { "hit_limit": 0, "wrong_complete": 0, "correct_complete": 0 },
+  "benchmark_name": "<the practice benchmark family>"
+}
 ```
 
 4. Copy the template's `card_row` object into the run config file under the key `card_row`, and probe again if the rows were written before the key was there. The harness embeds the config file in every row (`config_file`), so the row a run claims to follow is recorded with the run. `card_row` holds: `row` (the card's name for the row), `source_quote` (the card's line for that row, copied character for character), `enable_thinking` and `default_enable_thinking` (the row's mode and the card's default mode), and optionally `cap` and `penalty_last_n` when the card states them. It holds no sampling value: DME-0 reads temperature, top_p, top_k, min_p, presence_penalty and repetition_penalty out of the quote itself (`name=value` or `name: value`). Which row: the one for the mode the deployment will use.
@@ -117,24 +117,34 @@ Call `lisp_eval` with the route gate (DME-1) over the baseline summary file as `
 - `collect-more-evidence` or `empty-baseline` → enlarge the practice set, re-measure, re-run the gate. Enlarge at most twice; if the gate still returns either verdict, stop and report the route as undetermined, with no weight edit.
 
 Sibling gate (DME-1S) — the skill-presence probe. When the route question is whether the model possesses the skill the failure suppresses — before any localization spend — probe task conformance on practice problems twice, zero-shot and few-shot, and gate the verdict with `lisp_eval`:
-- form: `(cond ((= conformance_sample 0) (quote collect-more-evidence)) ((< few_shot_conformance 0.5) (quote capability-gap-outside-this-skill)) ((> (- few_shot_conformance zero_shot_conformance) 0.1) (quote skill-unlock-route)) (t (quote skill-present-not-suppressed)))`
-- env: `{ "zero_shot_conformance": <share of conforming answers, zero-shot>, "few_shot_conformance": <share of conforming answers, few-shot>, "conformance_sample": <practice answers probed per arm> }`
+- form: `(cond ((not (and (numberp conformance_sample) (eq (- conformance_sample conformance_sample) 0) (>= conformance_sample 0))) (quote invalid-conformance-inputs)) ((= conformance_sample 0) (quote collect-more-evidence)) ((not (and (numberp zero_shot_conformance) (<= 0 zero_shot_conformance) (<= zero_shot_conformance 1) (numberp few_shot_conformance) (<= 0 few_shot_conformance) (<= few_shot_conformance 1))) (quote invalid-conformance-inputs)) ((< few_shot_conformance 0.5) (quote capability-gap-outside-this-skill)) ((> (- few_shot_conformance zero_shot_conformance) 0.1) (quote skill-unlock-route)) (t (quote skill-present-not-suppressed)))`
+- env: `{ "zero_shot_conformance": <share of conforming answers, zero-shot>, "few_shot_conformance": <share of conforming answers, few-shot>, "conformance_sample": <practice answers probed per arm (non-negative integer)> }`
+- receipts:
+  ```lisp-receipts
+  {"gate":"DME-1S","case":"skill-unlock-route","env":{"zero_shot_conformance":0.08,"few_shot_conformance":0.75,"conformance_sample":96},"expected":"skill-unlock-route"}
+  {"gate":"DME-1S","case":"capability-gap","env":{"zero_shot_conformance":0.10,"few_shot_conformance":0.15,"conformance_sample":96},"expected":"capability-gap-outside-this-skill"}
+  {"gate":"DME-1S","case":"skill-present-not-suppressed","env":{"zero_shot_conformance":0.55,"few_shot_conformance":0.60,"conformance_sample":96},"expected":"skill-present-not-suppressed"}
+  {"gate":"DME-1S","case":"zero-sample-short-circuits","env":{"conformance_sample":0},"expected":"collect-more-evidence"}
+  {"gate":"DME-1S","case":"negative-sample-refused","env":{"zero_shot_conformance":0.1,"few_shot_conformance":0.8,"conformance_sample":-5},"expected":"invalid-conformance-inputs"}
+  {"gate":"DME-1S","case":"fractional-sample-refused","env":{"zero_shot_conformance":0.1,"few_shot_conformance":0.7,"conformance_sample":0.5},"expected":"invalid-conformance-inputs"}
+  {"gate":"DME-1S","case":"share-out-of-range-refused","env":{"zero_shot_conformance":0.1,"few_shot_conformance":1.5,"conformance_sample":96},"expected":"invalid-conformance-inputs"}
+  ```
 - Harness gap (Constraints, item 5): the harness has no conformance probe and no `conformance` label on its rows, so these three values have no producer today — they are hand-classified and typed, which is what every other gate here refuses. Until the harness labels conformance per row and the gate reads two summaries, report a DME-1S verdict as a hand-classified reading, named as such, never as a measured route; DME-1 over the summary file is the measured route.
 - The probe ADJUDICATES AT THE CARD ROW the run config names (Step 1: the row for the mode the deployment will use) — never only at trap-style configs. Config-dependence is a recorded live finding, not a hypothesis: the anchor's own case reproduced the loop at the trap config (6 of 7 answers hit-limit) and did NOT survive the card config (0 of 10 hit-limit — at card settings DME-1 itself routes that same baseline to `capability-gap-outside-this-skill`); receipts at ~/Documents/zk-data/direct-model-edit-archive/logs/stage1-summary.json (the archived stage-1 instrument's historical record; the Rust replication re-measures). A presence probe run at trap-style configs measures the trap, not the skill. The probe's design — zero-shot vs few-shot conformance as a skill-presence test — is this skill's original instrument: the anchor ran no presence probe; the probe is grounded in the stage-1 receipts above and the anchor's published config facts, with its thresholds disclosed as Evidence-tier operationalizations in Constraints.
-- `skill-unlock-route` → the skill is present but suppressed: continue to Step 3. `capability-gap-outside-this-skill` → stop, as DME-1's same verdict. `skill-present-not-suppressed` → the probed failure is not suppressing a skill: re-examine the diagnosis before spending localization. `collect-more-evidence` → enlarge the probe sample and re-run DME-1S, at most twice; after that, report skill presence as undetermined and do not spend localization.
+- `invalid-conformance-inputs` → stop without spending localization and re-check the hand-classified inputs (`conformance_sample` must be a non-negative integer; shares in `[0, 1]`; `conformance_sample == 0` intentionally short-circuits before share validation to `collect-more-evidence`). `skill-unlock-route` → the skill is present but suppressed: continue to Step 3. `capability-gap-outside-this-skill` → stop, as DME-1's same verdict. `skill-present-not-suppressed` → the probed failure is not suppressing a skill: re-examine the diagnosis before spending localization. `collect-more-evidence` → enlarge the probe sample and re-run DME-1S, at most twice; after that, report skill presence as undetermined and do not spend localization.
 
 ### Step 3 — Localize: contrastive
 
 1. Capture internals for both trajectory classes: answers that progress normally, and answers that fall into the diagnosed failure. Same model, same prompt family, differing outcome.
-2. Call `render_template`:
+2. Call `render_template` with `template_ref: "direct-model-edit/localize"` and `context`:
 
-```
-template: direct-model-edit/localize
-variables:
-  model_name: <target>
-  failure_mode: <the classified failure from Step 1>
-  trajectory_contrast: { progressing: <captures>, failing: <captures>, layers: <layer count> }
-  localization_notes: <which sites were compared and how>
+```json
+{
+  "model_name": "<target>",
+  "failure_mode": "<the classified failure from Step 1>",
+  "trajectory_contrast": { "progressing": [], "failing": [], "layers": 0 },
+  "localization_notes": "<which sites were compared and how>"
+}
 ```
 
 3. Following the template's schema, isolate the candidate direction: the internal pattern that separates failing from progressing trajectories at named sites. The anchor's signature: a direction written by the MLPs of two layers (two vectors, absolute cosine 0.849), appearing before repetition.
@@ -172,16 +182,16 @@ jq -n -c -L kask/crates/dme-harness/gates --slurpfile b <base.jsonl> --slurpfile
 
 ### Step 4 — Plan the minimal edit
 
-1. Call `render_template`:
+1. Call `render_template` with `template_ref: "direct-model-edit/edit-plan"` and `context`:
 
-```
-template: direct-model-edit/edit-plan
-variables:
-  model_name: <target>
-  selected_site: { layers: [...], module: <mlp|attention>, columns: <n>, direction_source: <capture set> }
-  total_weights: <count>
-  edited_weights: <proposed surface size, weights>
-  forward_pass_budget: <n>
+```json
+{
+  "model_name": "<target>",
+  "selected_site": { "layers": [], "module": "<mlp|attention>", "columns": 0, "direction_source": "<capture set>" },
+  "total_weights": 0,
+  "edited_weights": 0,
+  "forward_pass_budget": 0
+}
 ```
 
 2. Check the surface budget with `lisp_eval` (DME-2) over the convert manifest as written — it carries `projected_weights_touched`, `projected_edited_share` and the config's `total_weights`:
@@ -214,15 +224,15 @@ jq -n -c -L kask/crates/dme-harness/gates --slurpfile p <preservation.jsonl> --s
 
 1. Apply the edit with `dme-harness edit --spec <spec>` and keep every receipt (`<output>.edit-receipt.json`). A receipts file is the receipts that lead from the base file to that arm, concatenated in order (`cat first.edit-receipt.json second.edit-receipt.json > arm.receipts.json`); for one invocation it is the receipt itself. Probe the edited file on the SAME problems with the SAME config, cap and seed base, against the same server build.
 2. There is no separate identity gate. Every gate that compares two runs (DME-2c, DME-2d, DME-3) first checks that nothing the harness recorded differs besides the model file — the embedded config, cap, context size, engine build, harness version, penalty window and the server's echoed generation settings — that the receipts lead from the base file's hash to the edited file's, that no receipt reports changed weights outside the edited surface, and that every pair of answers is the same problem with the same seed, gold answer and prompt length. `runs-differ-beyond-the-model-file` names the keys: a change rode along with the edit and the comparison verifies nothing ("a verification under different settings verifies nothing" — the verify template's own constraint); re-run before Step 6. Equal recorded facts do not prove equal conditions: what the harness does not record (GPU placement, threads, server flags) can still differ, and run-to-run noise at identical recorded facts has not been measured — the one archived pair of unedited runs that differ in engine build shows 10 rescues and 11 regressions of 84.
-3. Call `render_template`:
+3. Call `render_template` with `template_ref: "direct-model-edit/verify"` and `context`:
 
-```
-template: direct-model-edit/verify
-variables:
-  model_name: <target>
-  edit_summary: <layers, tensor, trigger kind, alpha and weights_touched, from the receipts>
-  gate_results: { dme3: <DME-3 result on the target set>, dme3_preservation: <DME-3 result on the preservation set>, dme2c: <result or null>, dme2d: <result or null> }
-  control_model_result: { control_name, control_nonfinish_rate, control_delta }
+```json
+{
+  "model_name": "<target>",
+  "edit_summary": {},
+  "gate_results": { "dme3": null, "dme3_preservation": null, "dme2c": null, "dme2d": null },
+  "control_model_result": { "control_name": "", "control_nonfinish_rate": 0, "control_delta": 0 }
+}
 ```
 
 4. The template tabulates; it computes nothing. Every count in its table is copied from a gate result.
@@ -327,7 +337,7 @@ Inline forms are parse-verified by `check_skill_lisp_forms`; their semantics are
 
 - DME-0 (case A2): the anchor's run against the card's "Non-thinking, VL tasks" line → `["settings-differ-from-card-row", "Non-thinking, VL tasks", ["enable_thinking", "temperature", "top_p"], ["penalty_last_n"], ["mode-is-not-the-card-default"]]`. Case A5: equal except `repetition_penalty` 1.1 → moved `["repetition_penalty"]`. Case A1: the server's echo 0.699999988079071 against the card's 0.7 → `settings-match-card-row`. Case A22: a `card_row` that quotes a note describing the run itself → `card-quote-states-no-sampling-setting`. Case A33: counts that are fractional but still sum to the answer total → `measurement-inconsistent` (the integrality check is what catches them).
 - DME-1 (its `lisp-receipts` block beside the form), the anchor's baseline summary `{ "n": 96, "counts": { "hit_limit": 85, "wrong_complete": 4, "correct_complete": 7 } }` → 85/96 ≈ 0.886 ≥ 0.5 → `blocker-removal-route`. A Gemma-shaped summary (100 answers: 8 hit-limit, 60 wrong, 32 correct) → `capability-gap-outside-this-skill`; 30/30/40 → `collect-more-evidence`; `n` 0 → `empty-baseline`; counts summing to 95 of 96 → `summary-counts-do-not-sum`; a summary with no `counts` → `summary-malformed`.
-- DME-1S, presence probe: `{ "zero_shot_conformance": 0.08, "few_shot_conformance": 0.75, "conformance_sample": 96 }` → `skill-unlock-route`; `{ "zero_shot_conformance": 0.10, "few_shot_conformance": 0.15, "conformance_sample": 96 }` → `capability-gap-outside-this-skill`; `{ "zero_shot_conformance": 0.55, "few_shot_conformance": 0.60, "conformance_sample": 96 }` → `skill-present-not-suppressed`; `{ "conformance_sample": 0 }` → `collect-more-evidence`.
+- DME-1S (its `lisp-receipts` block beside the form), presence probe: `{ "zero_shot_conformance": 0.08, "few_shot_conformance": 0.75, "conformance_sample": 96 }` → `skill-unlock-route`; `{ "zero_shot_conformance": 0.10, "few_shot_conformance": 0.15, "conformance_sample": 96 }` → `capability-gap-outside-this-skill`; `{ "zero_shot_conformance": 0.55, "few_shot_conformance": 0.60, "conformance_sample": 96 }` → `skill-present-not-suppressed`; `{ "conformance_sample": 0 }` → `collect-more-evidence` (intentional short-circuit before share validation); negative or fractional `conformance_sample` or a share outside `[0, 1]` → `invalid-conformance-inputs`.
 - DME-2 (its `lisp-receipts` block beside the form), the anchor's manifest `{ "projected_weights_touched": 131072, "total_weights": 752393024 }` → `within-budget`, budget 752,393.024 (0.0174% of the measured Qwen3.5-0.8B BF16 param count passes the 0.1% cap); 800,000 touched → `over-budget`; a stated `projected_edited_share` of 0.5 beside those counts → `manifest-share-disagrees-with-counts`; an empty manifest → `manifest-missing-projection`.
 - DME-2b (case C19): 96 preservation answers, 60 correct → `["preservation-baseline-measured", {"answers": 96, "correct": 60, "detectable_loss_exceeds_answers": 5}]`. Case C6b: 24 answers → `preservation-set-too-small-to-show-a-10-point-loss`. Case C2: a plan in words and no rows → `preservation-baseline-missing`.
 - DME-2c (case D4): 256 answers, targeted +102, control +4 → `["direction-specific", [], {"answers": 256, "targeted_net": 102, "control_net": 4, "targeted_over_control_net": 98, "targeted_truncation_drop": 102, "control_truncation_drop": 4}]`. Case D3: 1,000 answers, targeted +402, control +350 → `control-change-at-least-a-quarter-of-targeted`. Case D18: 1,000 answers, targeted +400, control +99 (established) → `["control-change-is-itself-established", [], {"answers": 1000, "targeted_net": 400, "control_net": 99, "targeted_over_control_net": 301, "targeted_truncation_drop": 400, "control_truncation_drop": 99}]` (operator ruling 2026-11-12). Case D24: control +6 of 96 → `control-change-is-itself-established`; case D25: control +5 of 96 → `direction-specific` (the six-changed-answer floor of the sign test). Case D23: a targeted gain with no truncation drop beside a control that reclassifies 100 truncations → `direction-specific` (the truncation channel is compared only when the targeted has a drop). Case D19: a control that ends truncation as often as the targeted edit but gets the answers wrong → `control-unblocks-at-least-a-quarter-as-much`. Case G4: receipts as the harness writes them today → `direction-not-recorded-in-receipt`.

@@ -32,12 +32,22 @@ kask-wiring changes without carrying forward accumulated cruft.
 
 **Decision rule (`UR-1`):** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge. Gather the four counts via `bash kask/scripts/upstream-rebase-preflight.sh --ur1` (or manually via `wc -l`, `git show`, `grep -c`) and compute `assessment_result` in `lisp_eval` `UR-1` — never by hand:
 
-```
-form: (let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> fork (* 2 upstream)) (< dens 0.5)) (quote mapped-reapplication) (quote git-merge))))
-env:  { "fork": <fork lines>, "upstream": <upstream lines>, "markers": <marker count>, "sites": <kask call sites> }
-```
+- form: `(if (not (and (numberp fork) (>= fork 0) (numberp upstream) (> upstream 0) (numberp markers) (>= markers 0) (numberp sites) (>= sites 0))) (list nil (quote invalid-ur1-inputs)) (let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> fork (* 2 upstream)) (< dens 0.5)) (quote mapped-reapplication) (quote git-merge)))))`
+- env: `{ "fork": <fork lines>, "upstream": <upstream lines>, "markers": <marker count>, "sites": <kask call sites> }`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"UR-1","case":"half-density-git-merge","env":{"fork":100,"upstream":100,"markers":5,"sites":10},"expected":[0.5,"git-merge"]}
+  {"gate":"UR-1","case":"low-density-mapped","env":{"fork":100,"upstream":100,"markers":4,"sites":10},"expected":[0.4,"mapped-reapplication"]}
+  {"gate":"UR-1","case":"over-2x-fork-mapped","env":{"fork":201,"upstream":100,"markers":10,"sites":10},"expected":[1.0,"mapped-reapplication"]}
+  {"gate":"UR-1","case":"zero-sites-small-fork-git-merge","env":{"fork":50,"upstream":100,"markers":0,"sites":0},"expected":[1,"git-merge"]}
+  {"gate":"UR-1","case":"zero-sites-large-fork-mapped","env":{"fork":250,"upstream":100,"markers":0,"sites":0},"expected":[1,"mapped-reapplication"]}
+  {"gate":"UR-1","case":"markers-exceed-sites-git-merge","env":{"fork":100,"upstream":100,"markers":25,"sites":4},"expected":[6.25,"git-merge"]}
+  {"gate":"UR-1","case":"markers-with-zero-sites-git-merge","env":{"fork":100,"upstream":100,"markers":2,"sites":0},"expected":[1,"git-merge"]}
+  {"gate":"UR-1","case":"negative-fork-refused","env":{"fork":-10,"upstream":100,"markers":5,"sites":10},"expected":[null,"invalid-ur1-inputs"]}
+  {"gate":"UR-1","case":"zero-upstream-refused","env":{"fork":100,"upstream":0,"markers":5,"sites":10},"expected":[null,"invalid-ur1-inputs"]}
+  ```
 
-Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped-reapplication; 201/100/10/10 → mapped-reapplication; 50/100/0/0 → git-merge; 250/100/0/0 → mapped-reapplication.
+Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped-reapplication; 201/100/10/10 → mapped-reapplication; 50/100/0/0 → git-merge; 250/100/0/0 → mapped-reapplication; `markers > sites` is valid (e.g. policy tweaks carrying `// zed-kask:` without `kask_bridge::`/`hkask_` call sites). On `invalid-ur1-inputs`, stop and re-measure counts before choosing a strategy.
 
 ## Reference model
 

@@ -40,9 +40,19 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
 
 ## Instructions
 
-1. **Admit the target (Popper gate).** Before generating any hypotheses, test whether the claim or question under analysis is testable at all. Classify it on the pragmatic-semantics axes (IS/OUGHT, declarative/probabilistic/subjunctive, constraint force). State the concrete observation that, if witnessed, would contradict it. ADMIT only if a genuine falsifying observation exists and the target is an IS-mode claim (or a subjunctive claim whose counterfactual is testable). Verify admissibility deterministically with `lisp_eval` (`FAL-1`):
-   - form: `(and admissible (not (string= falsifying_observation "")) (or (string= ontological_mode "IS") (string= epistemic_mode "subjunctive")))`
-   - env: `{ "admissible": <admissible boolean>, "falsifying_observation": <falsifying_observation string>, "ontological_mode": <ontological_mode string>, "epistemic_mode": <epistemic_mode string> }`
+1. **Admit the target (Popper gate).** Before generating any hypotheses, test whether the claim or question under analysis is testable at all. Classify it on the pragmatic-semantics axes (IS/OUGHT, declarative/probabilistic/subjunctive, constraint force). State the concrete observation that, if witnessed, would contradict it. ADMIT only if a genuine falsifying observation exists and the target is an IS-mode claim (or a subjunctive claim whose counterfactual is testable). Verify admissibility deterministically with `lisp_eval` (`FAL-1`; note `hkask_lisp` has no `trim` builtin, so whitespace-only strings are not stripped by the form):
+   - form: `(and (eq admissible true) (stringp falsifying_observation) (not (string= falsifying_observation "")) (stringp ontological_mode) (member ontological_mode (list "IS" "OUGHT")) (stringp epistemic_mode) (member epistemic_mode (list "declarative" "probabilistic" "subjunctive")) (or (string= ontological_mode "IS") (string= epistemic_mode "subjunctive")))`
+   - env: `{ "admissible": <admissible boolean>, "falsifying_observation": <non-empty falsifying_observation string>, "ontological_mode": <"IS"|"OUGHT">, "epistemic_mode": <"declarative"|"probabilistic"|"subjunctive"> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"FAL-1","case":"is-declarative-passes","env":{"admissible":true,"falsifying_observation":"Server returns 500","ontological_mode":"IS","epistemic_mode":"declarative"},"expected":true}
+     {"gate":"FAL-1","case":"ought-subjunctive-passes","env":{"admissible":true,"falsifying_observation":"Counterfactual test fails","ontological_mode":"OUGHT","epistemic_mode":"subjunctive"},"expected":true}
+     {"gate":"FAL-1","case":"ought-declarative-refused","env":{"admissible":true,"falsifying_observation":"Server returns 500","ontological_mode":"OUGHT","epistemic_mode":"declarative"},"expected":false}
+     {"gate":"FAL-1","case":"null-observation-refused","env":{"admissible":true,"falsifying_observation":null,"ontological_mode":"IS","epistemic_mode":"declarative"},"expected":false}
+     {"gate":"FAL-1","case":"empty-observation-refused","env":{"admissible":true,"falsifying_observation":"","ontological_mode":"IS","epistemic_mode":"declarative"},"expected":false}
+     {"gate":"FAL-1","case":"string-admissible-refused","env":{"admissible":"false","falsifying_observation":"Server returns 500","ontological_mode":"IS","epistemic_mode":"declarative"},"expected":false}
+     {"gate":"FAL-1","case":"bogus-ontological-mode-refused","env":{"admissible":true,"falsifying_observation":"Server returns 500","ontological_mode":"BOGUS","epistemic_mode":"subjunctive"},"expected":false}
+     ```
    RULE OUT tautologies, pure OUGHTs, and unfalsifiable-by-construction claims, recording the reason. If the target is ruled out (`FAL-1` returns `false`) but salvageable, propose a refined testable reformulation — then RE-GATE the refined form through `falsifiability-admit` and `FAL-1` (the refined target needs its own falsifying observation; the original's describes the ruled-out claim) and pass the re-admitted form as `admitted_target` to hypothesize. Refine and re-gate at most twice; a target still ruled out after the second refinement stops the run and is reported as inadmissible with the recorded reasons. Do not proceed to hypothesizing with an inadmissible target.
 
 2. **Generate multiple working hypotheses (Chamberlin + Platt).** For the admitted target, generate 3–7 candidate explanations with no early commitment. Force diversity: include at least one unlikely hypothesis, at least one that challenges the obvious explanation, and at least one embarrassing-if-true. Each carried hypothesis must state a prediction ("if X is the case, then observation Y will obtain under condition Z") and a falsifier (the concrete observation that would prove it wrong). Discard any candidate that cannot be made falsifiable — record it as discarded with a reason, do not carry it forward. Rank by likelihood, not ease of testing. Present the ranked list for user review before proceeding; the user's domain knowledge re-ranks instantly.
@@ -89,8 +99,17 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
    - verdict-score form: `(cond ((string= verdict "one_corroborated_survivor") 1.0) ((string= verdict "multiple_corroborated") 0.5) ((string= verdict "untested_remainder") 0.3) ((string= verdict "nothing_eliminated") 0.1) (t 0.0))`
    - env: `{ "verdict": <the step-5 verdict string> }` — the ordinal mapping (operator ruling 2026-09-29: one_corroborated_survivor=1.0, multiple_corroborated=0.5, untested_remainder=0.3, nothing_eliminated=0.1, none_corroborated=0.0)
    - composite form: `(+ (* 0.5 (- 1 verdict_score)) (* 0.3 (- 1 eliminated_proportion)) (* 0.2 reducible_remainder))`
-   - env: `{ "verdict_score": <from the verdict-score form>, "eliminated_proportion": <FAL-2's eliminated_proportion — cumulative eliminated (this cycle's plus prior_eliminated) over the original alternatives count (carried + prior − 1); at full convergence it is 1.0>, "reducible_remainder": <FAL-2's reducible_remainder — untested survivors / carried total, the OPEN-WORK proportion; corroborated survivors and irreducible flags are not open work, so at full convergence it is 0.0> }` — convergence 0 = fully converged (verdict_score 1.0, all alternatives eliminated, nothing untested); the practical maximum is 0.95 (a no-observation cycle: verdict_score 0.1, nothing eliminated, all untested). Both ratios are read from the FAL-2 result, never typed; when FAL-2 returns `null` for `eliminated_proportion` (one hypothesis ever carried) the composite is not computed — report the verdict alone.
-   Apply the materiality guard with `lisp_eval` `(and (= eliminated 0) (not new_test_available) (< (abs (- metric metric_prior)) 0.02))` — `eliminated` is FAL-2's `eliminated` field, THIS CYCLE's count (not the cumulative set — the guard asks whether this cycle made progress); `new_test_available` is a judgment (P) supplied to the form, not computed by it; `metric`/`metric_prior` are the convergence composite this cycle vs the prior cycle's (the same composite form's output, two consecutive runs). If it holds, force convergence — the residual gap is irreducible, not a fixable defect, and the honest answer is the bounded remainder, not infinite iteration. Blockers: `untested_remainder` cannot converge to a unique survivor; report the untested hypotheses and the missing discriminating test. A no-observation `nothing_eliminated` verdict also carries the untested set and cannot claim a unique survivor. `none_corroborated` is a hard block (restart, do not iterate); `nothing_eliminated` with no new test available is a stall; `multiple_corroborated` with no new discriminating test is an irreducible remainder to report, not iterate past.
+   - env: `{ "verdict_score": <from the verdict-score form>, "eliminated_proportion": <FAL-2's eliminated_proportion — cumulative eliminated (this cycle's plus prior_eliminated) over the original alternatives count (carried + prior − 1); at full convergence it is 1.0>, "reducible_remainder": <FAL-2's reducible_remainder — untested survivors / carried total, the OPEN-WORK proportion; corroborated survivors and irreducible flags are not open work, so at full convergence it is 0.0> }` — convergence 0 = fully converged (verdict_score 1.0, all alternatives eliminated, nothing untested); the practical maximum is 0.95 (a no-observation cycle: verdict_score 0.1, nothing eliminated, all untested). Both ratios are read from the FAL-2 result, never typed; when FAL-2 returns `none_corroborated` (hard block — restart from hypothesize; `eliminated_proportion` exceeds 1.0 and must not be scored by the composite) or `null` for `eliminated_proportion` (one hypothesis ever carried), the composite is not computed — report the verdict alone.
+   Apply the materiality guard with `lisp_eval`:
+   - form: `(and (= eliminated 0) (not new_test_available) (< (abs (- metric metric_prior)) 0.02))`
+   - env: `{ "eliminated": <FAL-2's eliminated field for THIS cycle>, "new_test_available": <P judgment boolean>, "metric": <composite this cycle>, "metric_prior": <composite prior cycle> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"FAL-materiality","case":"stall-below-0.02-forces-convergence","env":{"eliminated":0,"new_test_available":false,"metric":0.5,"metric_prior":0.51},"expected":true}
+     {"gate":"FAL-materiality","case":"new-test-available-continues","env":{"eliminated":0,"new_test_available":true,"metric":0.5,"metric_prior":0.51},"expected":false}
+     {"gate":"FAL-materiality","case":"exact-0.02-boundary-is-strict","env":{"eliminated":0,"new_test_available":false,"metric":0.5,"metric_prior":0.52},"expected":false}
+     ```
+   If it holds, force convergence — the residual gap is irreducible, not a fixable defect, and the honest answer is the bounded remainder, not infinite iteration. Blockers: `untested_remainder` cannot converge to a unique survivor; report the untested hypotheses and the missing discriminating test. A no-observation `nothing_eliminated` verdict also carries the untested set and cannot claim a unique survivor. `none_corroborated` is a hard block (restart, do not iterate); `nothing_eliminated` with no new test available is a stall; `multiple_corroborated` with no new discriminating test is an irreducible remainder to report, not iterate past.
 
 ## Registry Templates
 
@@ -104,12 +123,32 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
 
 To render a template, call the `render_template` tool with the template ref (e.g., `falsifiability/falsifiability-admit`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `falsifiability-admit.j2`: `target`, `domain`, `context`
-- `falsifiability-hypothesize.j2`: `admitted_target`, `domain`, `context`
-- `falsifiability-counterfactual.j2`: `hypotheses`, `admitted_target`, `domain`
-- `falsifiability-discriminate.j2`: `hypotheses`, `counterfactuals`, `domain`
-- `falsifiability-eliminate.j2`: `hypotheses`, `discriminating_tests`, `observations` (a map of test description → observed outcome — the results of the tests run this cycle), `prior_eliminated`, `irreducible` (from the counterfactual render), `irreducible_pairs` (from the discriminate render)
+Copyable `render_template` context blocks (field names and types from each template's `[inference]` contract):
+
+`falsifiability/falsifiability-admit`:
+```json
+{ "target": "<claim or question>", "domain": "<domain>", "context": {} }
+```
+
+`falsifiability/falsifiability-hypothesize`:
+```json
+{ "admitted_target": "<admitted claim or question>", "domain": "<domain>", "context": {} }
+```
+
+`falsifiability/falsifiability-counterfactual`:
+```json
+{ "hypotheses": [], "admitted_target": "<admitted claim or question>", "domain": "<domain>" }
+```
+
+`falsifiability/falsifiability-discriminate`:
+```json
+{ "hypotheses": [], "counterfactuals": [], "domain": "<domain>" }
+```
+
+`falsifiability/falsifiability-eliminate`:
+```json
+{ "hypotheses": [], "discriminating_tests": [], "observations": {}, "prior_eliminated": [], "irreducible": [], "irreducible_pairs": [] }
+```
 
 ## Regression case
 
@@ -120,7 +159,7 @@ Template context variables (from each template's [inference] contract):
 | 2 tests | 2, 3 | 1 | — | — | `one_corroborated_survivor` | 1.0 / 0.0 |
 | none | — | — | 1, 2, 3 | — | `nothing_eliminated` | 0.0 / 1.0 (branch 1 precedes the untested branch — default survivors still report nothing_eliminated) |
 | none | 2 | — | 1 | — | `nothing_eliminated` | the no-observation branch wins even over a listed elimination — an elimination with no observation is a bookkeeping error the report must surface |
-| 1 test | 1, 2, 3 | — | — | — | `none_corroborated` | 1.0 / 0.0 (hard block) |
+| 1 test | 1, 2, 3 | — | — | — | `none_corroborated` | 1.5 / 0.0 (hard block; composite not computed) |
 | 1 test | 3 | 1 | 2 (neutral) | — | `untested_remainder` | 0.5 / 0.333 (the load-bearing precedence: one corroborated plus one untested is not a survivor) |
 | 1 test | — | 1, 2, 3 | — | — | `nothing_eliminated` | observations that eliminated nothing |
 | 1 test | 3 | 1, 2 | — | — | `multiple_corroborated` | 0.5 / 0.0 |

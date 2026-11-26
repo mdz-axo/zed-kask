@@ -115,7 +115,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 0. **Predict before scanning (calibration, P).** From the target's h_mem count and age profile alone, state the expected number of findings per class (contradiction, fragmentation, miscalibrated confidence, reification candidate) with one sentence of basis. Record them before the first query; Phase 6 reconciles them.
 1. **Inventory the memory architecture's own valves (before any maintenance proposal).** The memory system maintains itself; a session proposing manual maintenance must first reconcile the store's actual state against what the architecture is already doing — routine architecture behavior is not a finding (operator correction 2026-10-13). For curator memory, enumerate from the tree and live settings: the decay setting (`memory_life_days`, Settings → Kask → Memory — confidence decays with days since last recall, recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks what it covered), the forgetting horizon (`forgetting_days`, default 7 days — deletes the covered conversation copies once the watermark ages past the horizon; rides the distillation timer), the manual prune valve (`curator_memory_prune` — the valve for residue the automatic chain can't reach), and the alarm layer (the memory-life and growth sensors). Reconcile the store's state against each valve (e.g., episodic-tier age span vs the forgetting horizon; **sheddable-tier row count — turn storage (`curator:thread:`) plus goal events (`curator:goal:`) — vs the growth ceiling; the additive-by-design knowledge layer is exempt — its growth is distillation working, not a valve stall**, algedonic card 33b0eebb option (A), 2026-10-18) and record the reconciliation. Any manual-maintenance proposal from this session names the valve it replicates or adjusts and the reason the automatic path hasn't already done the work.
 2. Call `render_template` to render the scan template:
-   - template: `therapy/scan.j2`
+   - template_ref: `"therapy/scan"`
    - context: `{}` — curator memory is fixed in the template; no target-selection inputs.
 
 3. Following the template's guidance, scan the memory database for five categories of issues:
@@ -177,7 +177,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 ### Phase 3 — Classify and propose
 
 1. Call `render_template` to render the classification template:
-   - template: `therapy/classify.j2`
+   - template_ref: `"therapy/classify"`
    - context: `{ "findings": <scan findings> }`
 
 2. Following the template's guidance, classify each finding. For a skill-use finding, verify `failure_origin` first: `skill_contract` and repeated `agent_execution` can produce skill changes; `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, and `expected_absence` route to those owners; `unknown` remains unresolved. Attribution changes ownership, never suppresses the raw failure.
@@ -235,7 +235,18 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `reification_target`: for reification proposals, the skill/template/rule to create.
    - `reason`: why this resolution is proposed (citing the finding and the grounding).
    - `requires_approval`: true (all modifications require user approval).
-   - Verify proposal completeness and approval flags via `lisp_eval` (`TH-1`): `(and (>= proposals_count findings_count) (= findings_without_proposal 0) (= unapproved_auto_count 0))` — every finding must be addressed by at least one proposal, but a single finding may yield several (reification plus the purge/condense of its source memories), so proposals legitimately exceed findings. `findings_without_proposal` is the count of findings with no proposal referencing them.
+   - Verify proposal completeness and approval flags via `lisp_eval` gate **`TH-1`**:
+     - form: `(and (numberp findings_count) (> findings_count 0) (numberp proposals_count) (>= proposals_count findings_count) (numberp findings_without_proposal) (= findings_without_proposal 0) (numberp unapproved_auto_count) (= unapproved_auto_count 0))`
+     - env: `{ "findings_count": <measured findings count>, "proposals_count": <measured proposals count>, "findings_without_proposal": <count of findings with no proposal referencing them>, "unapproved_auto_count": <count of proposals lacking requires_approval> }`
+     - receipts:
+       ```lisp-receipts
+       {"gate":"TH-1","case":"valid-proposals-cover-findings","env":{"findings_count":2,"proposals_count":3,"findings_without_proposal":0,"unapproved_auto_count":0},"expected":true}
+       {"gate":"TH-1","case":"negative-counts-refused","env":{"findings_count":-2,"proposals_count":-1,"findings_without_proposal":0,"unapproved_auto_count":0},"expected":false}
+       {"gate":"TH-1","case":"zero-findings-refused","env":{"findings_count":0,"proposals_count":0,"findings_without_proposal":0,"unapproved_auto_count":0},"expected":false}
+       {"gate":"TH-1","case":"missing-proposal-refused","env":{"findings_count":2,"proposals_count":2,"findings_without_proposal":1,"unapproved_auto_count":0},"expected":false}
+       {"gate":"TH-1","case":"unapproved-auto-refused","env":{"findings_count":2,"proposals_count":2,"findings_without_proposal":0,"unapproved_auto_count":1},"expected":false}
+       ```
+     Every finding must be addressed by at least one proposal, and a single finding may yield several (reification plus the purge/condense of its source memories), so proposals legitimately exceed findings.
 
 ### Phase 4 — User review and approval
 
@@ -260,7 +271,16 @@ The scan's counts, the approved-proposal count, the execution check and the post
 1. For each approved proposal, execute the corresponding tool call:
 
    **System-defect fixes (the wiring repairs) — execute FIRST:**
-   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them. Gate hygiene execution on `lisp_eval` (`TH-2`): `(if (> system_defect_count 0) wiring_repairs_verified true)`.
+   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them. Gate hygiene execution on `lisp_eval` gate **`TH-2`**:
+     - form: `(and (numberp system_defect_count) (>= system_defect_count 0) (if (> system_defect_count 0) (eq wiring_repairs_verified true) true))`
+     - env: `{ "system_defect_count": <count of system_defect findings>, "wiring_repairs_verified": <true|false> }`
+     - receipts:
+       ```lisp-receipts
+       {"gate":"TH-2","case":"zero-defects-passes","env":{"system_defect_count":0,"wiring_repairs_verified":false},"expected":true}
+       {"gate":"TH-2","case":"defects-verified-passes","env":{"system_defect_count":1,"wiring_repairs_verified":true},"expected":true}
+       {"gate":"TH-2","case":"non-boolean-verified-refused","env":{"system_defect_count":1,"wiring_repairs_verified":"no"},"expected":false}
+       {"gate":"TH-2","case":"negative-defect-count-refused","env":{"system_defect_count":-1,"wiring_repairs_verified":true},"expected":false}
+       ```
 
    **Memory hygiene proposals:**
    - `memory_insert` for "add_consonant" and "link" strategies.
@@ -310,7 +330,7 @@ the operator approved only partial merges is expected, not a failure.
    - env: `{ "found_counts": <the four class counts from the scan, in the Phase-2 item-0 order>, "predicted_counts": <the four predicted counts, same order> }`
    The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
-   - template: `therapy/report.j2`
+   - template_ref: `"therapy/report"`
    - context: { "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with finding_id, strategy, success and outcome>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
 
    Copyable context shape:

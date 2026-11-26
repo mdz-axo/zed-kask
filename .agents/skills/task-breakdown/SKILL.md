@@ -58,9 +58,17 @@ Decomposition, dependency mapping, base criterion scores (`base_gate_scores`) an
 8. When parallelizing: safely parallelize independent feature slices; keep migrations, shared state changes, and dependency chains sequential; coordinate features that share a trait contract by defining the contract first.
 9. When `skill_catalog` is provided: include a `skill_match_query` field per task — a natural-language capability description consumed by skill-discovery (route). Do NOT match skills yourself; just describe the capability need. Omit the field when `skill_catalog` is absent.
 10. Produce a JSON object with `slices`, `tasks`, `phases`, and `checkpoints`.
-11. **Algedonic escalation (`TB-1`, D — `lisp_eval`, no template):** after `task-breakdown-decompose.j2` returns `tasks`, run `lisp_eval` to check for catastrophic plan conditions (`empty_decomposition`, `all_tasks_xl`, `no_dependencies_multi_task`, `no_acceptance_criteria`) before invoking the quality gate:
-    - form: `(begin (define all-xl (lambda (ts) (if (is_null ts) t (and (string= (assoc "estimated_scope" (car ts)) "XL") (all-xl (cdr ts)))))) (define any-deps (lambda (ts) (if (is_null ts) nil (let ((d (assoc "dependencies" (car ts)))) (or (and (listp d) (> (length d) 0) (not (string= (car d) "None"))) (any-deps (cdr ts))))))) (define any-acs (lambda (ts) (if (is_null ts) nil (let ((a (assoc "acceptance_criteria" (car ts)))) (or (and (listp a) (> (length a) 0)) (any-acs (cdr ts))))))) (if (is_null tasks) (list "empty_decomposition") (append (if (all-xl tasks) (list "all_tasks_xl") (quote ())) (append (if (and (> (length tasks) 1) (not (any-deps tasks))) (list "no_dependencies_multi_task") (quote ())) (if (not (any-acs tasks)) (list "no_acceptance_criteria") (quote ()))))))`
+11. **Algedonic escalation (`TB-1`, D — `lisp_eval`, no template):** after `task-breakdown-decompose.j2` returns `tasks`, run `lisp_eval` to check for catastrophic plan conditions (`invalid_tasks_input`, `empty_decomposition`, `all_tasks_xl`, `no_dependencies_multi_task`, `no_acceptance_criteria`) before invoking the quality gate:
+    - form: `(begin (define all-xl (lambda (ts) (if (is_null ts) t (and (string= (assoc "estimated_scope" (car ts)) "XL") (all-xl (cdr ts)))))) (define any-deps (lambda (ts) (if (is_null ts) nil (let ((d (assoc "dependencies" (car ts)))) (or (and (listp d) (> (length d) 0) (not (string= (car d) "None"))) (any-deps (cdr ts))))))) (define any-acs (lambda (ts) (if (is_null ts) nil (let ((a (assoc "acceptance_criteria" (car ts)))) (or (and (listp a) (> (length a) 0)) (any-acs (cdr ts))))))) (if (not (listp tasks)) (list "invalid_tasks_input") (if (is_null tasks) (list "empty_decomposition") (append (if (all-xl tasks) (list "all_tasks_xl") (quote ())) (append (if (and (> (length tasks) 1) (not (any-deps tasks))) (list "no_dependencies_multi_task") (quote ())) (if (not (any-acs tasks)) (list "no_acceptance_criteria") (quote ())))))))`
     - env: `{ "tasks": <tasks array from decompose> }`. If the returned list is non-empty, halt and surface the catastrophic escalation reasons to the operator before running the quality gate.
+    - receipts:
+      ```lisp-receipts
+      {"gate":"TB-1","case":"empty-tasks","env":{"tasks":[]},"expected":["empty_decomposition"]}
+      {"gate":"TB-1","case":"non-list-tasks-refused","env":{"tasks":"bad"},"expected":["invalid_tasks_input"]}
+      {"gate":"TB-1","case":"healthy-multi-task-passes","env":{"tasks":[{"id":"t1","estimated_scope":"S","dependencies":["None"],"acceptance_criteria":["test passes"]},{"id":"t2","estimated_scope":"M","dependencies":["t1"],"acceptance_criteria":["endpoint works"]}]},"expected":[]}
+      {"gate":"TB-1","case":"all-xl-and-no-acs-flagged","env":{"tasks":[{"id":"t1","estimated_scope":"XL","dependencies":["None"],"acceptance_criteria":[]}]},"expected":["all_tasks_xl","no_acceptance_criteria"]}
+      {"gate":"TB-1","case":"multi-task-no-deps-flagged","env":{"tasks":[{"id":"t1","estimated_scope":"S","dependencies":["None"],"acceptance_criteria":["ok"]},{"id":"t2","estimated_scope":"S","dependencies":["None"],"acceptance_criteria":["ok"]}]},"expected":["no_dependencies_multi_task"]}
+      ```
 
 ### task-breakdown-quality-gate
 
@@ -146,15 +154,33 @@ After a complete, input-valid TB-2 quality result, before write-plan (protocol e
 
 To render a template, call the `render_template` tool with the template ref (e.g., `task-breakdown/task-breakdown-plan`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `task-breakdown-plan.j2`: `target_condition`, `crate_scope`, `code_context`, `task`
-- `task-breakdown-decompose.j2`: `context_summary`, `dependency_graph`, `risks`, `refinement_directives`, `parallelization_hint`, `skill_catalog`
-- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `context_summary`, `target_condition`, `phases`, `checkpoints`, `task_count`, `task_count_penalty` (both unchanged from TB-COUNT)
-- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `open_questions` (unchanged from PLAN), `gate_result`, `refinement_directives`, `phases`, `checkpoints`
+Copyable `render_template` context blocks for `plan` and `decompose` (`quality-gate` and `write-plan` carry their copyable JSON blocks inline above; `skill_catalog` is optional `required: false`):
+
+`task-breakdown/task-breakdown-plan`:
+```json
+{
+  "target_condition": "<confirmed target>",
+  "crate_scope": "<crate or path scope>",
+  "code_context": {},
+  "task": "<user request>"
+}
+```
+
+`task-breakdown/task-breakdown-decompose`:
+```json
+{
+  "context_summary": "<from PLAN>",
+  "dependency_graph": [],
+  "risks": [],
+  "refinement_directives": [],
+  "parallelization_hint": "",
+  "skill_catalog": []
+}
+```
 
 ## Regression case
 
-Run TB-COUNT at counts 2/3/20/21: penalties are 0.10/0/0/0.10. Feed the actual count result and critic base scores into TB-2: check raw scores stay unchanged, sizing is adjusted once/clamped, totals match hand-computed expectations and the 0.15/0.30 boundaries remain exact. A positive count-adjusted sizing score with no sizing directive must report `directives_complete: false` and cannot pass; a criterion reference does not prove useful semantic text. Invalid scores/penalties stop explicitly. Run TB-1 on an empty task list (`["empty_decomposition"]`) and a healthy multi-task list (`[]`). These are execution cases to run, not claims of future task quality.
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates `TB-1`, `TB-COUNT`, and `TB-2` via their `lisp-receipts` blocks beside each form: `TB-1` on an empty task list (`["empty_decomposition"]`), non-list scalar (`["invalid_tasks_input"]`), healthy multi-task list (`[]`), all-XL/no-ACs, and multi-task without dependencies; `TB-COUNT` at counts 0/2/3/20/21 (penalties 0.10/0.10/0/0/0.10); and `TB-2` checking raw scores stay unchanged, sizing is adjusted once/clamped, totals match hand-computed expectations, the 0.15/0.30 boundaries remain exact, missing directives report `directives_complete: false`, and invalid scores/penalties stop explicitly. These are execution cases to run, not claims of future task quality.
 
 ## Constraints
 

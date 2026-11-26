@@ -35,7 +35,7 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 
 Every stage heading below carries its label. **D**: the eight `lisp_eval` forms
 (the stage-0 triage gate `SF-1`, the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
-weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the
+weighted average, the stage-6 defensible-range gate `SF-2`, the
 quality-gate weighted totals and pass rule `SF-3`, the market-prior gate); the
 `scenario_*` server oracles (triage classification, quantify rejection,
 calibration); `forecast_persist`; Brier at resolution; and the authored jq record-binding/assembly and raw-quality-shape filters below. **P**: triage,
@@ -77,8 +77,16 @@ one outcome.
 2. Classify the question into "clocklike" (easy), "goldilocks" (just right), or "cloudlike" (unpredictable) — Tetlock's regularity axis, this skill's own judgment. Cross-check with `scenario_triage`'s specification-quality classification (`well_specified` / `goldilocks` / `needs_refinement`): the tool scores whether the question is specified enough to score, this step whether it is regular enough to forecast; proceed only when `triage_zone` is `"goldilocks"` and `scenario_triage_class` is `"well_specified"` or `"goldilocks"`.
 3. Assess if there is sufficient publicly available information, if the outcome is determined by analyzable factors, if research would improve accuracy, and if the time horizon is appropriate.
 4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. Verify Stage 0 triage alignment with `scenario_triage` and non-empty `resolution_criteria` / `resolution_deadline` deterministically via `lisp_eval` gate **`SF-1`** (note: `lisp_eval` checks non-empty strings only, not whitespace-only or ISO-date syntax — pair with a read-only `jq` check `(.resolution_criteria | test("\\S")) and (.resolution_deadline | test("^\\d{4}-\\d{2}-\\d{2}$"))` when strict format validation is needed; never call mutating `scenario_declare` at triage):
-   - form: `(and (string= triage_zone "goldilocks") (or (string= scenario_triage_class "well_specified") (string= scenario_triage_class "goldilocks")) (not (string= resolution_criteria "")) (not (string= resolution_deadline "")))`
+   - form: `(and (stringp triage_zone) (stringp scenario_triage_class) (stringp resolution_criteria) (stringp resolution_deadline) (string= triage_zone "goldilocks") (or (string= scenario_triage_class "well_specified") (string= scenario_triage_class "goldilocks")) (not (string= resolution_criteria "")) (not (string= resolution_deadline "")))`
    - env: `{ "triage_zone": <stage_0_triage zone>, "scenario_triage_class": <scenario_triage classification>, "resolution_criteria": <string>, "resolution_deadline": <string> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"SF-1","case":"goldilocks-well-specified-passes","env":{"triage_zone":"goldilocks","scenario_triage_class":"well_specified","resolution_criteria":"Official release notes","resolution_deadline":"2026-12-31"},"expected":true}
+     {"gate":"SF-1","case":"goldilocks-goldilocks-passes","env":{"triage_zone":"goldilocks","scenario_triage_class":"goldilocks","resolution_criteria":"Official release notes","resolution_deadline":"2026-12-31"},"expected":true}
+     {"gate":"SF-1","case":"cloudlike-fails","env":{"triage_zone":"cloudlike","scenario_triage_class":"well_specified","resolution_criteria":"Official release notes","resolution_deadline":"2026-12-31"},"expected":false}
+     {"gate":"SF-1","case":"empty-deadline-fails","env":{"triage_zone":"goldilocks","scenario_triage_class":"well_specified","resolution_criteria":"Official release notes","resolution_deadline":""},"expected":false}
+     {"gate":"SF-1","case":"null-criteria-fails","env":{"triage_zone":"goldilocks","scenario_triage_class":"well_specified","resolution_criteria":null,"resolution_deadline":"2026-12-31"},"expected":false}
+     ```
    If `SF-1` is false or no supported `scenario_type` or bounded `time_horizon` fits, report null and do not proceed into the scenario tree. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when `SF-1` passes; carry the criteria and deadline unchanged into stage 7's record.
 
 ### stage_1_fermi_decompose (P — critique: stage 3's falsifiability delegation; structural limits checked by `scenario_quantify` rejection)
@@ -334,7 +342,7 @@ computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
 posterior form updates a prior; the stage-5 raw-model form derives composites,
 normalized weights and synthesized probability for valid 3-, 4- and 5-model
 arrays, and returns `[null, "invalid_models"]` for an out-of-range score,
-probability, blank model name or wrong model count; `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; `SF-3` computes the four weighted dimension totals from the criterion judgments and passes only
+probability, blank model name or wrong model count; `SF-2` verifies `range_low <= final_probability <= range_high` inside `[0, 1]` with `range_low < range_high`; `SF-3` computes the four weighted dimension totals from the criterion judgments and passes only
 when all four are >= 0.60 (a below-threshold dimension returns `gate_pass` false); the market-prior gate requires
 `stale_buckets = 0` and `without_snapshot_rate < 0.2`. SF-3 also refuses malformed/out-of-range scores and preserves the exact .60 boundary. Run both authored jq filters on positive and negative handoffs: source-bound dependent marginal, stale events/changed final estimate, metadata injection, null versus mismatched receipts, and wrong raw critic shapes. Native renderer and authored-rule tests pin these boundaries; they do not certify semantic forecasting quality.
 

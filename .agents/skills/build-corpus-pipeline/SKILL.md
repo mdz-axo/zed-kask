@@ -557,12 +557,21 @@ If adjudication is sliced, reconcile the union of slices against the entire
 prepared file before calling generation via `lisp_eval` (`BCP-1`):
 
 ```
-form: "(and (> prompts_prepared 0) (= (+ reviewed_passage_admits reviewed_passage_skips) prompts_prepared) (= (+ reviewed_level_generates reviewed_level_skips) qa_levels_requested) (= duplicate_prompt_ids 0))"
+form: "(and (numberp prompts_prepared) (> prompts_prepared 0) (numberp reviewed_passage_admits) (>= reviewed_passage_admits 0) (numberp reviewed_passage_skips) (>= reviewed_passage_skips 0) (= (+ reviewed_passage_admits reviewed_passage_skips) prompts_prepared) (numberp qa_levels_requested) (> qa_levels_requested 0) (numberp reviewed_level_generates) (>= reviewed_level_generates 0) (numberp reviewed_level_skips) (>= reviewed_level_skips 0) (= (+ reviewed_level_generates reviewed_level_skips) qa_levels_requested) (or (> reviewed_passage_admits 0) (= reviewed_level_generates 0)) (numberp duplicate_prompt_ids) (= duplicate_prompt_ids 0))"
 env:  { "prompts_prepared": <measured PreparedQaPrompt count>,
         "reviewed_passage_admits": <measured>, "reviewed_passage_skips": <measured>,
         "reviewed_level_generates": <measured>, "reviewed_level_skips": <measured>,
         "qa_levels_requested": <measured total requested levels across prompts>,
         "duplicate_prompt_ids": <measured duplicate prompt_id count in merged manifest> }
+```
+
+```lisp-receipts
+{"gate":"BCP-1","case":"valid-adjudication-passes","env":{"prompts_prepared":100,"reviewed_passage_admits":90,"reviewed_passage_skips":10,"reviewed_level_generates":150,"reviewed_level_skips":50,"qa_levels_requested":200,"duplicate_prompt_ids":0},"expected":true}
+{"gate":"BCP-1","case":"all-skip-manifest-passes","env":{"prompts_prepared":10,"reviewed_passage_admits":0,"reviewed_passage_skips":10,"reviewed_level_generates":0,"reviewed_level_skips":20,"qa_levels_requested":20,"duplicate_prompt_ids":0},"expected":true}
+{"gate":"BCP-1","case":"negative-skips-refused","env":{"prompts_prepared":100,"reviewed_passage_admits":105,"reviewed_passage_skips":-5,"reviewed_level_generates":150,"reviewed_level_skips":50,"qa_levels_requested":200,"duplicate_prompt_ids":0},"expected":false}
+{"gate":"BCP-1","case":"zero-levels-refused","env":{"prompts_prepared":10,"reviewed_passage_admits":10,"reviewed_passage_skips":0,"reviewed_level_generates":0,"reviewed_level_skips":0,"qa_levels_requested":0,"duplicate_prompt_ids":0},"expected":false}
+{"gate":"BCP-1","case":"zero-admits-with-generates-refused","env":{"prompts_prepared":10,"reviewed_passage_admits":0,"reviewed_passage_skips":10,"reviewed_level_generates":5,"reviewed_level_skips":15,"qa_levels_requested":20,"duplicate_prompt_ids":0},"expected":false}
+{"gate":"BCP-1","case":"duplicate-prompt-ids-refused","env":{"prompts_prepared":100,"reviewed_passage_admits":90,"reviewed_passage_skips":10,"reviewed_level_generates":150,"reviewed_level_skips":50,"qa_levels_requested":200,"duplicate_prompt_ids":1},"expected":false}
 ```
 
 Do not feed a partial manifest or reinterpret legacy rows as v2. Build a source-balanced pilot input with
@@ -805,6 +814,13 @@ env:  { "sources_present": <measured>, "sources_expected": <inventoried>,
         "retrieval_ok": <the live query's source/text identity verdict> }
 ```
 
+```lisp-receipts
+{"gate":"BCP-Stage10","case":"green-full-pipeline","env":{"sources_present":12,"sources_expected":12,"embeddings_stored":400,"chunks_measured":400,"classified_count":400,"classified_target":400,"prompts_written":400,"prompts_expected":400,"pairs_requested":800,"pairs_expected":800,"prompts_total":400,"prompts_succeeded":400,"prompts_failed":0,"unresolved_failed":0,"candidate_parsed":800,"candidate_nonblank":800,"filter_drops":0,"duplicates":0,"retained":800,"stored":800,"failed":0,"storage_errors":0,"qa_export_rows":800,"style_ok":true,"semantic_gate":true,"retrieval_ok":true},"expected":true}
+{"gate":"BCP-Stage10","case":"embedding-loss-fails","env":{"sources_present":12,"sources_expected":12,"embeddings_stored":399,"chunks_measured":400,"classified_count":400,"classified_target":400,"prompts_written":400,"prompts_expected":400,"pairs_requested":800,"pairs_expected":800,"prompts_total":400,"prompts_succeeded":400,"prompts_failed":0,"unresolved_failed":0,"candidate_parsed":800,"candidate_nonblank":800,"filter_drops":0,"duplicates":0,"retained":800,"stored":800,"failed":0,"storage_errors":0,"qa_export_rows":800,"style_ok":true,"semantic_gate":true,"retrieval_ok":true},"expected":false}
+{"gate":"BCP-Stage10","case":"unresolved-failure-fails","env":{"sources_present":12,"sources_expected":12,"embeddings_stored":400,"chunks_measured":400,"classified_count":400,"classified_target":400,"prompts_written":400,"prompts_expected":400,"pairs_requested":800,"pairs_expected":800,"prompts_total":400,"prompts_succeeded":399,"prompts_failed":1,"unresolved_failed":1,"candidate_parsed":800,"candidate_nonblank":800,"filter_drops":0,"duplicates":0,"retained":800,"stored":800,"failed":0,"storage_errors":0,"qa_export_rows":800,"style_ok":true,"semantic_gate":true,"retrieval_ok":true},"expected":false}
+{"gate":"BCP-Stage10","case":"prompt-pairs-conflation-fails","env":{"sources_present":12,"sources_expected":12,"embeddings_stored":400,"chunks_measured":400,"classified_count":400,"classified_target":400,"prompts_written":800,"prompts_expected":400,"pairs_requested":800,"pairs_expected":800,"prompts_total":400,"prompts_succeeded":400,"prompts_failed":0,"unresolved_failed":0,"candidate_parsed":800,"candidate_nonblank":800,"filter_drops":0,"duplicates":0,"retained":800,"stored":800,"failed":0,"storage_errors":0,"qa_export_rows":800,"style_ok":true,"semantic_gate":true,"retrieval_ok":true},"expected":false}
+```
+
 The prompt identity and the pairs identity are distinct: Stage 6 writes one
 `PreparedQaPrompt` per chunk and requests `qa_pairs_per_chunk` pairs per
 prompt — never bind the pair count into a prompt clause.
@@ -876,7 +892,7 @@ All receipts executed live through `lisp_eval` (2026-10-01, batch-13 audit):
   with zero unresolved failures, the candidate file reconciled
   (800 nonblank = 800 parsed = 0 drops + 0 duplicates + 800 retained),
   ingestion reconciled (800 = 800 + 0) with zero storage errors, export
-  reconciled (640 train + 160 validation = 800 retained), style gate,
+  reconciled (qa_export_rows: 800 = 800 retained), style gate,
   semantic gate and retrieval all true → `true`.
 - Stage 10 verification, embedding loss: same env with
   `embeddings_stored: 399` vs `chunks_measured: 400` → `false` — one lost
@@ -896,9 +912,21 @@ The skill's form is executed at use time, never anchored in code.
 
 This skill owns no registry templates under its own directory. Stage 7 renders
 `docproc/adjudicate-passages.j2` — a registry template under the `docproc/`
-namespace — with its 5 required `contract.input` keys (`row_start`, `row_end`,
-`row_count`, `prompts_path`, `decisions_path`) to produce reviewer adjudication
-decisions consumed directly as the `prepared-qa-adjudication-v2` JSONL.
+namespace — to produce reviewer adjudication decisions consumed directly as the
+`prepared-qa-adjudication-v2` JSONL. In `adjudicate-passages.j2:10–24`, all five
+`contract.input` keys are declared `required: false`, while all five are
+interpolated by the prompt body and should be supplied for a complete slice
+render:
+
+```json
+{
+  "row_start": 1,
+  "row_end": 50,
+  "row_count": 50,
+  "prompts_path": "<path to prepared prompts JSONL>",
+  "decisions_path": "<path to output prepared-qa-adjudication-v2 JSONL>"
+}
+```
 
 ## Constraints
 

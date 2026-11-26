@@ -97,8 +97,17 @@ Use when the gap is in understanding a problem that needs several dependent reas
 
 1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts` (≤ 20; 12 is the default) and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries` (total thoughts used is computed deterministically as `(length thought_chain)`).
 2. For each `delegation_requests` entry, route deterministically via `lisp_eval` gate **`MC-1`** to the canonical skill (`hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`):
-   - form: `(if (and (<= (length delegation_requests) 3) (or (string= requested_skill "hypothesis-framer") (string= requested_skill "mcda") (string= requested_skill "diagnose") (string= requested_skill "falsifiability"))) requested_skill "route_to_skill_discovery")`
+   - form: `(if (and (listp delegation_requests) (> (length delegation_requests) 0) (<= (length delegation_requests) 3) (stringp requested_skill) (or (string= requested_skill "hypothesis-framer") (string= requested_skill "mcda") (string= requested_skill "diagnose") (string= requested_skill "falsifiability"))) requested_skill "route_to_skill_discovery")`
    - env: `{ "delegation_requests": <the delegation_requests array>, "requested_skill": <entry.skill> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"MC-1","case":"valid-canonical-skill","env":{"delegation_requests":[{"skill":"diagnose"}],"requested_skill":"diagnose"},"expected":"diagnose"}
+     {"gate":"MC-1","case":"over-three-requests-reroutes","env":{"delegation_requests":[{"skill":"a"},{"skill":"b"},{"skill":"c"},{"skill":"d"}],"requested_skill":"diagnose"},"expected":"route_to_skill_discovery"}
+     {"gate":"MC-1","case":"unknown-skill-reroutes","env":{"delegation_requests":[{"skill":"other"}],"requested_skill":"other"},"expected":"route_to_skill_discovery"}
+     {"gate":"MC-1","case":"null-requests-reroutes","env":{"delegation_requests":null,"requested_skill":"diagnose"},"expected":"route_to_skill_discovery"}
+     {"gate":"MC-1","case":"string-requests-reroutes","env":{"delegation_requests":"ab","requested_skill":"diagnose"},"expected":"route_to_skill_discovery"}
+     {"gate":"MC-1","case":"empty-requests-reroutes","env":{"delegation_requests":[],"requested_skill":"diagnose"},"expected":"route_to_skill_discovery"}
+     ```
    Invoke the matched canonical skill (`hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`) via the `skill` tool (not a local shadow template). When `MC-1` returns `"route_to_skill_discovery"` or for `skill_match_queries`, render `skill-discovery/skill-discovery-route` with `task_description`, `task_context`, the actual installed `skill_catalog`, `max_recommendations: 3`, and its required `epistemic_state: {}` when no independently supported confidence/type was supplied. An empty object disables the boost; never invent 0.5 or an uncertainty type. Do this for at most three follow-up skills.
 3. Feed the delegation and skill-match results back into the next engine render. The engine's `final_answer` and `hypothesis_verified` become the post-experiment current condition.
 
@@ -110,13 +119,24 @@ Status classification (`exists`/`grounded`/`complete`) is P — model-proposed a
 2. (D) Compute the hypotenuse with `lisp_eval`, form `(sqrt (+ (* og og) (* pg pg)))`, env `{ "og": <object gap>, "pg": <process gap> }`. Never estimate the gap in prose.
 3. (D) The reduction is `(- gap_before gap_after)` via `lisp_eval`; `gap_before` is the Step 3 value, unchanged.
 4. Judge the recorded goal with the measured gap (`kanban_goal_judge`). Keep the measured worker result separate from native human closure and independent assessment; an unmeasured result is not zero error.
-5. Check the predeclared gap-reduction threshold and the user's task-specific success evidence separately. The threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))` via `lisp_eval`, env `{ "gap_before": <the Step 3 value>, "gap_after": <the measured after-gap>, "expected_gap_reduction": <the predeclared fraction in (0, 1] — 0 is forbidden: a zero reduction passes the threshold vacuously on any non-regression }`. A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`. Two nearly unchanged measured iterations while the target still fails indicate a plateau, not success. Do not convert a session gap or completed task into a human outcome; optional forecasts resolve only under their frozen source rule. Re-enter grasp-current only on a named obstacle and new observation; stop after three cycles with remaining gaps visible.
+5. Check the predeclared gap-reduction threshold and the user's task-specific success evidence separately via `lisp_eval` gate **`MC-2`**:
+   - form: `(and (numberp gap_before) (numberp gap_after) (numberp expected_gap_reduction) (> gap_before 0) (>= gap_after 0) (> expected_gap_reduction 0) (<= expected_gap_reduction 1) (>= (- gap_before gap_after) (* gap_before expected_gap_reduction)))`
+   - env: `{ "gap_before": <the Step 3 value (> 0)>, "gap_after": <the measured after-gap (>= 0)>, "expected_gap_reduction": <the predeclared fraction in (0, 1] — 0 is forbidden> }`
+   - receipts:
+     ```lisp-receipts
+     {"gate":"MC-2","case":"meets-threshold","env":{"gap_before":0.8,"gap_after":0.4,"expected_gap_reduction":0.5},"expected":true}
+     {"gate":"MC-2","case":"below-threshold","env":{"gap_before":0.8,"gap_after":0.5,"expected_gap_reduction":0.5},"expected":false}
+     {"gate":"MC-2","case":"zero-reduction-refused","env":{"gap_before":0.7,"gap_after":0.7,"expected_gap_reduction":0},"expected":false}
+     {"gate":"MC-2","case":"zero-gap-before-refused","env":{"gap_before":0,"gap_after":0,"expected_gap_reduction":0.5},"expected":false}
+     {"gate":"MC-2","case":"reduction-over-one-refused","env":{"gap_before":0.8,"gap_after":0.1,"expected_gap_reduction":1.2},"expected":false}
+     ```
+   A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`. Two nearly unchanged measured iterations while the target still fails indicate a plateau, not success. Do not convert a session gap or completed task into a human outcome; optional forecasts resolve only under their frozen source rule. Re-enter grasp-current only on a named obstacle and new observation; stop after three cycles with remaining gaps visible.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-- `meta-grasp-current.j2` | Measure the agent's actual metacognitive state right now. Identify obstacles, surface assumptions, enumerate grounded claims and options. Produces stable-id `current_artifacts` and stable-name `current_procedure` row arrays for deterministic gap computation. |
+| `meta-grasp-current.j2` | Measure the agent's actual metacognitive state right now. Identify obstacles, surface assumptions, enumerate grounded claims and options. Produces stable-id `current_artifacts` and stable-name `current_procedure` row arrays for deterministic gap computation. |
 | `meta-establish-target.j2` | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
 | `meta-predict.j2` | Predict a task-specific calibration and gap reduction, with an optional declared forecast; closure and assessment remain separate. |
 | `meta-experiment.j2` | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
@@ -208,7 +228,7 @@ A `render_template` call renders the prompt; it does not execute the inference s
 
 ## Constraints
 
-- The gap arithmetic is D only over source-reconciled rows — an uncited model status leaves the after-gap `unmeasured`, never zero. Feed the structured normalization form the four declared row arrays verbatim; it derives required/missing counts and rejects duplicate/blank identities, invalid statuses, zero required targets and measured-complete rows without evidence. The hypotenuse and reduction run in `lisp_eval`; the convergence threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))`.
+- The gap arithmetic is D only over source-reconciled rows — an uncited model status leaves the after-gap `unmeasured`, never zero. Feed the structured normalization form the four declared row arrays verbatim; it derives required/missing counts and rejects duplicate/blank identities, invalid statuses, zero required targets and measured-complete rows without evidence. The hypotenuse and reduction run in `lisp_eval`; the convergence threshold check is `MC-2` (`(and (numberp gap_before) (numberp gap_after) (numberp expected_gap_reduction) (> gap_before 0) (>= gap_after 0) (> expected_gap_reduction 0) (<= expected_gap_reduction 1) (>= (- gap_before gap_after) (* gap_before expected_gap_reduction)))`).
 - Never author a human outcome. Request native human closure separately; optional forecast scoring is deterministic under its frozen resolver, not a self-grade.
 - `gap_before` is carried unchanged from Step 2 through the experiment and the convergence check — never recomputed from post-experiment data.
 - A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`, not success.

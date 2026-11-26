@@ -202,7 +202,7 @@ One pass per tool per cycle. For each tool:
 | C7 Metric-space declaration | D | declared-before-measuring; blocked axes recorded as findings |
 | D8 Syntax | D | source read (`AnyJsonValue` vs bare `Value`; unsupported-keyword handling) |
 | D9 Semantics (description honesty) | P | file:line trace to the enforcement line + the F21 critic pass |
-| D10–D11 Cybernetics / loops | D | actuator routing receipts; declared cycle budget |
+| D10–D11 Cybernetics / loops | P + D | Ashby variety adequacy is P (critiqued against `.rules` prior + F21 critic pass); actuator routing receipts and declared cycle budget are D |
 | D12 Use patterns | D | scoped fixed-string walk (scope stated in every dead-surface verdict) |
 | D13–D14 Observability / traceability | D | artifact fields + the citation script |
 | D15 Integration | D | source read (passphrase helper, envelope, settings defaults, model constants) |
@@ -212,7 +212,9 @@ One pass per tool per cycle. For each tool:
 | F19 Citation check | D | `check-mcp-review-citations.sh` exit code |
 | F20 Routing invariant | D | `lisp_eval` over the step classification |
 | F21 Critic pass | P | decoupled-by-rubric re-read of each finding against its citation |
-| G22 Routing / report | D | actuator receipts (kanban / algedonic / directive) |
+| G22 Fix, pin, and route | D + P | pinning tests, crate suites, docs/rustfmt/ontology gates (D); fix design and actuator routing judgment (P; operator/kanban for functional-contract changes) |
+| G23 Live re-probe | D + P | executable sha256 + process start time + live probe calls (D); before/after behavioral classification and pending-restart gating (P; reconciled against static source read, consistent with E17) |
+| G24 Report | P | the operator; grounded in artifact receipts, test outputs, and F21 critic pass |
 
 ## Bounded passes and termination
 
@@ -256,7 +258,7 @@ Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fiel
 - Bash-only syntax (`<(`, `<<<`, `$'`, `PIPESTATUS`) is never typed into the /bin/sh terminal: the command is written to a script file in the run directory and run with `bash` (stating the rule has not prevented the error — five runs hit it: four skill-use reports and one artifact note).
 - Findings are fixed in-tree with pinning tests in the same pass; functional-contract changes and platform redesigns go to the operator / kanban, never implemented unilaterally. Never commit unless the operator explicitly asks; when the ask delegates commits (a batch that names them), commit verified work with a pathspec.
 - No second clone or worktree for any measurement (absolute prohibition) — measurements run in-tree.
-- A mutation check that edits the working tree runs only after asking who else commits the touched paths; each row records git log -1 and the staged-index digest before and after and stops if either moved; the table is read on fd 3 with the child on </dev/null (a child consumed rows in the media run); lines that occur more than once are mutated by line number. The working instrument is `instruments/mutate3.sh`.
+- Mutation checks that edit the working tree require asking who else commits the touched paths first, and follow Step 22's fd-3 / git-state-guard / line-number discipline via `instruments/mutate3.sh`.
 - A tool's missing anchor, label, or D/P character is a finding, never a load-time failure.
 
 ## Registry Templates
