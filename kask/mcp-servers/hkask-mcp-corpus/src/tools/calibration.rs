@@ -273,11 +273,21 @@ fn embedding_inventory(
     // empty-key open).
     let passphrase = crate::helpers::resolve_corpus_passphrase()?;
 
-    let rows = crate::read_jsonl::<serde_json::Value>(&request.chunks_jsonl, "chunks_jsonl")?;
+    #[derive(Deserialize)]
+    struct InventoryChunkRow {
+        entity_ref: Option<serde_json::Value>,
+    }
+
+    // Stream line-by-line so large calibration shards (e.g. 260 MB
+    // fine-children.jsonl) do not hit the 32 MiB full-file read cap or retain
+    // full passage text in memory when only entity_ref is needed.
+    let rows =
+        crate::read_jsonl_stream::<InventoryChunkRow>(&request.chunks_jsonl, "chunks_jsonl")?;
     let mut requested = BTreeSet::new();
     for (index, row) in rows.iter().enumerate() {
         let entity_ref = row
-            .get("entity_ref")
+            .entity_ref
+            .as_ref()
             .and_then(serde_json::Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {

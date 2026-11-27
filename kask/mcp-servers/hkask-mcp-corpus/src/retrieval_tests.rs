@@ -1490,6 +1490,68 @@ async fn embedding_inventory_returns_exact_missing_only_retry_refs() {
     );
 }
 
+#[tokio::test]
+async fn embedding_inventory_streams_shards_exceeding_max_read_bytes() {
+    let directory = fixture();
+    let database = directory.path().join("inventory-large.db");
+    let server = server(Arc::new(IdentityPort {
+        actual_model: Some("provider/actual-model".into()),
+    }));
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "inventory-large.db",
+                ORIGINAL,
+            )))
+            .await,
+    );
+
+    // Build a >32 MiB JSONL shard (34 rows * ~1 MiB text each) to prove
+    // corpus_embedding_inventory streams past the 32 MiB MAX_READ_BYTES cap.
+    let shard = directory.path().join("oversized-shard.jsonl");
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::File::create(&shard).expect("create oversized shard");
+        let padding = "a".repeat(1024 * 1024);
+        for index in 1..=34usize {
+            let line = json!({
+                "entity_ref": format!("corpus:test:{index}"),
+                "source": "river.txt",
+                "text": padding,
+                "word_count": 1
+            });
+            writeln!(file, "{line}").expect("write shard row");
+        }
+    }
+    assert!(
+        std::fs::metadata(&shard).expect("shard metadata").len()
+            > crate::path_safety::MAX_READ_BYTES,
+        "fixture must exceed MAX_READ_BYTES"
+    );
+
+    let inventory = content(
+        server
+            .corpus_embedding_inventory(Parameters(EmbeddingInventoryRequest {
+                chunks_jsonl: shard.to_string_lossy().into(),
+                db_path: database.to_string_lossy().into(),
+                expected_model: "provider/actual-model".into(),
+            }))
+            .await,
+    );
+    assert_eq!(inventory["requested"], 34);
+    assert_eq!(inventory["stored_matching_model"], 1);
+    assert_eq!(
+        inventory["missing_entity_refs"]
+            .as_array()
+            .expect("missing array")
+            .len(),
+        33
+    );
+    assert_eq!(inventory["mismatched_model_entity_refs"], json!([]));
+    assert_eq!(inventory["complete"], false);
+}
+
 fn query(database: Option<&std::path::Path>, answer: bool, include_text: bool) -> QueryRequest {
     QueryRequest {
         query: "When does the river flood?".into(),
