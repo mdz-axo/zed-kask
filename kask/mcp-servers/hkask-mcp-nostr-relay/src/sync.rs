@@ -98,18 +98,40 @@ fn is_public_sync_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Pre-connect DNS SSRF refusal reason for outbound `wss://` sync relays.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SyncDnsError {
+    #[error("refused: relay URL has no host")]
+    MissingHost,
+    #[error("refused: DNS returned no addresses for {host}")]
+    NoAddresses { host: String },
+    #[error("refused: {host} resolved to non-public address {ip}")]
+    NonPublicAddress { host: String, ip: IpAddr },
+    #[error("refused: DNS lookup timed out for {host}")]
+    Timeout { host: String },
+    #[error("refused: DNS lookup failed for {host}: {source}")]
+    LookupFailed {
+        host: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// Verify that a DNS lookup returned at least one address and that every
 /// resolved address is publicly routable (closing the literal-host-only gap
 /// in `config::validate_sync_relay` for static/cached private-IP DNS records).
-pub(crate) fn check_resolved_ips(host: &str, ips: &[IpAddr]) -> Result<(), String> {
+pub(crate) fn check_resolved_ips(host: &str, ips: &[IpAddr]) -> Result<(), SyncDnsError> {
     if ips.is_empty() {
-        return Err(format!("refused: DNS returned no addresses for {host}"));
+        return Err(SyncDnsError::NoAddresses {
+            host: host.to_string(),
+        });
     }
     for &ip in ips {
         if !is_public_sync_ip(ip) {
-            return Err(format!(
-                "refused: {host} resolved to non-public address {ip}"
-            ));
+            return Err(SyncDnsError::NonPublicAddress {
+                host: host.to_string(),
+                ip,
+            });
         }
     }
     Ok(())
@@ -119,7 +141,7 @@ async fn check_public_dns_with<F, Fut>(
     url: &RelayUrl,
     timeout: Duration,
     resolve: F,
-) -> Result<(), String>
+) -> Result<(), SyncDnsError>
 where
     F: FnOnce(String, u16) -> Fut,
     Fut: Future<Output = std::io::Result<Vec<IpAddr>>>,
@@ -128,7 +150,7 @@ where
         return Ok(());
     }
     let Some(host) = url.host() else {
-        return Err("refused: relay URL has no host".to_string());
+        return Err(SyncDnsError::MissingHost);
     };
     match host {
         url::Host::Ipv4(v4) => check_resolved_ips(&v4.to_string(), &[IpAddr::V4(v4)]),
@@ -136,8 +158,13 @@ where
         url::Host::Domain(domain) => {
             let ips = tokio::time::timeout(timeout, resolve(domain.to_string(), 0))
                 .await
-                .map_err(|_| format!("refused: DNS lookup timed out for {domain}"))?
-                .map_err(|error| format!("refused: DNS lookup failed for {domain}: {error}"))?;
+                .map_err(|_| SyncDnsError::Timeout {
+                    host: domain.to_string(),
+                })?
+                .map_err(|source| SyncDnsError::LookupFailed {
+                    host: domain.to_string(),
+                    source,
+                })?;
             check_resolved_ips(domain, &ips)
         }
     }
@@ -170,7 +197,7 @@ pub async fn run_with(
     for url in relays {
         if let Err(reason) = check_public_dns_with(url, timeouts.connect, resolve_system_dns).await
         {
-            report.relays.insert(url.to_string(), reason);
+            report.relays.insert(url.to_string(), reason.to_string());
             continue;
         }
         match client.add_relay(url.clone()).await {
@@ -277,7 +304,8 @@ mod tests {
         ];
         for bad in non_public {
             let err = check_resolved_ips("rebind.example", &[public_v4, bad])
-                .expect_err("mixed public + non-public DNS answer must be refused");
+                .expect_err("mixed public + non-public DNS answer must be refused")
+                .to_string();
             assert!(
                 err.contains("non-public") && err.contains(&bad.to_string()),
                 "{err}"
@@ -292,7 +320,8 @@ mod tests {
             Ok(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)])
         })
         .await
-        .expect_err("private DNS resolution must be refused");
+        .expect_err("private DNS resolution must be refused")
+        .to_string();
         assert!(
             err.contains("non-public") && err.contains("127.0.0.1"),
             "{err}"

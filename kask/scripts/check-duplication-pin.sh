@@ -36,22 +36,41 @@ PIN="$(head -n1 "$PIN_FILE" | tr -d '[:space:]')"
 }
 
 MERGE="$(git log --merges -1 --format=%H 2>/dev/null)"
-[ -n "$MERGE" ] || {
-  echo "FAIL: no merge commit found on this branch — cannot verify the pin."
-  exit 1
-}
-SECOND="$(git rev-parse --verify -q "${MERGE}^2" 2>/dev/null)"
-[ -n "$SECOND" ] || {
-  echo "FAIL: the most recent merge $MERGE has no second parent."
-  exit 1
-}
+if [ -n "$MERGE" ]; then
+  SECOND="$(git rev-parse --verify -q "${MERGE}^2" 2>/dev/null)"
+  [ -n "$SECOND" ] || {
+    echo "FAIL: the most recent merge $MERGE has no second parent."
+    exit 1
+  }
 
-if [ "$PIN" != "$SECOND" ]; then
-  echo "FAIL: duplication scan-base pin is stale."
-  echo "  pin:      $PIN"
-  echo "  expected: $SECOND (second parent of $MERGE)"
-  echo "  Refresh it in the upstream-merge commit, together with duplication-ratchet-baseline.txt."
-  exit 1
+  if [ "$PIN" != "$SECOND" ]; then
+    echo "FAIL: duplication scan-base pin is stale."
+    echo "  pin:      $PIN"
+    echo "  expected: $SECOND (second parent of $MERGE)"
+    echo "  Refresh it in the upstream-merge commit, together with duplication-ratchet-baseline.txt."
+    exit 1
+  fi
+
+  echo "OK: duplication scan-base pin is current ($PIN)."
+  exit 0
 fi
 
-echo "OK: duplication scan-base pin is current ($PIN)."
+# Linear (rebased) history with no merge commits: verify the pin is a reachable
+# ancestor of HEAD and, when upstream/main is present locally, matches its
+# merge-base with HEAD.
+if ! git merge-base --is-ancestor "$PIN" HEAD 2>/dev/null; then
+  echo "FAIL: duplication scan-base pin $PIN is not an ancestor of HEAD."
+  exit 1
+fi
+if git show-ref --verify --quiet refs/remotes/upstream/main; then
+  UPSTREAM_BASE="$(git merge-base HEAD refs/remotes/upstream/main 2>/dev/null)"
+  if [ -n "$UPSTREAM_BASE" ] && [ "$PIN" != "$UPSTREAM_BASE" ]; then
+    echo "FAIL: duplication scan-base pin is stale."
+    echo "  pin:      $PIN"
+    echo "  expected: $UPSTREAM_BASE (merge-base with upstream/main)"
+    echo "  Refresh it together with duplication-ratchet-baseline.txt."
+    exit 1
+  fi
+fi
+
+echo "OK: duplication scan-base pin is current ($PIN, linear history)."

@@ -789,7 +789,11 @@ pub fn authorize_file_edit(
 
     let settings = agent_settings::AgentSettings::get_global(cx);
     let decision = decide_permission_for_path(tool_name, &path_str, settings);
-    let has_tool_specific_confirm = settings.tool_permissions.tools.contains_key(tool_name)
+    let has_tool_specific_confirm = settings
+        .tool_permissions
+        .tools
+        .get(tool_name)
+        .is_some_and(|rules| rules.default == Some(settings::ToolPermissionMode::Confirm))
         && matches!(decision, ToolPermissionDecision::Confirm);
 
     if let ToolPermissionDecision::Deny(reason) = decision {

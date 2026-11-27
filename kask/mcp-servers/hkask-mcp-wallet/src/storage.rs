@@ -97,7 +97,7 @@ fn open_rusqlite_connection(
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     if let Err(err) = std::fs::create_dir_all(parent) {
                         tracing::warn!(
-                            target: "reg.wallet",
+                            target: "hkask.wallet",
                             path = %parent.display(),
                             %err,
                             "failed to create wallet database parent directory"
@@ -113,7 +113,7 @@ fn open_rusqlite_connection(
                     std::fs::set_permissions(&path_buf, std::fs::Permissions::from_mode(0o600))
                 {
                     tracing::warn!(
-                        target: "reg.wallet",
+                        target: "hkask.wallet",
                         path = %path_buf.display(),
                         %err,
                         "failed to enforce 0600 permissions on SQLCipher wallet.db"

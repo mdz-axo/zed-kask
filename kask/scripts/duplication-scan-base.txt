@@ -1,12 +1,10 @@
-d2a4fb6ded7c470be25d1541281da3882495b65b
-# The upstream commit the duplication scan diverges from — the second
-# parent of the last upstream merge (714ef49a5f, 2026-11-08). The pin, not
-# a live upstream ref, defines the fork-diverged scan set so a bare CI
-# clone computes the same set as a full clone. Refresh in the
-# upstream-merge commit, together with duplication-ratchet-baseline.txt.
+10d1b2a564604dba7b8f05b157b7f9e8ed35255b
+# The upstream commit the duplication scan diverges from — currently the
+# upstream/main rebase base (10d1b2a564, 2026-11-26). The pin, not a live
+# upstream ref, defines the fork-diverged scan set so a bare CI clone
+# computes the same set as a full clone. Refresh in the upstream-merge or
+# upstream-rebase commit, together with duplication-ratchet-baseline.txt.
 #
-# Refreshed 2026-11-09: the 2026-11-08 merge did not refresh this pin (its
-# doctrine is to refresh in the merge commit), so the scan set had widened
-# to every file changed since 2026-10-10 and the ratchet read 6344 clusters
-# against a 5666 baseline. With the pin current the scan set is the fork's
-# divergence from the merge's upstream parent and the baseline is 2782.
+# Refreshed 2026-11-26: main was rebased onto upstream/main (10d1b2a564),
+# while the pin still named d2a4fb6ded (2026-11-08), widening the scan set
+# from 302 to 786 paths (6383 clusters against the 3015 baseline).

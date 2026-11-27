@@ -66,7 +66,7 @@ impl IpcApprovalPort {
             Ok(client) => Some(Self { client }),
             Err(err) => {
                 tracing::warn!(
-                    target: "reg.wallet",
+                    target: "hkask.wallet",
                     %err,
                     "failed to connect to editor inference IPC socket; wallet will start locked"
                 );

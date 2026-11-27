@@ -36,14 +36,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             {
                 Ok(engine) => (Some(Arc::new(engine)), None),
                 Err(err) => {
-                    tracing::warn!(target: "reg.wallet", %err, "wallet engine failed to unlock");
+                    tracing::warn!(target: "hkask.wallet", %err, "wallet engine failed to unlock");
                     (None, Some(err.to_string()))
                 }
             }
         }
         Err(err) => {
             tracing::info!(
-                target: "reg.wallet",
+                target: "hkask.wallet",
                 %err,
                 "wallet DB locked at startup; configure seed in Settings > Kask > Wallet"
             );
