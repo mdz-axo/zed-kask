@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-11-18
+last_updated: 2026-11-26
 version: "0.45.1"
 status: "Active"
 domain: "Core"
@@ -43,7 +43,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **58 skills** are authored here and available in every zed-kask install. **215 Jinja2 templates across 53
+> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **224 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -61,17 +61,18 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (re-verified 2026-11-13)
+## Registry counts (re-verified 2026-11-26)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
-| Template namespaces (`kask/registry/templates/*/`) | **53** (**215** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**224** `.j2` templates) | Companion Jinja2 resources for `render_template` (54 skill namespaces + `docproc` [6] + `experimentation` [1]); counts come directly from the current tree. |
+| Executable Lisp gate receipts (`lisp-receipts`) | **59 / 61 skills** (**203** blocks, **288** Lisp candidates) | Verified on disk by `kask/scripts/check-skill-lisp-forms.sh` (`0` defects). The 2 skills without Lisp gates are `grill-me` (4 authored `jq -ce` filters tested by `cargo test -p agent --lib grill_`) and `program-manager` (pure operating discipline). |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
 
-**Two template populations under `kask/registry/templates/`:** Almost all `.j2` files carry the `[inference]` contract header (`contract.input` / `contract.output` terminated by `---`) validated by the agent-side `render_template` tool (`crates/agent/src/tools/render_template_tool.rs`). Two exceptions bypass standalone agent contract parsing by design: `coding-guidelines/anti-patterns.j2` is an `{% include %}`-only shared fragment, and `docproc/` is a server-rendered population loaded by `hkask-mcp-corpus` via its `HKASK_TEMPLATE_ROOT` cached `minijinja` environment (`docproc/adjudicate-passages.j2` is dual-consumed by both the corpus server and `build-corpus-pipeline`, so it carries the `[inference]` header).
+**Two template populations under `kask/registry/templates/`:** Almost all `.j2` files carry the `[inference]` contract header (`contract.input` / `contract.output` terminated by `---`) validated by the agent-side `render_template` tool (`crates/agent/src/tools/render_template_tool.rs`), including the standalone `experimentation/experiment-protocol.j2` resource. Two exceptions bypass standalone agent contract parsing by design: `coding-guidelines/anti-patterns.j2` is an `{% include %}`-only shared fragment, and `docproc/` is a server-rendered population loaded by `hkask-mcp-corpus` via its `HKASK_TEMPLATE_ROOT` cached `minijinja` environment (`docproc/adjudicate-passages.j2` is dual-consumed by both the corpus server and `build-corpus-pipeline`, so it carries the `[inference]` header).
 
 **Skills are evolving drafts (operator ruling 2026-09-26).** Every skill in `.agents/skills/`
 is available to every install and every user. Skills and templates have no release state,
@@ -82,9 +83,9 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (58)
+## Skills (61)
 
-### Capabilities you invoke (33)
+### Capabilities you invoke (35)
 
 The bench instruments — what a zed-kask user (the principal investigator) invokes for their research, coding, and creative work.
 
@@ -105,6 +106,8 @@ The bench instruments — what a zed-kask user (the principal investigator) invo
 |-------|---------|
 | `transcript-reel` | Source-linked research recordings: transcribe, correct, annotate, search lexically with citations, select highlights, render excerpts/reels, and export |
 | `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
+| `co-composition` | Human-in-the-loop co-composition for narrative fiction and expository prose: GOLEM v1.1 post-draft state extraction preserving human-authored codex lines, epistemic-leak checks (`CC-1`/`CC-2`/`CC-3`), decoupled craft review, and optional delegation to `writing-style` |
+| `story-craft` | Human-led fiction co-composition and editorial critique anchored in GOLEM v1.1, Flower & Hayes, Genette, Phelan, Reza et al., and VeriForge mixed-initiative domain discovery, with deterministic prose-budget, citation-grounding, and convergence gates |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
 
 #### Decisions, research and evidence
@@ -151,7 +154,7 @@ The bench instruments — what a zed-kask user (the principal investigator) invo
 | `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
 | `onto-anchor` | Resolve domain terms through the published-ontology fallback ladder before naming, classifying, or computing with them |
 
-### Platform machinery (agent/operator-facing) (25)
+### Platform machinery (agent/operator-facing) (26)
 
 These maintain the platform itself — the skill system, the Curator role, this fork's codebase, and this machine. They ship to every install like everything else (P5.1); this section labels their purpose, not their availability.
 
@@ -167,6 +170,7 @@ These maintain the platform itself — the skill system, the Curator role, this 
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
 | `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
+| `zk-ref-open-sync` | Synchronize the `zk-ref-open` reference-model corpus with codebase citation changes: delta census, operator D10 licensing and commentary gate, incremental purge/re-embed/reseal, and Stage 11 bundle export verification |
 
 #### Machine maintenance
 

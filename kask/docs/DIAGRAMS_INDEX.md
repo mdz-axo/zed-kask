@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-11-18
+last_updated: 2026-11-26
 version: "2.11.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,7 +10,7 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-11-18 the corpus contains **74 Mermaid fences, 74 active alignment records, and 74 registry table rows** (`check-diagram-registry-parity.sh` 1:1:1 parity): 17 records in the four consolidated diagram files and 57 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-11-26 the corpus contains **77 Mermaid fences, 77 active alignment records, and 77 registry table rows** (`check-diagram-registry-parity.sh` 1:1:1 parity): 17 records in the four consolidated diagram files and 60 inline records.
 
 Retired diagram records are retained in git history rather than as table rows (including the 8 former tombstoned IDs purged from the active table on 2026-11-18 — `DIAG-ARCH-SPEAKER-IDENT-001`, `DIAG-CAP-004` through `006`, `DIAG-RES-CHUNK-001` through `002`, and `DIAG-RES-CNS-001` through `002` — plus earlier retired diagrams removed with `hkask-event-store`, companies, portfolio, spreadsheet, and swarm surfaces). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram retains its record `DIAG-STD-001`.
 
@@ -32,7 +32,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | --- | --- | --- | --- |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-11-18 | VERIFIED |
 | `DIAG-ARCH-EUREKA-001` | [`research/experimentation-reference-model.md`](./research/experimentation-reference-model.md) | 2026-11-18 | VERIFIED |
-| `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-11-18 | VERIFIED |
+| `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-11-26 | VERIFIED |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-11-18 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-11-18 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-11-18 | VERIFIED |
@@ -83,6 +83,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RF-PM-PIPELINE-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-11-18 | VERIFIED |
 | `DIAG-RF-PM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-11-18 | VERIFIED |
 | `DIAG-SEQ-MCP-TOOL-CALL-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-11-18 | VERIFIED |
+| `DIAG-SKILL-COMPOSITION-001` | [`architecture/skills-and-composition.md`](./architecture/skills-and-composition.md) | 2026-11-26 | VERIFIED |
 | `DIAG-STATE-GOAL-LIFECYCLE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-11-18 | VERIFIED |
 | `DIAG-STATE-KANBAN-MOVE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-11-18 | VERIFIED |
@@ -104,8 +105,10 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-GRAPH` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-10-21 | VERIFIED |
 | `DIAG-VIZ-KANBAN` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-10-28 | VERIFIED |
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-10-28 | VERIFIED |
+| `DIAG-WALLET-001` | [`research/wallet-cashu-lightning-design.md`](./research/wallet-cashu-lightning-design.md) | 2026-11-26 | VERIFIED |
+| `DIAG-WALLET-002` | [`research/wallet-cashu-lightning-design.md`](./research/wallet-cashu-lightning-design.md) | 2026-11-26 | VERIFIED |
 
-Metadata-date distribution: 35 records verified 2026-11-18 during the full-corpus realignment pass, 20 at 2026-09-28, 4 at 2026-10-23, 2 each at 2026-10-14, 2026-10-22, 2026-10-28, and 2026-11-06, and 1 each at 2026-10-06, 2026-10-13, 2026-10-19, 2026-10-20, 2026-10-21, 2026-11-10, and 2026-11-13. All 74 active records carry `status: VERIFIED`.
+Metadata-date distribution: 4 records verified 2026-11-26 (skill inventory/composition + wallet design diagrams), 34 records verified 2026-11-18 during the full-corpus realignment pass, 20 at 2026-09-28, 4 at 2026-10-23, 2 each at 2026-10-14, 2026-10-22, 2026-10-28, and 2026-11-06, and 1 each at 2026-10-06, 2026-10-13, 2026-10-19, 2026-10-20, 2026-10-21, 2026-11-10, and 2026-11-13. All 77 active records carry `status: VERIFIED`.
 
 ## Preserved memory diagrams
 

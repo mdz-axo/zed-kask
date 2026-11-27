@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-11-18
+last_updated: 2026-11-26
 version: "1.3.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -501,7 +501,7 @@ flowchart TD
     end
     subgraph Propose
         P1[skill-maintenance proposal - board card]
-        P2[curator_directive evolve_mcp_tool_schema - reg.cybernetics]
+        P2[delegated kanban task - schema evolution]
         P3[memory_insert / therapy - lessons and reification]
     end
     subgraph Execute["Execute and verify"]
@@ -524,7 +524,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-LEARNING-LOOP-001
-verified_date: 2026-11-18
+verified_date: 2026-11-26
 verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/agent.rs; crates/agent/src/thread.rs; crates/agent/src/kask_thread_state.rs; crates/zed/src/main.rs; kask/crates/kask_bridge/src/memory/curator_stores.rs; kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs; kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs; kask/crates/hkask-regulation/src/metacognition.rs; crates/agent/src/curator_agent_server.rs
 status: VERIFIED
 -->
@@ -536,7 +536,7 @@ status: VERIFIED
 | Observe | `curator_report_skill_use_issue` | `skill_use_issue:<skill>` h_mem with `failure_origin` | Curator, unprompted |
 | Observe | native `kanban_goal_close` | Retained human choice, blinded findings and optional forecast projection (D58) | human ActionChoice; host drainer |
 | Evaluate | `algedonic-review` (triage, then gemba walk) | one Algedonic review board + `reg.skill.<id>.operator_feedback` | operator with Curator |
-| Propose | `skill-maintenance`, `curator_directive` `evolve_mcp_tool_schema`, `memory_insert` / `therapy` | proposal card, `reg.cybernetics`, curator memory | Curator / agent |
+| Propose | `skill-maintenance`, delegated kanban task (schema evolution), `memory_insert` / `therapy` | proposal card, kanban task, curator memory | Curator / agent |
 | Execute | same card assigned or delegated to a spawned agent | card comments and deliverables | delegated agent |
 | Verify | `kanban_task_verify` in Review | evidence on card, then Done; unverified stays open | operator or Curator under recorded grant |
 

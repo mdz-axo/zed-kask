@@ -69,6 +69,13 @@ graph TD
     Editor --> NwcWallet
 ```
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-WALLET-001
+verified_date: 2026-11-26
+verified_against: kask/mcp-servers/hkask-mcp-wallet/src/hkask_mcp_wallet.rs; kask/crates/kask_bridge/src/credentials.rs:128-170
+status: VERIFIED
+-->
+
 ### 3.2 Keychain & Custody Split (`kask_bridge::credentials`)
 
 Mirroring `NOSTR_NCRYPTSEC_CREDENTIAL_URL` and `NOSTR_PASSWORD_CREDENTIAL_URL` (`kask/crates/kask_bridge/src/credentials.rs:128-170`), wallet secrets live exclusively in dedicated OS keychain slots that **never** enter `DATA_SERVICES` or `credential_urls_for_mcp()`:
@@ -172,6 +179,13 @@ stateDiagram-v2
     Reconciling --> Reclaimed: NUT-07 Unspent -> Unlock Proofs + Refund Budget
     Pending --> Failed: Explicit Mint/NWC Rejection -> Unlock Proofs + Refund Budget
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-WALLET-002
+verified_date: 2026-11-26
+verified_against: kask/mcp-servers/hkask-mcp-wallet/src/hkask_mcp_wallet.rs
+status: VERIFIED
+-->
 
 ---
 

@@ -318,13 +318,13 @@ Everything hKask lives under one top-level dir so "ours" is isolated from "upstr
 
 ```
 zed-kask/
-├── .agents/skills/    # 58 executable SKILL.md specifications
+├── .agents/skills/    # 61 executable SKILL.md specifications
 ├── crates/            # upstream zed + isolated D-seam edits
 ├── extensions/        # upstream
 └── kask/              # ── OURS (additive; upstream never touches here) ──
     ├── crates/        # 23 crates (21 hkask-* + dme-harness + kask_bridge)
     ├── mcp-servers/   # the 12 on-disk servers (264 tools; curator may be unloaded via override)
-    ├── registry/      # 53 prompt-template directories (215 .j2 templates) under registry/templates/
+    ├── registry/      # 56 prompt-template directories (224 .j2 templates) under registry/templates/
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts
     └── docs/          # ← documentation home (see 14.3)
 ```

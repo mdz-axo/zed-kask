@@ -18,7 +18,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 16 retained artifacts across 8 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference (that set was later deleted with its crate on 2026-11-07, commit `9b6b648a20`); `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-11-19):** 71 Markdown documents and one live YAML inventory, 72 files total under `find kask/docs -type f | wc -l` — the recorded count for the §3 condensation discipline, checked voluntarily with `kask/scripts/check-docs-count-gate.sh` (advisory agent tool; unwired from push/CI enforcement by operator mandate 2026-10-31 — nothing blocks a push or fails CI on this number) — under both the formal **fewer-than-85** cap and the **75-file working target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-11-26):** 72 Markdown documents, one live YAML inventory, and 10 reference PDFs under `fish-papers/`, 83 files total under `find kask/docs -type f | wc -l` — the recorded count for the §3 condensation discipline, checked voluntarily with `kask/scripts/check-docs-count-gate.sh` (advisory agent tool; unwired from push/CI enforcement by operator mandate 2026-10-31 — nothing blocks a push or fails CI on this number) — under the formal **fewer-than-85** cap (working target 75; cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -65,7 +65,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration, economic data, EQM, and Decisions API MCDA (28 tools). |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web retrieval, evidence scoring, run ledger, and paper identity (11 tools). |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline and equity forecast loop (22 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 58 skills, 53 template namespaces, and 215 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 61 skills, 56 template namespaces, and 224 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops with audit verdicts, three-layer (A/B/C) classifications, INV1–INV6 alignment verdicts, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
@@ -78,7 +78,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 74 current `DIAGRAM_ALIGNMENT` records representing 74 unique IDs; 17 records are in the four consolidated diagram files and 57 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 77 current `DIAGRAM_ALIGNMENT` records representing 77 unique IDs; 17 records are in the four consolidated diagram files and 60 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → progress → human closure → assessment → current recall). |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures and prediction-markets pipeline. |
@@ -103,7 +103,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Internal links target retained documents — zero broken relative links across all 69 Markdown files.
 - [x] Diagram metadata has unique-ID/location registry parity (74 records, tree-verified 2026-11-18).
 - [x] Citations use full repository-relative paths with `@symbol` anchors where resolvable (`0 rotted`, `0 line-drift warnings`, `0 ambiguous-name warnings`, `0 @sym mismatches`, 2026-11-18).
-- [x] Document count is 72 in the working tree (measured 2026-11-19: 71 Markdown plus the live `principle-constraints.yaml`), under both the fewer-than-85 cap and the 75-file working target.
+- [x] Document count is 83 in the working tree (measured 2026-11-26: 72 Markdown, 1 live `principle-constraints.yaml`, and 10 reference PDFs under `fish-papers/`), under the fewer-than-85 cap (working target 75).
 
 ## See also
 

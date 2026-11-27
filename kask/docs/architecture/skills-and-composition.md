@@ -1,7 +1,7 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-11-18
+last_updated: 2026-11-26
 version: "2.4.0"
 status: "Active"
 domain: "architecture"
@@ -505,10 +505,13 @@ Invoke the skill-listing surface from the agent panel. The output shows the skil
 
 ### Skill Auditing
 
-Run a dual-layer audit to check skill health through the skill maintenance tooling or agent panel. The audit checks:
-- `SKILL.md` presence and frontmatter validity
-- Template crate existence (if the skill body references `render_template`)
-- Content consistency between SKILL.md and any companion template crates
+Run the on-disk skill verification suite to check all **61 skills** and **224 `.j2` templates** (59/61 skills carry **203** executable `lisp-receipts` blocks across **288** Lisp candidates; the 2 non-Lisp skills are `grill-me` with 4 cargo-tested `jq -ce` filters and `program-manager`):
+- `kask/scripts/check-skill-lisp-forms.sh` — parses every Lisp candidate and evaluates every `lisp-receipts` block against `hkask-lisp`
+- `kask/scripts/check-skill-crossrefs.sh` — verifies skill↔template and retired-skill cross-references
+- `kask/scripts/check-skill-crate-refs.sh` — verifies crate references against the workspace
+- `kask/scripts/audit/skill-corpus-contract-audit.sh` — validates `[inference]` headers on standalone `.j2` templates
+- `kask/scripts/audit/skill-corpus-prescreen.sh` — enforces D/P labelling, D regime markers, and initial/target condition statements
+- `kask/scripts/audit/skill-corpus-s9-s10-sweep.sh` — sweeps S9/S10 structural constraints across all 61 `SKILL.md` files
 
 ---
 
@@ -635,6 +638,65 @@ A skill body may describe convergence criteria. The model self-iterates:
 5. If convergence is reached, produces the final output
 
 The convergence signal is typically produced by a `lisp_eval` call that deterministically computes a gap score from the model's output. The model reads the score and decides whether to iterate.
+
+### Skill Inventory and Composition Topology (61 Skills)
+
+Orchestrator and meta-skills compose peer skills by invoking them through the `skill` tool or delegating isolated sub-tasks via `spawn_agent`, while sharing `render_template` (224 `.j2` resources across 56 namespaces) and `lisp_eval` (59/61 skills with 203 executable `lisp-receipts` blocks) as deterministic scaffolding:
+
+```mermaid
+flowchart TD
+    subgraph Discovery["Discovery & Bundling"]
+        tb["task-breakdown"] --> sd["skill-discovery"]
+        mc["metacognition"] --> sd
+        sb["skill-bundler"]
+    end
+
+    subgraph Science["Research & Hypothesis Orchestration"]
+        ec["eureka-cycle"] --> ht["hypothesis-testing"]
+        ec --> sf["superforecasting"]
+        ec --> sp["scenario-planning"]
+        ht --> hf["hypothesis-framer"]
+        ht --> fal["falsifiability"]
+        ht --> ed["experimental-design"]
+        ht --> gv["grounding-verify"]
+    end
+
+    subgraph Engineering["Engineering & Audit Composition"]
+        ra["refactor-architecture"] --> tdd["tdd"]
+        ra --> cg["coding-guidelines"]
+        ra --> dm["deep-module"]
+        ra --> ps["pragmatic-semantics"]
+        ksa["kask-seam-audit"] --> ra
+        ksa --> ess["essentialist"]
+        ksa --> cr["code-review"]
+        vc["verification-compression"] --> lp["lean-prover"]
+        vc --> fal
+        vc --> ess
+        diag["diagnose"] --> fal
+        pm["product-manager"] --> pgm["program-manager"]
+    end
+
+    subgraph Prose["Prose & Co-Composition"]
+        cc["co-composition"] --> ws["writing-style"]
+        sc["story-craft"] --> ws
+        sc --> gv
+    end
+
+    subgraph Governance["Governance & Learning Loop"]
+        ar["algedonic-review"]
+        sm["skill-maintenance"] --> ar
+        si["self-improvement"] --> ar
+        si --> ki["kata-improvement"]
+        th["therapy"] --> sm
+    end
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-SKILL-COMPOSITION-001
+verified_date: 2026-11-26
+verified_against: .agents/skills/eureka-cycle/SKILL.md; .agents/skills/hypothesis-testing/SKILL.md; .agents/skills/refactor-architecture/SKILL.md; .agents/skills/kask-seam-audit/SKILL.md; .agents/skills/verification-compression/SKILL.md; .agents/skills/co-composition/SKILL.md; .agents/skills/story-craft/SKILL.md; .agents/skills/skill-discovery/SKILL.md; .agents/skills/skill-bundler/SKILL.md; .agents/skills/self-improvement/SKILL.md; .agents/skills/algedonic-review/SKILL.md; kask/scripts/check-skill-lisp-forms.sh
+status: VERIFIED
+-->
 
 ### Composition Principles for Skill Design
 
