@@ -113,16 +113,18 @@ If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `wr
    verbatim is reported unvalidated, never pretended measured. Run it when
    the operator asks for authenticity and the turn may be rewritten.
 4. **Gate `WS-2` (D — `lisp_eval` verbatim technical-content check):** Verify that every item in the `technical_content` array appears verbatim in `styled_reply` using `string-contains` (needle first, haystack second — replaces self-reported `technical_verbatim`):
-   - form: `(begin (define all-present (lambda (items reply) (if (is_null items) true (and (stringp (car items)) (<= (length (car items)) (length reply)) (string-contains (car items) reply) (all-present (cdr items) reply))))) (and (listp technical_content) (stringp styled_reply) (all-present technical_content styled_reply)))`
+   - form: `(begin (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (define all-present (lambda (items reply) (if (is_null items) true (and (stringp (car items)) (<= (length (car items)) (length reply)) (string-contains (car items) reply) (all-present (cdr items) reply))))) (and (is-array technical_content) (stringp styled_reply) (all-present technical_content styled_reply)))`
    - env: `{ "technical_content": <array of technical strings>, "styled_reply": <restyled reply string> }`
    - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
      ```lisp-receipts
      {"gate":"WS-2","case":"all-present","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"Run cargo test on src/lib.rs."},"expected":true}
+     {"gate":"WS-2","case":"empty-technical-content","env":{"technical_content":[],"styled_reply":"Run cargo test."},"expected":true}
+     {"gate":"WS-2","case":"null-technical-content-refused","env":{"technical_content":null,"styled_reply":"Run cargo test."},"expected":false}
      {"gate":"WS-2","case":"missing-token","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"Run cargo test."},"expected":false}
      {"gate":"WS-2","case":"short-ascii-reply","env":{"technical_content":["cargo test","src/lib.rs"],"styled_reply":"short"},"expected":false}
      {"gate":"WS-2","case":"non-string-reply","env":{"technical_content":["cargo test"],"styled_reply":null},"expected":false}
      ```
-   Known `hkask-lisp` boundaries: `length` counts Unicode characters while `string-contains` compares UTF-8 byte lengths, so the length pre-check prevents short-reply crashes for ASCII tokens while a multi-byte UTF-8 token longer in bytes than `styled_reply` still surfaces a runtime error (blocking delivery visibly, never failing open); and JSON `null` and `[]` both map to Lisp `nil`, so callers must supply a non-null `technical_content` array when tokens are present. If `WS-2` returns `false`, restore the corrupted technical token from `draft_reply` and re-run `WS-2` before sending.
+   Known `hkask-lisp` boundary: `length` counts Unicode characters while `string-contains` compares UTF-8 byte lengths, so the length pre-check prevents short-reply crashes for ASCII tokens while a multi-byte UTF-8 token longer in bytes than `styled_reply` still surfaces a runtime error (blocking delivery visibly, never failing open). If `WS-2` returns `false`, restore the corrupted technical token from `draft_reply` and re-run `WS-2` before sending.
 5. Style off: the operator says so, or the session ends. Like adhd-mode,
    the style applies to output shape, never to technical content —
    facts, code, file paths stay verbatim under any voice.
