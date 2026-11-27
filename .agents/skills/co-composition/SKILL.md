@@ -159,27 +159,41 @@ a single unseparated pass.
    - form:
      ```lisp
      (begin
-       (define known-by (lambda (ch f ch_idx ks)
-         (cond ((is_null ks) false)
-               ((and (string= ch (assoc "character" (car ks)))
-                     (string= f (assoc "fact" (car ks)))
-                     (<= (assoc "acquired_chapter" (car ks)) ch_idx)) true)
-               (t (known-by ch f ch_idx (cdr ks))))))
-       (define find-leaks (lambda (refs ks)
-         (cond ((is_null refs) (list))
-               ((known-by (assoc "character" (car refs))
-                          (assoc "fact" (car refs))
-                          (assoc "chapter_index" (car refs)) ks)
-                (find-leaks (cdr refs) ks))
-               (t (cons (car refs) (find-leaks (cdr refs) ks))))))
-       (let ((leaks (find-leaks epistemic_references knowledge_timeline)))
-         (list (list "open_findings" (length leaks))
-               (list "leaks" leaks))))
+       (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x))))))
+       (if (or (not (is-array epistemic_references)) (not (is-array knowledge_timeline)))
+         (list (list "open_findings" 1) (list "leaks" (list "invalid_inputs")))
+         (begin
+           (define known-by (lambda (ch f ch_idx ks)
+             (cond ((is_null ks) false)
+                   ((and (listp (car ks))
+                         (stringp (assoc "character" (car ks)))
+                         (stringp (assoc "fact" (car ks)))
+                         (numberp (assoc "acquired_chapter" (car ks)))
+                         (string= ch (assoc "character" (car ks)))
+                         (string= f (assoc "fact" (car ks)))
+                         (<= (assoc "acquired_chapter" (car ks)) ch_idx)) true)
+                   (t (known-by ch f ch_idx (cdr ks))))))
+           (define find-leaks (lambda (refs ks)
+             (cond ((is_null refs) (list))
+                   ((and (listp (car refs))
+                         (stringp (assoc "character" (car refs)))
+                         (stringp (assoc "fact" (car refs)))
+                         (numberp (assoc "chapter_index" (car refs)))
+                         (known-by (assoc "character" (car refs))
+                                   (assoc "fact" (car refs))
+                                   (assoc "chapter_index" (car refs)) ks))
+                    (find-leaks (cdr refs) ks))
+                   (t (cons (car refs) (find-leaks (cdr refs) ks))))))
+           (let ((leaks (find-leaks epistemic_references knowledge_timeline)))
+             (list (list "open_findings" (length leaks))
+                   (list "leaks" leaks))))))
      ```
    - receipts:
      ```lisp-receipts
 {"gate":"CC-1","case":"no-leak","env":{"epistemic_references":[{"character":"Mara","fact":"ledger_pawned","chapter_index":3}],"knowledge_timeline":[{"character":"Mara","fact":"ledger_pawned","acquired_chapter":2}]},"expected":{"open_findings":0,"leaks":[]}}
 {"gate":"CC-1","case":"epistemic-leak-detected","env":{"epistemic_references":[{"character":"Elias","fact":"ledger_pawned","chapter_index":2}],"knowledge_timeline":[{"character":"Mara","fact":"ledger_pawned","acquired_chapter":1}]},"expected":{"open_findings":1,"leaks":[{"character":"Elias","fact":"ledger_pawned","chapter_index":2}]}}
+{"gate":"CC-1","case":"malformed-ref-entry","env":{"epistemic_references":["bad",{"character":"Mara","fact":"ledger_pawned","chapter_index":3}],"knowledge_timeline":[{"character":"Mara","fact":"ledger_pawned","acquired_chapter":2}]},"expected":{"open_findings":1,"leaks":["bad"]}}
+{"gate":"CC-1","case":"null-inputs","env":{"epistemic_references":null,"knowledge_timeline":[]},"expected":{"open_findings":1,"leaks":["invalid_inputs"]}}
      ```
 
 2. **Gate `CC-2` (D — Human-line preservation guard):** Verify via `lisp_eval`
@@ -188,19 +202,33 @@ a single unseparated pass.
    - form:
      ```lisp
      (begin
+       (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x))))))
        (define all-preserved (lambda (lines doc)
          (if (is_null lines) true
-             (and (string-contains (car lines) doc)
+             (and (stringp (car lines))
+                  (<= (length (car lines)) (length doc))
+                  (string-contains (car lines) doc)
                   (all-preserved (cdr lines) doc)))))
-       (all-preserved human_authored_lines updated_codex_markdown))
+       (and (is-array human_authored_lines)
+            (stringp updated_codex_markdown)
+            (all-preserved human_authored_lines updated_codex_markdown)))
      ```
    - receipts:
      ```lisp-receipts
 {"gate":"CC-2","case":"human-line-preserved","env":{"human_authored_lines":["- Mara never trusts harbor officials."],"updated_codex_markdown":"# Mara\n- Mara never trusts harbor officials.\n- ch 2 | location: Harbor"},"expected":true}
 {"gate":"CC-2","case":"human-line-dropped","env":{"human_authored_lines":["- Mara never trusts harbor officials."],"updated_codex_markdown":"# Mara\n- ch 1 | status: harbor-bound\n- ch 2 | location: Harbor"},"expected":false}
+{"gate":"CC-2","case":"null-human-lines","env":{"human_authored_lines":null,"updated_codex_markdown":"# Mara"},"expected":false}
+{"gate":"CC-2","case":"empty-human-lines","env":{"human_authored_lines":[],"updated_codex_markdown":"# Mara"},"expected":true}
+{"gate":"CC-2","case":"short-ascii-codex","env":{"human_authored_lines":["- Mara never trusts harbor officials."],"updated_codex_markdown":"short"},"expected":false}
+{"gate":"CC-2","case":"non-string-codex","env":{"human_authored_lines":["- Mara never trusts harbor officials."],"updated_codex_markdown":null},"expected":false}
      ```
-   If `CC-2` returns `false`, **refuse the codex write**, restore the missing
-   human lines, and re-run `CC-2`.
+   Known `hkask-lisp` boundary: `length` counts Unicode characters while
+   `string-contains` compares UTF-8 byte lengths, so the length pre-check
+   prevents short-codex crashes for ASCII lines while a multi-byte UTF-8 line
+   longer in bytes than `updated_codex_markdown` still surfaces a runtime
+   error (blocking the write visibly, never failing open). If `CC-2` returns
+   `false`, **refuse the codex write**, restore the missing human lines, and
+   re-run `CC-2`.
 
 ### Stage 5 — Decoupled Craft Review
 
@@ -226,13 +254,16 @@ preservation failure counted as `1`) and the 1-based `iteration` count:
 
 - form:
   ```lisp
-  (if (= open_findings 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate)))
+  (if (or (not (numberp open_findings)) (< open_findings 0) (not (numberp iteration)) (< iteration 1))
+    (quote invalid_inputs)
+    (if (= open_findings 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate))))
   ```
 - receipts:
   ```lisp-receipts
 {"gate":"CC-3","case":"clean-done","env":{"open_findings":0,"iteration":1},"expected":"done"}
 {"gate":"CC-3","case":"iterate-on-findings","env":{"open_findings":1,"iteration":1},"expected":"iterate"}
 {"gate":"CC-3","case":"stop-at-bound","env":{"open_findings":1,"iteration":3},"expected":"stop-and-report"}
+{"gate":"CC-3","case":"negative-open-findings","env":{"open_findings":-1,"iteration":1},"expected":"invalid_inputs"}
   ```
 
 - `done`: deliver the updated codex and accepted local edits.

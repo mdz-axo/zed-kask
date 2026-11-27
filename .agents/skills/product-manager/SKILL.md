@@ -167,7 +167,29 @@ durable decisions recorded in the curator's memory.
    for their ratification — per the spec-loss rule.
 4. Record the delivered requirement in the operator's words as the
    `goal_text` when the goal loop is active.
-5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? Verify intake completeness and the 2-round bound deterministically in `lisp_eval` (`PMB-1`: `(and (= missing_count 0) (>= criteria_count 2) (<= criteria_count 4) (not (string= requirement "")) (not (string= spec_provenance "")) (<= rounds_used 2))` and `PMB-2`: `(if (= missing_count 0) (and (not (string= requirement "")) (not (string= spec_provenance "")) (>= criteria_count 2)) true)`). If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
+5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? Verify intake completeness and the 2-round bound deterministically in `lisp_eval`:
+   - `PMB-1` (intake completeness & 2-round bound):
+     - form: `(and (numberp missing_count) (numberp criteria_count) (numberp rounds_used) (= missing_count 0) (>= criteria_count 2) (<= criteria_count 4) (stringp requirement) (> (length requirement) 0) (stringp spec_provenance) (> (length spec_provenance) 0) (>= rounds_used 0) (<= rounds_used 2))`
+     - env: `{"missing_count": <int>, "criteria_count": <int>, "requirement": "<confirmed requirement>", "spec_provenance": "<spec pointer or 'no spec exists'>", "rounds_used": <int 0..2>}`
+     - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+       ```lisp-receipts
+       {"gate":"PMB-1","case":"pass","env":{"missing_count":0,"criteria_count":2,"requirement":"Export SRT","spec_provenance":"no spec exists","rounds_used":1},"expected":true}
+       {"gate":"PMB-1","case":"null-requirement","env":{"missing_count":0,"criteria_count":2,"requirement":null,"spec_provenance":"no spec exists","rounds_used":1},"expected":false}
+       {"gate":"PMB-1","case":"too-many-rounds","env":{"missing_count":0,"criteria_count":2,"requirement":"Export SRT","spec_provenance":"no spec exists","rounds_used":3},"expected":false}
+       {"gate":"PMB-1","case":"criteria-out-of-range","env":{"missing_count":0,"criteria_count":1,"requirement":"Export SRT","spec_provenance":"no spec exists","rounds_used":1},"expected":false}
+       ```
+   - `PMB-2` (improvised-requirement refusal floor):
+     - form: `(and (numberp missing_count) (>= missing_count 0) (if (= missing_count 0) (and (stringp requirement) (> (length requirement) 0) (stringp spec_provenance) (> (length spec_provenance) 0) (numberp criteria_count) (>= criteria_count 2) (<= criteria_count 4)) true))`
+     - env: `{"missing_count": <int>, "criteria_count": <int>, "requirement": "<requirement>", "spec_provenance": "<spec provenance>"}`
+     - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+       ```lisp-receipts
+       {"gate":"PMB-2","case":"complete-pass","env":{"missing_count":0,"criteria_count":2,"requirement":"Export SRT","spec_provenance":"no spec exists"},"expected":true}
+       {"gate":"PMB-2","case":"incomplete-allowed","env":{"missing_count":2,"criteria_count":0,"requirement":null,"spec_provenance":null},"expected":true}
+       {"gate":"PMB-2","case":"inconsistent-empty-requirement","env":{"missing_count":0,"criteria_count":2,"requirement":"","spec_provenance":"no spec exists"},"expected":false}
+       {"gate":"PMB-2","case":"criteria-above-four","env":{"missing_count":0,"criteria_count":5,"requirement":"Export SRT","spec_provenance":"no spec exists"},"expected":false}
+       {"gate":"PMB-2","case":"string-missing-count","env":{"missing_count":"0","criteria_count":2,"requirement":"Export SRT","spec_provenance":"no spec exists"},"expected":false}
+       ```
+   If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
 
 ## Regression case
 
@@ -193,6 +215,10 @@ All receipts executed live (2026-10-01, batch-13 audit):
 
 Template context variables (from the template's `[inference]` contract):
 - `intake-brief.j2` inputs: `requirement`, `spec_provenance`, `acceptance_criteria`, `constraints`, `standing_rules`; output: `missing_fields` — the one-round question set
+
+Copyable `render_template` context:
+
+- `product-manager/intake-brief`: `{"requirement": "Users can export transcripts as SRT captions", "spec_provenance": "no spec exists — design with the operator", "acceptance_criteria": ["Exported SRT parses in VLC", "Timestamps match word timings within 50ms"], "constraints": ["Do not alter source audio"], "standing_rules": ["Fix root causes"]}`
 
 ## Constraints
 

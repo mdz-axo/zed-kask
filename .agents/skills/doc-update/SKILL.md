@@ -92,7 +92,16 @@ citations were not re-checked is unverified recomposition.
    `kask/registry/templates/doc-update/triage.j2` — templates are registry
    resources, NOT files next to SKILL.md). FOLD rows name their successor doc.
 4. Never fold without a successor named. Git history is the content
-   archive. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
+   archive. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1:
+   - form: `(and (numberp count_before) (numberp count_after) (numberp deleted_or_folded) (numberp successorless_folds) (>= count_before 0) (>= count_after 0) (>= deleted_or_folded 0) (>= successorless_folds 0) (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`
+   - env: `{"count_before": <int>, "count_after": <int>, "deleted_or_folded": <int>, "successorless_folds": <int>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"DU-1","case":"pass","env":{"count_before":78,"count_after":75,"deleted_or_folded":3,"successorless_folds":0},"expected":true}
+     {"gate":"DU-1","case":"over-cap","env":{"count_before":88,"count_after":85,"deleted_or_folded":3,"successorless_folds":0},"expected":false}
+     {"gate":"DU-1","case":"successorless-fold","env":{"count_before":78,"count_after":75,"deleted_or_folded":3,"successorless_folds":1},"expected":false}
+     {"gate":"DU-1","case":"negative-count-after","env":{"count_before":0,"count_after":-1,"deleted_or_folded":1,"successorless_folds":0},"expected":false}
+     ```
 
 ### Phase 1 — Ground (per docs-set, one pass each)
 
@@ -196,11 +205,17 @@ Run every gate; all must pass before the pass is done:
 
 Convergence check — call `lisp_eval` with the gate results:
 
+```lisp
+(and (eq count_ok true) (eq links_ok true) (eq citations_ok true) (eq frontmatter_ok true) (eq no_deleted_ok true))
 ```
-form: "(and count_ok links_ok citations_ok frontmatter_ok no_deleted_ok)"
-env:  { "count_ok": <true|false>, "links_ok": <true|false>,
-        "citations_ok": <true|false>, "frontmatter_ok": <true|false>,
-        "no_deleted_ok": <true|false> }
+
+env: `{ "count_ok": <true|false>, "links_ok": <true|false>, "citations_ok": <true|false>, "frontmatter_ok": <true|false>, "no_deleted_ok": <true|false> }`
+
+```lisp-receipts
+{"gate":"phase-6-convergence","case":"all-green","env":{"count_ok":true,"links_ok":true,"citations_ok":true,"frontmatter_ok":true,"no_deleted_ok":true},"expected":true}
+{"gate":"phase-6-convergence","case":"citations-failed","env":{"count_ok":true,"links_ok":true,"citations_ok":false,"frontmatter_ok":true,"no_deleted_ok":true},"expected":false}
+{"gate":"phase-6-convergence","case":"string-false-boolean","env":{"count_ok":"false","links_ok":true,"citations_ok":true,"frontmatter_ok":true,"no_deleted_ok":true},"expected":false}
+{"gate":"phase-6-convergence","case":"null-gate","env":{"count_ok":true,"links_ok":null,"citations_ok":true,"frontmatter_ok":true,"no_deleted_ok":true},"expected":false}
 ```
 
 If any gate is false, re-enter the failing phase. Do not end the pass with a
@@ -234,6 +249,10 @@ the doc's claims (mark unverified), never silently pass them through.
 
 Template context variables (from the template's `[inference]` contract):
 - `triage.j2`: `date`, `count_before`, `count_after`, `triage_rows` (each row: `path`, `role`, `reason`, `successor_or_none`), `fold_rows` (each row: `source`, `section`, `content`, `links`)
+
+Copyable `render_template` context:
+
+- `doc-update/triage`: `{"date": "2026-11-26", "count_before": 78, "count_after": 75, "triage_rows": [{"path": "kask/docs/old.md", "role": "DELETE", "reason": "superseded", "successor_or_none": "none"}], "fold_rows": []}`
 
 ## Constraints
 
