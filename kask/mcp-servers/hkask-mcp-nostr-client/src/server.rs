@@ -73,6 +73,8 @@ const RELAY_SCOPE_WITH_SEARCH: &str = "Read from the local relay, the seed relay
 
 const RELAY_SCOPE_WITH_OUTBOX_AND_SEARCH: &str = "Read from the local relay, the seed relays, opt-in NIP-65 outbox write relays (role \"outbox\"), and the operator's NIP-51 search relays (kind: 10007, role \"search\").";
 
+const RELAY_SCOPE_SCOPED: &str = "Read from the caller-specified scoped relays only (marked role \"scoped\" in relays). Local and seed relays were not contacted.";
+
 hkask_mcp_server::mcp_server!(
     pub struct NostrClientServer {
         pub config: Arc<Config>,
@@ -128,6 +130,13 @@ pub struct FetchEventsRequest {
     /// NIP-51 search relay list (up to 8 SSRF-validated public `wss://` relays).
     #[serde(default)]
     pub search: Option<String>,
+    /// Optional explicit relay scope (1–8 public `wss://` relay URLs). When
+    /// non-empty, reads exclusively from these relays (role `"scoped"`) without
+    /// contacting the local or seed relays, and relaxes the requirement to name
+    /// an author/id/reference/search so a niche relay can be browsed directly.
+    /// Mutually exclusive with `use_outbox: true`.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
 }
 
 /// Request for `nostr_publish_highlight`: publish a NIP-84 `kind: 9802`
@@ -586,11 +595,15 @@ fn npub_of(public_key: &PublicKey) -> String {
 
 /// What the tools say about where an answer came from.
 fn sources(session: &Session, reading: &Reading) -> Value {
-    let relay_scope = match (session.has_outbox_relays(), session.has_search_relays()) {
-        (true, true) => RELAY_SCOPE_WITH_OUTBOX_AND_SEARCH,
-        (true, false) => RELAY_SCOPE_WITH_OUTBOX,
-        (false, true) => RELAY_SCOPE_WITH_SEARCH,
-        (false, false) => RELAY_SCOPE,
+    let relay_scope = if session.is_scoped() {
+        RELAY_SCOPE_SCOPED
+    } else {
+        match (session.has_outbox_relays(), session.has_search_relays()) {
+            (true, true) => RELAY_SCOPE_WITH_OUTBOX_AND_SEARCH,
+            (true, false) => RELAY_SCOPE_WITH_OUTBOX,
+            (false, true) => RELAY_SCOPE_WITH_SEARCH,
+            (false, false) => RELAY_SCOPE,
+        }
     };
     json!({
         "relays": reading.relays,
@@ -904,13 +917,37 @@ impl NostrClientServer {
                     "search: query must be at most 200 characters",
                 ));
             }
+            let raw_relays = request.relays.as_deref().unwrap_or_default();
+            if raw_relays.len() > 8 {
+                return Err(McpToolError::invalid_argument(
+                    "relays: at most 8 scoped relays may be queried at once",
+                ));
+            }
+            let mut scoped_relays: Vec<RelayUrl> = Vec::new();
+            for (idx, entry) in raw_relays.iter().enumerate() {
+                let url = validate_relay_address(entry, BUILD_ADDRESS_POLICY).map_err(|error| {
+                    McpToolError::invalid_argument(format!(
+                        "relays[{}]: {error}",
+                        idx + 1
+                    ))
+                })?;
+                if !scoped_relays.contains(&url) {
+                    scoped_relays.push(url);
+                }
+            }
+            if !scoped_relays.is_empty() && request.use_outbox.unwrap_or(false) {
+                return Err(McpToolError::invalid_argument(
+                    "relays and use_outbox: true are mutually exclusive; omit relays to use NIP-65 outbox routing",
+                ));
+            }
             if authors.is_empty()
                 && ids.is_empty()
                 && references.is_empty()
                 && search_query.is_none()
+                && scoped_relays.is_empty()
             {
                 return Err(McpToolError::invalid_argument(
-                    "name at least one author, one event id, one referenced event, or a NIP-50 search query; this tool does not read a relay's whole stream",
+                    "name at least one author, one event id, one referenced event, a NIP-50 search query, or explicit scoped relays; this tool does not read default relays' whole streams",
                 ));
             }
             let kinds = request.kinds.as_deref().unwrap_or_default();
@@ -955,46 +992,57 @@ impl NostrClientServer {
                 filter = filter.search(q);
             }
 
-            let use_outbox = request.use_outbox.unwrap_or(false) && !outbox_authors.is_empty();
-            let mut session = self.open_session().await?;
-            let outbox_relays_contacted = if use_outbox {
-                let rl_filter = Filter::new()
-                    .kind(Kind::RelayList)
-                    .authors(outbox_authors.iter().copied())
-                    .limit(outbox_authors.len().saturating_mul(2).max(4));
-                let rl_reading = session.read(&[rl_filter], 64).await;
-                let extra = extract_validated_outbox_relays(
-                    &rl_reading.events,
-                    BUILD_ADDRESS_POLICY,
-                    8,
-                );
-                session.extend_with_relays(&extra, Role::Outbox).await
+            let (session, outbox_relays_contacted, search_relays_contacted) = if !scoped_relays
+                .is_empty()
+            {
+                (
+                    Session::open_scoped(&scoped_relays).await,
+                    Vec::new(),
+                    Vec::new(),
+                )
             } else {
-                Vec::new()
-            };
-            let search_relays_contacted = if has_search {
-                if let Identity::Configured { public_key, .. } = &self.config.identity {
-                    if let Ok(owner_pk) = PublicKey::from_slice(public_key) {
-                        let sr_filter = Filter::new()
-                            .kind(Kind::Custom(10007))
-                            .author(owner_pk)
-                            .limit(4);
-                        let sr_reading = session.read(&[sr_filter], 8).await;
-                        let extra = extract_validated_search_relays(
-                            &sr_reading.events,
-                            owner_pk,
-                            BUILD_ADDRESS_POLICY,
-                            8,
-                        );
-                        session.extend_with_relays(&extra, Role::Search).await
+                let use_outbox = request.use_outbox.unwrap_or(false) && !outbox_authors.is_empty();
+                let mut session = self.open_session().await?;
+                let outbox_relays_contacted = if use_outbox {
+                    let rl_filter = Filter::new()
+                        .kind(Kind::RelayList)
+                        .authors(outbox_authors.iter().copied())
+                        .limit(outbox_authors.len().saturating_mul(2).max(4));
+                    let rl_reading = session.read(&[rl_filter], 64).await;
+                    let extra = extract_validated_outbox_relays(
+                        &rl_reading.events,
+                        BUILD_ADDRESS_POLICY,
+                        8,
+                    );
+                    session.extend_with_relays(&extra, Role::Outbox).await
+                } else {
+                    Vec::new()
+                };
+                let search_relays_contacted = if has_search {
+                    if let Identity::Configured { public_key, .. } = &self.config.identity {
+                        if let Ok(owner_pk) = PublicKey::from_slice(public_key) {
+                            let sr_filter = Filter::new()
+                                .kind(Kind::Custom(10007))
+                                .author(owner_pk)
+                                .limit(4);
+                            let sr_reading = session.read(&[sr_filter], 8).await;
+                            let extra = extract_validated_search_relays(
+                                &sr_reading.events,
+                                owner_pk,
+                                BUILD_ADDRESS_POLICY,
+                                8,
+                            );
+                            session.extend_with_relays(&extra, Role::Search).await
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         Vec::new()
                     }
                 } else {
                     Vec::new()
-                }
-            } else {
-                Vec::new()
+                };
+                (session, outbox_relays_contacted, search_relays_contacted)
             };
             let reading = session.read(&[filter], limit).await;
             require_an_answer(&reading)?;

@@ -1053,6 +1053,7 @@ async fn fetch_events_with_use_outbox_marks_outbox_role_scope_and_deduplicates_s
             limit: Some(10),
             use_outbox: Some(true),
             search: None,
+            relays: None,
         }
     );
 
@@ -1141,6 +1142,7 @@ async fn fetch_events_with_search_consults_operators_kind_10007_search_relays() 
             limit: Some(10),
             use_outbox: None,
             search: Some("zed-kask".to_string()),
+            relays: None,
         }
     );
 
@@ -1170,4 +1172,67 @@ async fn fetch_events_with_search_consults_operators_kind_10007_search_relays() 
         scope.contains("kind: 10007"),
         "relay_scope must name kind: 10007 search relays, got: {scope}"
     );
+}
+
+/// expect: explicit `relays` scopes `nostr_fetch_events` exclusively to those
+/// relays (role `"scoped"`), skips local/seed relays, allows browsing without
+/// naming an author/id/reference/search, and rejects combining `relays` with
+/// `use_outbox: true`.
+#[tokio::test]
+async fn fetch_events_with_scoped_relays_reads_only_requested_house_without_author_filter() {
+    let author = Keys::generate();
+    let seed = TestRelay::start().await.expect("seed relay starts");
+    let house = TestRelay::start().await.expect("house relay starts");
+
+    let seed_note = event_at(&author, 1, 100, "public square note", &[]);
+    let house_note = event_at(&author, 1, 200, "niche house note", &[]);
+    let house_note_id = house_note.id.to_hex();
+    seed.store(seed_note).await.expect("seed note stored");
+    house.store(house_note).await.expect("house note stored");
+
+    let house_url = house.url().to_string();
+    let fx = reader(None, &[seed.url().to_string()], None);
+
+    let report = invoke_tool!(
+        fx.server,
+        nostr_fetch_events,
+        FetchEventsRequest {
+            kinds: Some(vec![1]),
+            limit: Some(10),
+            relays: Some(vec![house_url.clone()]),
+            ..FetchEventsRequest::default()
+        }
+    );
+
+    assert_eq!(report["returned"], 1, "report: {report}");
+    assert_eq!(report["events"][0]["id"], house_note_id);
+    assert_eq!(report["events"][0]["content"], "niche house note");
+
+    let relays = report["relays"].as_array().expect("relays array");
+    assert_eq!(
+        relays.len(),
+        1,
+        "seed relay must not be contacted: {relays:?}"
+    );
+    assert_eq!(relays[0]["address"], house_url);
+    assert_eq!(relays[0]["role"], "scoped");
+
+    let scope = report["relay_scope"].as_str().expect("relay_scope string");
+    assert!(
+        scope.contains("scoped"),
+        "relay_scope must report scoped relay read, got: {scope}"
+    );
+
+    // Combining scoped `relays` with `use_outbox: true` is refused.
+    let err = fx
+        .server
+        .nostr_fetch_events(Parameters(FetchEventsRequest {
+            authors: Some(vec![npub(&author)]),
+            use_outbox: Some(true),
+            relays: Some(vec![house_url]),
+            ..FetchEventsRequest::default()
+        }))
+        .await
+        .expect_err("relays + use_outbox must be refused");
+    assert_eq!(err.kind, McpErrorKind::InvalidArgument, "{err}");
 }

@@ -50,6 +50,8 @@ pub enum Role {
     Outbox,
     /// A NIP-50 search relay resolved from the operator's `kind: 10007` list.
     Search,
+    /// A caller-specified scoped relay (local and seed relays not contacted).
+    Scoped,
 }
 
 impl Role {
@@ -59,6 +61,7 @@ impl Role {
             Self::Seed => "seed",
             Self::Outbox => "outbox",
             Self::Search => "search",
+            Self::Scoped => "scoped",
         }
     }
 }
@@ -200,6 +203,39 @@ impl Session {
         }
     }
 
+    /// Connect exclusively to caller-specified pre-validated relays without
+    /// contacting the local relay or configured seed relays.
+    pub async fn open_scoped(urls: &[RelayUrl]) -> Self {
+        let mut unique: Vec<RelayUrl> = Vec::new();
+        for url in urls {
+            if !unique.iter().any(|seen| seen == url) {
+                unique.push(url.clone());
+            }
+        }
+        let slots = futures::future::join_all(unique.into_iter().map(|url| async move {
+            let relay = Relay::new(url.clone());
+            let link = match relay.try_connect().timeout(PROBE_TIMEOUT).await {
+                Ok(()) => Ok(relay),
+                Err(error) => {
+                    relay.shutdown();
+                    Err(classify_failure(&error))
+                }
+            };
+            Slot {
+                role: Role::Scoped,
+                url,
+                link,
+            }
+        }))
+        .await;
+        Self {
+            slots,
+            refused: Vec::new(),
+            local: LocalRelay::NotAnnounced,
+            seeds_not_read: 0,
+        }
+    }
+
     /// Connect to pre-validated relays not already in this session under
     /// `role`, reusing the existing connections without re-handshaking them.
     /// Returns the addresses of the newly added relays in session order.
@@ -244,6 +280,11 @@ impl Session {
     /// Whether this session includes any NIP-50 search relays from `kind: 10007`.
     pub fn has_search_relays(&self) -> bool {
         self.slots.iter().any(|slot| slot.role == Role::Search)
+    }
+
+    /// Whether this session reads exclusively from caller-specified scoped relays.
+    pub fn is_scoped(&self) -> bool {
+        !self.slots.is_empty() && self.slots.iter().all(|slot| slot.role == Role::Scoped)
     }
 
     /// Whether there is any relay to ask at all.
