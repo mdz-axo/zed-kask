@@ -18,15 +18,15 @@ fn refusal(policy: AddressPolicy, address: &str) -> RelayAddressError {
 }
 
 /// expect: a `wss://` address with a public host is accepted.
-/// pre: a domain name, a domain with a port and path, a public IPv4 literal
-/// (RFC 5737 documentation range is not private), a public IPv6 literal.
+/// pre: a domain name, a domain with a port and path, a public IPv4 literal,
+/// and a public IPv6 literal.
 /// post: each is accepted under the public-only policy.
 #[test]
 fn address_validation_accepts_public_wss_addresses() {
     for address in [
         "wss://relay.example.com",
         "wss://relay.example.com:8443/nostr",
-        "wss://203.0.113.7",
+        "wss://1.1.1.1",
         "wss://[2001:4860:4860::8888]",
     ] {
         let url = validate_relay_address(address, AddressPolicy::PublicOnly)

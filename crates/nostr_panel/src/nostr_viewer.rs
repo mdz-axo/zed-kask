@@ -543,6 +543,13 @@ impl Default for NostrViewer {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchMode {
+    Local,
+    Nip50,
+    ScopedRelay,
+}
+
 impl NostrViewer {
     pub fn new() -> Self {
         Self {
@@ -2413,14 +2420,18 @@ impl NostrViewer {
         }
         let ed = cx.new(|cx| {
             let mut e = editor::Editor::single_line(window, cx);
-            e.set_placeholder_text("Search local archive or NIP-50 relays…", window, cx);
+            e.set_placeholder_text(
+                "Search text (Local / NIP-50) or paste wss://relay… to browse",
+                window,
+                cx,
+            );
             e
         });
         self.search_editor = Some(ed.clone());
         ed
     }
 
-    fn run_search(&mut self, remote_nip50: bool, cx: &mut Context<Self>) {
+    fn run_search(&mut self, mode: SearchMode, cx: &mut Context<Self>) {
         let query = self
             .search_editor
             .as_ref()
@@ -2431,20 +2442,41 @@ impl NostrViewer {
         }
         let epoch = self.search_request.begin();
         cx.notify();
-        let (server, tool, args, origin) = if remote_nip50 {
-            (
-                NOSTR_CLIENT_SERVER,
-                FETCH_TOOL,
-                json!({ "search": query, "kinds": [1, 9802, 30023], "limit": 50 }),
-                FeedOrigin::Conversation,
-            )
-        } else {
-            (
+        let (server, tool, args, origin, feed_title) = match mode {
+            SearchMode::Local => (
                 NOSTR_RELAY_SERVER,
                 ARCHIVE_TOOL,
                 json!({ "search": query, "limit": 50 }),
                 FeedOrigin::Archive,
-            )
+                format!("Local search: \"{query}\""),
+            ),
+            SearchMode::Nip50 => (
+                NOSTR_CLIENT_SERVER,
+                FETCH_TOOL,
+                json!({ "search": query, "kinds": [1, 9802, 30023], "limit": 50 }),
+                FeedOrigin::Conversation,
+                format!("NIP-50 search: \"{query}\""),
+            ),
+            SearchMode::ScopedRelay => {
+                let relays: Vec<String> = query
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if relays.is_empty() {
+                    self.search_request.finish(epoch, None);
+                    cx.notify();
+                    return;
+                }
+                (
+                    NOSTR_CLIENT_SERVER,
+                    FETCH_TOOL,
+                    json!({ "relays": relays, "kinds": [1, 9802, 30023], "limit": 50 }),
+                    FeedOrigin::Conversation,
+                    format!("Relay: {query}"),
+                )
+            }
         };
         let task = match invoke(server, tool, args) {
             Ok(t) => t,
@@ -2458,11 +2490,7 @@ impl NostrViewer {
             let result = content_of(tool, task.await).and_then(|content| {
                 match parse_surfaced(&content, origin) {
                     Some(Ok(Surfaced::Feed(mut feed))) => {
-                        feed.name = if remote_nip50 {
-                            format!("NIP-50 search: \"{query}\"").into()
-                        } else {
-                            format!("Local search: \"{query}\"").into()
-                        };
+                        feed.name = feed_title.into();
                         Ok(feed)
                     }
                     Some(Err(err)) => Err(err),
@@ -4541,7 +4569,7 @@ impl NostrViewer {
                                     ui::Button::new("nostr-search-local", "Local")
                                         .label_size(LabelSize::XSmall)
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.run_search(false, cx);
+                                            this.run_search(SearchMode::Local, cx);
                                         })),
                                 )
                                 .child(
@@ -4549,10 +4577,20 @@ impl NostrViewer {
                                         .style(ui::ButtonStyle::Filled)
                                         .label_size(LabelSize::XSmall)
                                         .tooltip(ui::Tooltip::text(
-                                            "Search configured seed relays via NIP-50",
+                                            "Search local, seed, and your kind: 10007 NIP-50 search relays",
                                         ))
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.run_search(true, cx);
+                                            this.run_search(SearchMode::Nip50, cx);
+                                        })),
+                                )
+                                .child(
+                                    ui::Button::new("nostr-search-scoped-relay", "Relay")
+                                        .label_size(LabelSize::XSmall)
+                                        .tooltip(ui::Tooltip::text(
+                                            "Browse one or more comma-separated wss:// relays exclusively (role: scoped)",
+                                        ))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.run_search(SearchMode::ScopedRelay, cx);
                                         })),
                                 )
                                 .when(has_search_feed, |row| {
