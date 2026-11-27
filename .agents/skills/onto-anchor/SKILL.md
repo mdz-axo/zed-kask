@@ -183,6 +183,28 @@ This skill owns no registry templates — it is the process surface over the
 
 ## Verification
 
-Before calling `relation_query`, verify hop bounds and non-coarse source status in `lisp_eval` (`OA-1`): `(and (not is_coarse_source) (if has_to_term (and (>= max_hops 1) (<= max_hops 4)) (= max_hops 1)))`. Before sending work that names domain terms, verify that every term is anchored (or carries its core anchor with a ruling request) and no deprecated term is used without replacement via `lisp_eval` (`OA-2`): `(and (= unanchored_terms 0) (= deprecated_used_without_replacement 0) (= core_terms_without_ruling_request 0))`. For relational claims, cite the returned directed edge path and
+Before calling `relation_query`, verify hop bounds and non-coarse source status in `lisp_eval` (`OA-1`):
+- form: `(and (eq is_coarse_source false) (numberp max_hops) (eq (- max_hops max_hops) 0) (if (eq has_to_term true) (and (>= max_hops 1) (<= max_hops 4)) (and (eq has_to_term false) (= max_hops 1))))`
+- env: `{"is_coarse_source": <true|false>, "has_to_term": <true|false>, "max_hops": <int>}`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"OA-1","case":"path-2-hops","env":{"is_coarse_source":false,"has_to_term":true,"max_hops":2},"expected":true}
+  {"gate":"OA-1","case":"neighbors-1-hop","env":{"is_coarse_source":false,"has_to_term":false,"max_hops":1},"expected":true}
+  {"gate":"OA-1","case":"coarse-null-fails-closed","env":{"is_coarse_source":null,"has_to_term":true,"max_hops":2},"expected":false}
+  {"gate":"OA-1","case":"float-hops-fails","env":{"is_coarse_source":false,"has_to_term":true,"max_hops":2.0},"expected":false}
+  {"gate":"OA-1","case":"string-has-to-term","env":{"is_coarse_source":false,"has_to_term":"false","max_hops":2},"expected":false}
+  ```
+
+Before sending work that names domain terms, verify that every term is anchored (or carries its core anchor with a ruling request) and no deprecated term is used without replacement via `lisp_eval` (`OA-2`):
+- form: `(and (numberp unanchored_terms) (numberp deprecated_used_without_replacement) (numberp core_terms_without_ruling_request) (= unanchored_terms 0) (= deprecated_used_without_replacement 0) (= core_terms_without_ruling_request 0))`
+- env: `{"unanchored_terms": <int>, "deprecated_used_without_replacement": <int>, "core_terms_without_ruling_request": <int>}`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"OA-2","case":"clean","env":{"unanchored_terms":0,"deprecated_used_without_replacement":0,"core_terms_without_ruling_request":0},"expected":true}
+  {"gate":"OA-2","case":"unanchored-nonzero","env":{"unanchored_terms":1,"deprecated_used_without_replacement":0,"core_terms_without_ruling_request":0},"expected":false}
+  {"gate":"OA-2","case":"non-numeric","env":{"unanchored_terms":"0","deprecated_used_without_replacement":0,"core_terms_without_ruling_request":0},"expected":false}
+  ```
+
+For relational claims, cite the returned directed edge path and
 its authority, or state that no supported path was found within the bound;
 labels alone are not graph evidence.

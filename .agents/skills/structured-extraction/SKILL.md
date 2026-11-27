@@ -50,10 +50,25 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 ### Verify and Graph Counts (`SE-1`, `SE-2` — D in `lisp_eval`)
 
-1. **Gate `SE-1` (Substring verification):** Before mapping, check every entity's `entity_text` and every relation's `source_evidence` / trigger against `source_text` with `lisp_eval` `(string-contains entity_text source_text)`. Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. A guard error on a correctly-ordered call (the needle longer than the whole source) means rejection — never swap the arguments: the swapped call can return true (the source inside the over-long entity) and pass a fabrication through the gate. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
-2. **Gate `SE-2` (Entity/relation counts and `orphan_entities`):** Over the verified `entities` and `relations`, deterministically compute `(list entity_count relation_count orphan_entities)` (isolated vertices — entities appearing as neither `subject` nor `object` in any relation) via `lisp_eval`:
-   - form: `(begin (define in-rels (lambda (name rels) (if (is_null rels) false (let ((r (car rels))) (or (string= name (assoc "subject" r)) (string= name (assoc "object" r)) (in-rels name (cdr rels))))))) (define orphans (lambda (es rels) (if (is_null es) (list) (let ((name (assoc "entity_text" (car es)))) (if (in-rels name rels) (orphans (cdr es) rels) (cons name (orphans (cdr es) rels))))))) (list (length entities) (length relations) (orphans entities relations)))`
+1. **Gate `SE-1` (Substring verification):** Before mapping, check every entity's `entity_text` and every relation's `source_evidence` / trigger against `source_text` with `lisp_eval`:
+   - form: `(and (stringp entity_text) (> (length entity_text) 0) (stringp source_text) (<= (length entity_text) (length source_text)) (string-contains entity_text source_text))`
+   - env: `{"entity_text": "<extracted entity or trigger text>", "source_text": "<verbatim source text>"}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SE-1","case":"present","env":{"entity_text":"Acme Corp","source_text":"Acme Corp reported revenue of $12M in 2024."},"expected":true}
+     {"gate":"SE-1","case":"fabricated","env":{"entity_text":"Globex Industries","source_text":"Acme Corp reported revenue of $12M in 2024."},"expected":false}
+     {"gate":"SE-1","case":"empty-entity","env":{"entity_text":"","source_text":"Acme Corp reported revenue of $12M in 2024."},"expected":false}
+     {"gate":"SE-1","case":"short-ascii-source","env":{"entity_text":"Acme Corp","source_text":"Acme"},"expected":false}
+     ```
+   Known `hkask-lisp` boundary: `length` counts Unicode characters while `string-contains` compares UTF-8 byte lengths, so the length pre-check prevents short-source crashes for ASCII strings while a multi-byte UTF-8 needle longer in bytes than `source_text` still surfaces a runtime error (meaning rejection — never swap the arguments: the swapped call can return true and pass a fabrication through the gate). Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
+2. **Gate `SE-2` (Entity/relation counts and `orphan_entities`):** Over the verified `entities` and `relations`, deterministically compute `[entity_count, relation_count, orphan_entities]` (isolated vertices — entities appearing as neither `subject` nor `object` in any relation) via `lisp_eval`:
+   - form: `(begin (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (define in-rels (lambda (name rels) (if (is_null rels) false (let ((r (car rels))) (or (and (listp r) (stringp (assoc "subject" r)) (string= name (assoc "subject" r))) (and (listp r) (stringp (assoc "object" r)) (string= name (assoc "object" r))) (in-rels name (cdr rels))))))) (define orphans (lambda (es rels) (if (is_null es) (list) (let ((name (if (listp (car es)) (assoc "entity_text" (car es)) nil))) (if (and (stringp name) (in-rels name rels)) (orphans (cdr es) rels) (cons (if (stringp name) name "invalid_entity") (orphans (cdr es) rels))))))) (if (or (not (is-array entities)) (not (is-array relations))) (list 0 0 (list "invalid_inputs")) (list (length entities) (length relations) (orphans entities relations))))`
    - env: `{ "entities": <verified entities array>, "relations": <verified relations array> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SE-2","case":"one-orphan-missing-object","env":{"entities":[{"entity_text":"Alice"},{"entity_text":"Bob"}],"relations":[{"subject":"Alice"}]},"expected":[2,1,["Bob"]]}
+     {"gate":"SE-2","case":"null-entities-fails-closed","env":{"entities":null,"relations":[]},"expected":[0,0,["invalid_inputs"]]}
+     ```
 
 ### map-to-schema
 
@@ -64,17 +79,30 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 5. Infer missing but required fields from surrounding context if possible (`inferred_fields`).
 6. Report fields that cannot be populated from available information as `unresolved_fields`.
 7. **Gate `SE-3` (Field coverage — D in `lisp_eval`):** Deterministically compute `field_coverage` (`total_fields`, `populated_fields`, `coverage_ratio`) from `extracted_data` and `schema_fields` (the property names of `target_schema`):
-   - form: `(begin (define pop-count (lambda (fs) (if (is_null fs) 0 (+ (if (is_null (assoc (car fs) extracted_data)) 0 1) (pop-count (cdr fs)))))) (let ((total (length schema_fields)) (pop (pop-count schema_fields))) (list total pop (if (= total 0) 0.0 (/ pop total)))))`
-   - Counts only schema-declared fields that are present and non-null in `extracted_data`; keys outside the schema and null values are not coverage, so `coverage_ratio` can never exceed 1.0.
+   - form: `(begin (define is-non-null-list (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (define all-strings (lambda (xs) (if (is_null xs) true (and (stringp (car xs)) (all-strings (cdr xs)))))) (define pop-count (lambda (fs) (if (is_null fs) 0 (+ (if (is_null (assoc (car fs) extracted_data)) 0 1) (pop-count (cdr fs)))))) (if (or (not (is-non-null-list schema_fields)) (not (all-strings schema_fields)) (not (is-non-null-list extracted_data))) "invalid_inputs" (let ((total (length schema_fields)) (pop (pop-count schema_fields))) (list total pop (if (= total 0) 0.0 (/ pop total))))))`
    - env: `{ "schema_fields": <list of target_schema field names>, "extracted_data": <extracted_data object> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SE-3","case":"one-of-two","env":{"schema_fields":["company","revenue"],"extracted_data":{"company":"Acme","revenue":null}},"expected":[2,1,0.5]}
+     {"gate":"SE-3","case":"null-extracted-data","env":{"schema_fields":["company","revenue"],"extracted_data":null},"expected":"invalid_inputs"}
+     {"gate":"SE-3","case":"null-schema-fields","env":{"schema_fields":null,"extracted_data":{}},"expected":"invalid_inputs"}
+     {"gate":"SE-3","case":"non-string-schema-field","env":{"schema_fields":["company",123],"extracted_data":{"company":"Acme"}},"expected":"invalid_inputs"}
+     ```
+   Counts only schema-declared fields that are present and non-null in `extracted_data`; keys outside the schema and null values are not coverage, so `coverage_ratio` can never exceed 1.0.
 
 **D/P labelling.** Entity identification, typing, relation extraction, confidence, field inference, and map-to-schema's type coercion and conflict resolution are P, critiqued by `SE-1` and by the operator; `SE-1` (substring check), `SE-2` (entity/relation counts and `orphan_entities`), `SE-3` (`field_coverage`), and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007, IJCAI) — anchored: `onto_anchor` → derived `open_information_extraction` (operator ruling 2026-10-14; verified 2026-11-02); ACE2005 standoff annotation and CoNLL-2012 coreference — unanchored, house rules: `onto_anchor` falls through to the coarse 5W1H core for ACE2005, CoNLL-2012, TACRED and DocRED (checked 2026-11-02; ruling path open), so their type inventories are named external conventions, not ontology-resolved terms.
 
 ### Convergence
 
 Gate — call `lisp_eval` with:
-- form: `(eq (length unresolved_fields) 0)`
+- form: `(eq unresolved_fields (list))`
 - env: `{ "unresolved_fields": <required schema fields still unpopulated> }`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+  ```lisp-receipts
+  {"gate":"convergence","case":"resolved","env":{"unresolved_fields":[]},"expected":true}
+  {"gate":"convergence","case":"unresolved","env":{"unresolved_fields":["founded_date"]},"expected":false}
+  {"gate":"convergence","case":"null-fails-closed","env":{"unresolved_fields":null},"expected":false}
+  ```
 - Bound: one re-entry — re-run identify-entities with the unresolved field
   names as extraction hints; fields that remain unresolved after the second
   pass are reported as unresolved (map-to-schema step 6), never fabricated.
@@ -93,6 +121,12 @@ Template context variables (from each template's [inference] contract):
 - `identify-entities.j2`: `source_text`, `target_schema`, `extraction_hints`
 - `extract-relations.j2`: `source_text`, `entities`
 - `map-to-schema.j2`: `source_text`, `target_schema`, `entities`, `relations`, `unmapped_text`
+
+Copyable `render_template` contexts:
+
+- `structured-extraction/identify-entities`: `{"source_text": "Acme Corp reported revenue of $12M in 2024.", "target_schema": {"company": "string", "revenue": "string", "year": "number"}, "extraction_hints": ["organization", "money", "date"]}`
+- `structured-extraction/extract-relations`: `{"source_text": "Acme Corp reported revenue of $12M in 2024.", "entities": [{"entity_text": "Acme Corp", "type": "organization"}, {"entity_text": "$12M", "type": "money"}]}`
+- `structured-extraction/map-to-schema`: `{"source_text": "Acme Corp reported revenue of $12M in 2024.", "target_schema": {"company": "string", "revenue": "string", "year": "number"}, "entities": [{"entity_text": "Acme Corp", "type": "organization"}], "relations": [{"subject": "Acme Corp", "relation": "reported", "object": "$12M"}], "unmapped_text": []}`
 
 ## Regression case
 

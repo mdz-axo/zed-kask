@@ -24,10 +24,39 @@ Given peer-level skills' outputs on the same task, merge them into one report. T
 
 ### bundler-merge — bounded PDCA
 
-1. **Plan (initial → target).** Record the initial condition: requested task, ordered `skill_names`, the corresponding `skill_outputs`, and explicit error states. Target condition: exactly one attributable summary for every named skill (including errors), no unsupported findings, and cross-skill insights and recommendations referencing only successful inputs. An absent output is not an errored output. Before rendering, call `lisp_eval` with `(= (length skill_names) (length skill_outputs))` and those arrays as env bindings. If false, stop and request the missing output or correct the input pairing; never synthesize a missing result.
+1. **Plan (initial → target).** Record the initial condition: requested task, ordered `skill_names`, the corresponding `skill_outputs`, and explicit error states. Target condition: exactly one attributable summary for every named skill (including errors), no unsupported findings, and cross-skill insights and recommendations referencing only successful inputs. An absent output is not an errored output. Before rendering, call `lisp_eval` to verify non-empty paired inputs:
+   - form: `(begin (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (and (is-array skill_names) (is-array skill_outputs) (> (length skill_names) 0) (= (length skill_names) (length skill_outputs))))`
+   - env: `{"skill_names": <array of skill names>, "skill_outputs": <paired array of skill outputs>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"step-1-pairing","case":"matched","env":{"skill_names":["a","b"],"skill_outputs":[{},{}]},"expected":true}
+     {"gate":"step-1-pairing","case":"missing-output","env":{"skill_names":["a","b"],"skill_outputs":[{}]},"expected":false}
+     {"gate":"step-1-pairing","case":"null-fails-closed","env":{"skill_names":null,"skill_outputs":null},"expected":false}
+     {"gate":"step-1-pairing","case":"empty-fails-closed","env":{"skill_names":[],"skill_outputs":[]},"expected":false}
+     ```
+   If false, stop and request the missing output or correct the input pairing; never synthesize a missing result.
 2. **Do.** Render `skill-bundler/bundler-merge` using the paired inputs. For each skill, write 2-3 sentences capturing its key findings, verdict, or recommendations. Label each with the skill name. Every skill gets a summary, even if it errored.
 3. **Do.** Identify points where successful outputs complement, contradict, or build on each other. Only include insights that require looking at 2+ successful skills together. Surface contradictory conclusions explicitly. Prioritize actionable recommendations and cite which successful skill(s) informed them. Write one cohesive report rather than stapling outputs together.
-4. **Check.** Compare the produced report with the original pairs. Call `lisp_eval` on the ordered skill names and extracted report summary names: `(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (same-names skill_names summary_names) (= (length unsupported_names) 0)))`. Also verify in `lisp_eval` (`SB-1`) that no `cross_skill_insights` entry cites fewer than 2 skills, zero errored skills appear in `cross_skill_insights` or `recommendations`, and the merged report stays under 2000 words. The three bound counts are measured, not guessed: `word_count` by `wc -w` over the delivered report, and `single_skill_insights_count` and `errored_in_insights_count` by `lisp_eval` counting over the per-skill insights structure extracted in the same terminal pass (each insight's cited-skills list below length 2; each errored skill named in `cross_skill_insights` or `recommendations`) — the counts come from the named instruments, never the model's reading of its own report. Gate: `(and (= single_skill_insights_count 0) (= errored_in_insights_count 0) (<= word_count 2000))`. Inspect every substantive finding against its source output and mark unsupported findings as gaps; names and counts cannot prove semantic grounding. Check that error entries remain identified and do not contribute findings.
+4. **Check.** Compare the produced report with the original pairs. Call `lisp_eval` on the ordered skill names and extracted report summary names:
+   - form: `(begin (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) false (and (stringp (car a)) (stringp (car b)) (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (is-array skill_names) (is-array summary_names) (> (length skill_names) 0) (same-names skill_names summary_names) (eq unsupported_names (list))))`
+   - env: `{"skill_names": <ordered skill names>, "summary_names": <extracted report summary names>, "unsupported_names": <array of unsupported finding labels>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"step-4-name-order","case":"green","env":{"skill_names":["a","b"],"summary_names":["a","b"],"unsupported_names":[]},"expected":true}
+     {"gate":"step-4-name-order","case":"unsupported-finding","env":{"skill_names":["a","b"],"summary_names":["a","b"],"unsupported_names":["fabricated-finding"]},"expected":false}
+     {"gate":"step-4-name-order","case":"null-unsupported-fails-closed","env":{"skill_names":["a","b"],"summary_names":["a","b"],"unsupported_names":null},"expected":false}
+     {"gate":"step-4-name-order","case":"empty-names-fails-closed","env":{"skill_names":[],"summary_names":[],"unsupported_names":[]},"expected":false}
+     ```
+   Also verify in `lisp_eval` (`SB-1`) that no `cross_skill_insights` entry cites fewer than 2 skills, zero errored skills appear in `cross_skill_insights` or `recommendations`, and the merged report stays under 2000 words. The three bound counts are measured, not guessed: `word_count` by `wc -w` over the delivered report, and `single_skill_insights_count` and `errored_in_insights_count` by `lisp_eval` counting over the per-skill insights structure extracted in the same terminal pass (each insight's cited-skills list below length 2; each errored skill named in `cross_skill_insights` or `recommendations`) — the counts come from the named instruments, never the model's reading of its own report:
+   - form: `(and (numberp single_skill_insights_count) (numberp errored_in_insights_count) (numberp word_count) (= single_skill_insights_count 0) (= errored_in_insights_count 0) (>= word_count 0) (<= word_count 2000))`
+   - env: `{"single_skill_insights_count": <int>, "errored_in_insights_count": <int>, "word_count": <int>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SB-1","case":"pass","env":{"single_skill_insights_count":0,"errored_in_insights_count":0,"word_count":850},"expected":true}
+     {"gate":"SB-1","case":"over-word-limit","env":{"single_skill_insights_count":0,"errored_in_insights_count":0,"word_count":2001},"expected":false}
+     {"gate":"SB-1","case":"negative-words","env":{"single_skill_insights_count":0,"errored_in_insights_count":0,"word_count":-5},"expected":false}
+     ```
+   Inspect every substantive finding against its source output and mark unsupported findings as gaps; names and counts cannot prove semantic grounding. Check that error entries remain identified and do not contribute findings.
 5. **Act.** If every check passes, return the report after this one pass. If a merge-only gap remains, revise the report once using the named gap and recheck against the *same* inputs. If it still fails, stop with the report marked incomplete and the remaining gaps; never invent input data or re-run peer skills to make the merge look complete.
 
 ### Step types and reference model (D/P labelling)
@@ -51,6 +80,10 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 Template context variables (from the template's [inference] contract):
 - `bundler-merge.j2`: `skill_names`, `task`, `skill_outputs`
+
+Copyable `render_template` context:
+
+- `skill-bundler/bundler-merge`: `{"skill_names": ["code-review", "security-audit", "deep-module"], "task": "Audit parser crate", "skill_outputs": [{"skill": "code-review", "status": "ok", "summary": "No spec drift"}, {"skill": "security-audit", "status": "ok", "summary": "No untrusted input issues"}, {"skill": "deep-module", "status": "ok", "summary": "Depth score 120 (Deep)"}]}`
 
 ## Regression case
 

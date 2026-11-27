@@ -52,8 +52,14 @@ does not compute from the counted items is not a score.
 1. Count every public item in the module mechanically: public functions (`pub` / `pub(crate)`), public types (struct, enum, type alias), public traits, public constants, and public sub-modules. Do not count impl blocks, tests, or re-exports.
 2. Estimate the behavior encapsulated: count non-comment, non-blank implementation lines (including private helpers and impl blocks), list invariants enforced, and list complexity managed on behalf of callers.
 3. Compute the depth score and class with `lisp_eval` (D) — the same denominator as `deep-module-assess.j2` (every public item counted in step 1, sub-modules included):
-   - form: `(if (= items 0) (list nil "Empty") (let ((s (/ lines items))) (list s (cond ((>= s 100) "Deep") ((>= s 50) "Adequate") ((>= s 20) "Shallow") (t "Very Shallow")))))`
+   - form: `(if (or (not (numberp lines)) (< lines 0) (not (numberp items)) (< items 0)) (list nil "Invalid") (if (= items 0) (list nil "Empty") (let ((s (/ lines items))) (list s (cond ((>= s 100) "Deep") ((>= s 50) "Adequate") ((>= s 20) "Shallow") (t "Very Shallow"))))))`
    - env: `{ "lines": <behavior lines>, "items": <total_interface_items> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"step-1-3-depth","case":"empty","env":{"items":0,"lines":500},"expected":[null,"Empty"]}
+     {"gate":"step-1-3-depth","case":"deep","env":{"items":2,"lines":300},"expected":[150.0,"Deep"]}
+     {"gate":"step-1-3-depth","case":"negative-items","env":{"items":-1,"lines":100},"expected":[null,"Invalid"]}
+     ```
    Count behavior lines mechanically when the source is available; an estimated count makes the score an inference, and the report must say which.
 4. Classify the module from that result: Deep (100+), Adequate (50–99), Shallow (20–49), Very Shallow (0–19), or Empty (no public items).
 5. Identify red flags: more public functions than private (pass-through suspicion), more public types than functions (data bag), all public functions delegating to a single dependency (pass-through), zero invariants enforced (no encapsulation), or single consumer (inline candidate).
@@ -63,7 +69,16 @@ does not compute from the counted items is not a score.
 
 1. **Direction 1 — Caller's perspective**: For each caller, imagine inlining the module's logic at the call site. Determine what complexity would reappear: state management, error handling, invariant enforcement, coordination logic. Assess whether the inline replacement is trivial (a few lines) or substantial.
 2. **Direction 2 — Module's perspective**: For each public function, imagine replacing it with a direct call to the module's dependency. Determine whether any behavior would be lost, any invariants broken, or any complexity management eliminated.
-3. Apply the decision matrix deterministically in `lisp_eval` (`DM-1`): `(if complexity_reappears (if behavior_lost (list "EXTRACT" "guardrail") (list "DEEPEN" "guideline")) (if behavior_lost (list "MERGE" "prohibition") (list "DELETE" "prohibition")))` (complexity reappears + behavior lost → **EXTRACT**; complexity reappears + complexity vanishes → **DEEPEN**; trivial replacement + behavior lost → **MERGE**; trivial replacement + complexity vanishes → **DELETE**).
+3. Apply the decision matrix deterministically in `lisp_eval` (`DM-1`):
+   - form: `(if (and (or (eq complexity_reappears true) (eq complexity_reappears false)) (or (eq behavior_lost true) (eq behavior_lost false))) (if complexity_reappears (if behavior_lost (list "EXTRACT" "guardrail") (list "DEEPEN" "guideline")) (if behavior_lost (list "MERGE" "prohibition") (list "DELETE" "prohibition"))) (list "INVALID" "prohibition"))`
+   - env: `{"complexity_reappears": <true|false>, "behavior_lost": <true|false>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"DM-1","case":"extract","env":{"complexity_reappears":true,"behavior_lost":true},"expected":["EXTRACT","guardrail"]}
+     {"gate":"DM-1","case":"delete","env":{"complexity_reappears":false,"behavior_lost":false},"expected":["DELETE","prohibition"]}
+     {"gate":"DM-1","case":"string-false-invalid","env":{"complexity_reappears":"false","behavior_lost":true},"expected":["INVALID","prohibition"]}
+     ```
+   Complexity reappears + behavior lost → **EXTRACT**; complexity reappears + complexity vanishes → **DEEPEN**; trivial replacement + behavior lost → **MERGE**; trivial replacement + complexity vanishes → **DELETE**.
 4. Produce a definitive recommendation with a rationale citing concrete complexity examples, not vague claims. If the module has a single consumer, flag it as an inline candidate.
 
 ### 3. Design the Deep Module Interface
@@ -74,7 +89,16 @@ does not compute from the counted items is not a score.
 4. Hide information: keep algorithms, data structures, caching, internal state, business rules, validation logic, and the identity of dependencies private.
 5. Design one unified error enum per module: map dependency errors to module-level variants (never leak dependency error types), add context to each variant.
 6. Design one config struct: passed at construction time, validated on construction (fail early), with defaults for optional values.
-7. Project the depth score with the same step-1.3 form over the designed interface's total public items (functions + types + traits + constants + sub-modules), so projected and assessed depth are comparable. Target ≥100 (Deep), minimum ≥50 (Adequate). Verify the ≤7 public-function cap and single error/config design in `lisp_eval` (`DM-2`): `(if design_skipped true (and (<= public_functions 7) (= error_enums_count 1) (= config_structs_count 1)))`.
+7. Project the depth score with the same step-1.3 form over the designed interface's total public items (functions + types + traits + constants + sub-modules), so projected and assessed depth are comparable. Target ≥100 (Deep), minimum ≥50 (Adequate). Verify the ≤7 public-function cap and single error/config design in `lisp_eval` (`DM-2`):
+   - form: `(if (eq design_skipped true) true (and (eq design_skipped false) (numberp public_functions) (>= public_functions 0) (<= public_functions 7) (numberp error_enums_count) (= error_enums_count 1) (numberp config_structs_count) (= config_structs_count 1)))`
+   - env: `{"design_skipped": <true|false>, "public_functions": <int>, "error_enums_count": <int>, "config_structs_count": <int>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"DM-2","case":"pass","env":{"design_skipped":false,"public_functions":4,"error_enums_count":1,"config_structs_count":1},"expected":true}
+     {"gate":"DM-2","case":"skipped","env":{"design_skipped":true,"public_functions":0,"error_enums_count":0,"config_structs_count":0},"expected":true}
+     {"gate":"DM-2","case":"string-false-does-not-skip","env":{"design_skipped":"false","public_functions":12,"error_enums_count":2,"config_structs_count":2},"expected":false}
+     {"gate":"DM-2","case":"too-many-functions","env":{"design_skipped":false,"public_functions":8,"error_enums_count":1,"config_structs_count":1},"expected":false}
+     ```
 
 ### 4. Check Convergence
 
@@ -100,6 +124,12 @@ Template context variables (from each template's [inference] contract):
 - `deep-module-delete.j2`: `module_assessment`, `caller_code`, `dependency_code`, `codebase_context`
 - `deep-module-design.j2`: `deletion_test_result`, `domain_requirements`, `dependency_interfaces`, `constraint_classification`
 
+Copyable `render_template` contexts:
+
+- `deep-module/deep-module-assess`: `{"module_path": "src/client.rs", "module_source": "pub fn fetch() {}", "caller_paths": ["src/main.rs"], "codebase_context": {"callers": {}, "dependencies": {}, "structure": []}}`
+- `deep-module/deep-module-delete`: `{"module_assessment": {"interface_inventory": [], "behavior_estimate": {}, "depth_ratio": "120"}, "caller_code": {}, "dependency_code": {}, "codebase_context": {"callers": {}, "dependencies": {}, "structure": []}}`
+- `deep-module/deep-module-design`: `{"deletion_test_result": {"recommendation": "DEEPEN", "rationale": "Callers duplicate retry logic"}, "domain_requirements": "Reliable HTTP fetch with bounded retries", "dependency_interfaces": ["HttpClient"], "constraint_classification": "guideline"}`
+
 
 ## Constraints
 
@@ -112,7 +142,18 @@ Template context variables (from each template's [inference] contract):
 - Depth score thresholds and the ≤7 cap are Evidence-tier kask operationalizations of Ousterhout's qualitative criteria (the repo's derived `deep_module` anchor is qualitative), not Ousterhout's own numbers and not Prohibitions.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first: `(and (>= (length xs) 3) (= (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs)) (= (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs)))` — converged when the last three counts are equal (checkable once three counts are recorded; two counts can never converge under this form). Maximum 5 iterations, after which the remaining instability is reported, not iterated.
+- Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first:
+  - form: `(begin (define is-array (lambda (x) (or (eq x (list)) (and (listp x) (not (is_null x)))))) (and (is-array xs) (>= (length xs) 3) (let ((a (nth (- (length xs) 1) xs)) (b (nth (- (length xs) 2) xs)) (c (nth (- (length xs) 3) xs))) (and (numberp a) (numberp b) (numberp c) (>= a 0) (= a b) (= b c)))))`
+  - env: `{"xs": <array of recorded non-negative public-interface counts, oldest first>}`
+  - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+    ```lisp-receipts
+    {"gate":"convergence","case":"converged","env":{"xs":[3,5,5,5]},"expected":true}
+    {"gate":"convergence","case":"unstable","env":{"xs":[3,5,5,4]},"expected":false}
+    {"gate":"convergence","case":"too-few","env":{"xs":[5,5]},"expected":false}
+    {"gate":"convergence","case":"null-xs","env":{"xs":null},"expected":false}
+    {"gate":"convergence","case":"negative-counts","env":{"xs":[-1,-1,-1]},"expected":false}
+    ```
+  Converged when the last three counts are equal (checkable once three counts are recorded; two counts can never converge under this form). Maximum 5 iterations, after which the remaining instability is reported, not iterated.
 
 ## Regression case
 
