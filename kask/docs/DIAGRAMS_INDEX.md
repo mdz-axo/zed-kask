@@ -108,7 +108,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-WALLET-001` | [`research/wallet-cashu-lightning-design.md`](./research/wallet-cashu-lightning-design.md) | 2026-11-26 | VERIFIED |
 | `DIAG-WALLET-002` | [`research/wallet-cashu-lightning-design.md`](./research/wallet-cashu-lightning-design.md) | 2026-11-26 | VERIFIED |
 
-Metadata-date distribution: 4 records verified 2026-11-26 (skill inventory/composition + wallet design diagrams), 34 records verified 2026-11-18 during the full-corpus realignment pass, 20 at 2026-09-28, 4 at 2026-10-23, 2 each at 2026-10-14, 2026-10-22, 2026-10-28, and 2026-11-06, and 1 each at 2026-10-06, 2026-10-13, 2026-10-19, 2026-10-20, 2026-10-21, 2026-11-10, and 2026-11-13. All 77 active records carry `status: VERIFIED`.
+Metadata-date distribution: 4 records verified 2026-11-26 (skill inventory/composition + wallet design diagrams), 37 records verified 2026-11-18, 18 at 2026-09-28, 4 at 2026-10-23, 2 each at 2026-10-14, 2026-10-22, 2026-10-28, and 2026-11-06, and 1 each at 2026-10-06, 2026-10-13, 2026-10-19, 2026-10-21, 2026-11-10, and 2026-11-13 (total: 77). All 77 active records carry `status: VERIFIED`.
 
 ## Preserved memory diagrams
 
