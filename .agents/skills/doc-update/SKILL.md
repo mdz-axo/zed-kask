@@ -252,7 +252,7 @@ Template context variables (from the template's `[inference]` contract):
 
 Copyable `render_template` context:
 
-- `doc-update/triage`: `{"date": "2026-11-26", "count_before": 78, "count_after": 75, "triage_rows": [{"path": "kask/docs/old.md", "role": "DELETE", "reason": "superseded", "successor_or_none": "none"}], "fold_rows": []}`
+- `doc-update/triage`: `{"date": "2026-11-26", "count_before": 78, "count_after": 75, "triage_rows": [{"path": "example/old.md", "role": "DELETE", "reason": "superseded", "successor_or_none": "none"}], "fold_rows": []}`
 
 ## Constraints
 
