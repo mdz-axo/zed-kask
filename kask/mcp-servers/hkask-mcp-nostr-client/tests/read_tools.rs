@@ -1008,3 +1008,166 @@ async fn decode_reads_an_identifier_offline_and_refuses_a_secret_key() {
     assert!(!error.message.contains(&secret));
     assert!(error.message.contains("secret key"), "{error}");
 }
+
+/// expect: `use_outbox: true` contacts NIP-65 write relays not already in the
+/// session, labels them `role: "outbox"`, reports an outbox-aware
+/// `relay_scope`, and does not duplicate seed relays in `outbox_relays_contacted`.
+/// pre: a seed relay holds the author's `kind: 10002` listing both the seed
+/// relay (with trailing slash) and a separate outbox relay; the outbox relay
+/// holds the author's `kind: 1` note.
+/// post: the note is returned from the outbox relay; `relays` has 1 `"seed"`
+/// and 1 `"outbox"`; `outbox_relays_contacted` lists only the outbox relay;
+/// `relay_scope` states that opt-in outbox relays were contacted.
+#[tokio::test]
+async fn fetch_events_with_use_outbox_marks_outbox_role_scope_and_deduplicates_seeds() {
+    let author = Keys::generate();
+    let seed = TestRelay::start().await.expect("seed relay starts");
+    let outbox = TestRelay::start().await.expect("outbox relay starts");
+
+    let seed_with_slash = format!("{}/", seed.url());
+    let outbox_url = outbox.url().to_string();
+    let relay_list = event_at(
+        &author,
+        10002,
+        100,
+        "",
+        &[&["r", &seed_with_slash], &["r", &outbox_url, "write"]],
+    );
+    seed.store(relay_list).await.expect("relay list stored");
+
+    let note = event_at(&author, 1, 200, "hello from outbox relay", &[]);
+    let note_id = note.id.to_hex();
+    outbox.store(note).await.expect("note stored on outbox");
+
+    let fx = reader(None, &[seed.url().to_string()], None);
+    let report = invoke_tool!(
+        fx.server,
+        nostr_fetch_events,
+        FetchEventsRequest {
+            authors: Some(vec![npub(&author)]),
+            ids: None,
+            kinds: Some(vec![1]),
+            references: None,
+            since: None,
+            until: None,
+            limit: Some(10),
+            use_outbox: Some(true),
+            search: None,
+        }
+    );
+
+    assert_eq!(report["returned"], 1);
+    assert_eq!(report["events"][0]["id"], note_id);
+
+    let contacted = report["outbox_relays_contacted"]
+        .as_array()
+        .expect("outbox_relays_contacted present");
+    assert_eq!(
+        contacted.len(),
+        1,
+        "seed relay must not be duplicated: {contacted:?}"
+    );
+    assert_eq!(contacted[0], outbox_url);
+
+    let relays = report["relays"].as_array().expect("relays array");
+    assert_eq!(relays.len(), 2, "expected 1 seed + 1 outbox: {relays:?}");
+    let seed_entry = relays
+        .iter()
+        .find(|r| r["address"] == seed.url().to_string())
+        .expect("seed entry");
+    let outbox_entry = relays
+        .iter()
+        .find(|r| r["address"] == outbox_url)
+        .expect("outbox entry");
+    assert_eq!(seed_entry["role"], "seed");
+    assert_eq!(outbox_entry["role"], "outbox");
+
+    let scope = report["relay_scope"].as_str().expect("relay_scope string");
+    assert!(
+        scope.contains("outbox"),
+        "relay_scope must reflect opt-in outbox routing, got: {scope}"
+    );
+}
+
+/// expect: `search` consults the configured operator's `kind: 10007` (NIP-51
+/// Search Relays) list, contacts those relays with `role: "search"`, reports
+/// `search_relays_contacted`, and updates `relay_scope`.
+/// pre: the seed relay holds the configured operator's `kind: 10007` naming a
+/// dedicated search relay; the search relay holds a matching `kind: 1` note.
+/// post: the matching note is returned; `relays` has 1 `"seed"` and 1
+/// `"search"`; `search_relays_contacted` lists only the search relay;
+/// `relay_scope` states NIP-51 search relays were consulted.
+#[tokio::test]
+async fn fetch_events_with_search_consults_operators_kind_10007_search_relays() {
+    let operator = Keys::generate();
+    let author = Keys::generate();
+    let seed = TestRelay::start().await.expect("seed relay starts");
+    let search_relay = TestRelay::start().await.expect("search relay starts");
+
+    let search_url = search_relay.url().to_string();
+    let search_list = event_at(
+        &operator,
+        10007,
+        100,
+        "",
+        &[&["relay", &seed.url().to_string()], &["relay", &search_url]],
+    );
+    seed.store(search_list).await.expect("kind:10007 stored");
+
+    let matching = event_at(
+        &author,
+        1,
+        200,
+        "building sovereign zed-kask agents on nostr",
+        &[],
+    );
+    let matching_id = matching.id.to_hex();
+    search_relay
+        .store(matching)
+        .await
+        .expect("matching note stored");
+
+    let fx = reader(Some(&operator), &[seed.url().to_string()], None);
+    let report = invoke_tool!(
+        fx.server,
+        nostr_fetch_events,
+        FetchEventsRequest {
+            authors: None,
+            ids: None,
+            kinds: Some(vec![1]),
+            references: None,
+            since: None,
+            until: None,
+            limit: Some(10),
+            use_outbox: None,
+            search: Some("zed-kask".to_string()),
+        }
+    );
+
+    assert_eq!(report["returned"], 1, "report: {report}");
+    assert_eq!(report["events"][0]["id"], matching_id);
+
+    let contacted = report["search_relays_contacted"]
+        .as_array()
+        .expect("search_relays_contacted present");
+    assert_eq!(
+        contacted.len(),
+        1,
+        "seed relay must not be duplicated: {contacted:?}"
+    );
+    assert_eq!(contacted[0], search_url);
+
+    let relays = report["relays"].as_array().expect("relays array");
+    assert_eq!(relays.len(), 2, "expected 1 seed + 1 search: {relays:?}");
+    let search_entry = relays
+        .iter()
+        .find(|r| r["address"] == search_url)
+        .expect("search entry");
+    assert_eq!(search_entry["role"], "search");
+
+    let scope = report["relay_scope"].as_str().expect("relay_scope string");
+    assert!(
+        scope.contains("kind: 10007"),
+        "relay_scope must name kind: 10007 search relays, got: {scope}"
+    );
+}

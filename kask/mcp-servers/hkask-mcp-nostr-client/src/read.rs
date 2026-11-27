@@ -46,6 +46,10 @@ pub enum Role {
     Local,
     /// A relay from `kask.nostr.seed_relays`.
     Seed,
+    /// An opt-in NIP-65 outbox write relay resolved from an author's `kind: 10002`.
+    Outbox,
+    /// A NIP-50 search relay resolved from the operator's `kind: 10007` list.
+    Search,
 }
 
 impl Role {
@@ -53,6 +57,8 @@ impl Role {
         match self {
             Self::Local => "local",
             Self::Seed => "seed",
+            Self::Outbox => "outbox",
+            Self::Search => "search",
         }
     }
 }
@@ -171,7 +177,7 @@ impl Session {
         }
         for url in extra_relays {
             if !targets.iter().any(|(_, seen)| seen == url) {
-                targets.push((Role::Seed, url.clone()));
+                targets.push((Role::Outbox, url.clone()));
             }
         }
         let slots = futures::future::join_all(targets.into_iter().map(|(role, url)| async move {
@@ -192,6 +198,52 @@ impl Session {
             local,
             seeds_not_read: config.seed_relays.len().saturating_sub(MAX_SEED_RELAYS),
         }
+    }
+
+    /// Connect to pre-validated relays not already in this session under
+    /// `role`, reusing the existing connections without re-handshaking them.
+    /// Returns the addresses of the newly added relays in session order.
+    pub async fn extend_with_relays(
+        &mut self,
+        extra_relays: &[RelayUrl],
+        role: Role,
+    ) -> Vec<String> {
+        let mut to_add: Vec<RelayUrl> = Vec::new();
+        for url in extra_relays {
+            let already_present = self.slots.iter().any(|slot| &slot.url == url)
+                || to_add.iter().any(|seen| seen == url);
+            if !already_present {
+                to_add.push(url.clone());
+            }
+        }
+        if to_add.is_empty() {
+            return Vec::new();
+        }
+        let added_addresses: Vec<String> = to_add.iter().map(ToString::to_string).collect();
+        let new_slots = futures::future::join_all(to_add.into_iter().map(|url| async move {
+            let relay = Relay::new(url.clone());
+            let link = match relay.try_connect().timeout(PROBE_TIMEOUT).await {
+                Ok(()) => Ok(relay),
+                Err(error) => {
+                    relay.shutdown();
+                    Err(classify_failure(&error))
+                }
+            };
+            Slot { role, url, link }
+        }))
+        .await;
+        self.slots.extend(new_slots);
+        added_addresses
+    }
+
+    /// Whether this session includes any opt-in NIP-65 outbox relays.
+    pub fn has_outbox_relays(&self) -> bool {
+        self.slots.iter().any(|slot| slot.role == Role::Outbox)
+    }
+
+    /// Whether this session includes any NIP-50 search relays from `kind: 10007`.
+    pub fn has_search_relays(&self) -> bool {
+        self.slots.iter().any(|slot| slot.role == Role::Search)
     }
 
     /// Whether there is any relay to ask at all.
