@@ -517,20 +517,26 @@ pub struct QuoteTarget {
 }
 
 /// Sign one kind 1 note with zero or more validated NIP-92 `imeta` media tags
-/// and an optional NIP-10 quote target (`q` + `p` tags).
-pub fn sign_note_with_imeta_and_quote(
+/// Sign one kind 1 note with optional NIP-92 `imeta` attachments, optional
+/// NIP-10 quote target (`q` + `p` tags), and optional NIP-13 PoW (`nonce` tag).
+pub fn sign_note_with_imeta_quote_and_pow(
     key: &SecretKey,
     created_at: u64,
     content: &str,
     attachments: &[ImetaAttachment],
     quote: Option<&QuoteTarget>,
+    pow_bits: Option<u8>,
 ) -> Result<Event, SignError> {
     if attachments.len() > MAX_IMETA_ATTACHMENTS {
         return Err(SignError::InvalidAttachment {
             reason: "at most 4 media attachments may be signed onto one note",
         });
     }
-    let mut tags = Vec::with_capacity(attachments.len() + if quote.is_some() { 2 } else { 0 });
+    let mut tags = Vec::with_capacity(
+        attachments.len()
+            + if quote.is_some() { 2 } else { 0 }
+            + if pow_bits.is_some() { 1 } else { 0 },
+    );
     for attachment in attachments {
         tags.push(build_imeta_tag(attachment)?);
     }
@@ -559,7 +565,29 @@ pub fn sign_note_with_imeta_and_quote(
         ]);
         tags.push(vec!["p".to_string(), quote.author_pubkey_hex.clone()]);
     }
+    if let Some(bits) = pow_bits {
+        let pubkey = key.x_only_public_key();
+        let nonce_tag = hkask_nostr_core::mine_nip13_nonce(
+            &pubkey, created_at, NOTE_KIND, &tags, content, bits,
+        )
+        .ok_or(SignError::InvalidReply {
+            reason: "pow_bits must be between 1 and 24",
+        })?;
+        tags.push(nonce_tag);
+    }
     sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+}
+
+/// Sign one kind 1 note with zero or more validated NIP-92 `imeta` media tags
+/// and an optional NIP-10 quote target (`q` + `p` tags).
+pub fn sign_note_with_imeta_and_quote(
+    key: &SecretKey,
+    created_at: u64,
+    content: &str,
+    attachments: &[ImetaAttachment],
+    quote: Option<&QuoteTarget>,
+) -> Result<Event, SignError> {
+    sign_note_with_imeta_quote_and_pow(key, created_at, content, attachments, quote, None)
 }
 
 /// Sign one kind 1 note with zero or more validated NIP-92 `imeta` media tags.
@@ -628,6 +656,18 @@ pub fn sign_reply(
     content: &str,
     target: &ReplyTarget,
 ) -> Result<Event, SignError> {
+    sign_reply_with_pow(key, created_at, content, target, None)
+}
+
+/// Sign a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply with optional
+/// NIP-13 PoW (`nonce` tag).
+pub fn sign_reply_with_pow(
+    key: &SecretKey,
+    created_at: u64,
+    content: &str,
+    target: &ReplyTarget,
+    pow_bits: Option<u8>,
+) -> Result<Event, SignError> {
     if content.trim().is_empty() {
         return Err(SignError::InvalidReply {
             reason: "reply content cannot be empty",
@@ -651,7 +691,7 @@ pub fn sign_reply(
         }
     }
 
-    if target.root_kind == NOTE_KIND {
+    let (kind, mut tags) = if target.root_kind == NOTE_KIND {
         let mut tags = vec![vec![
             "e".to_string(),
             target.root_event_id_hex.clone(),
@@ -671,7 +711,7 @@ pub fn sign_reply(
             ]);
         }
         tags.push(vec!["p".to_string(), target.target_pubkey_hex.clone()]);
-        sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+        (NOTE_KIND, tags)
     } else {
         let parent_id = target
             .reply_to_event_id_hex
@@ -704,8 +744,18 @@ pub fn sign_reply(
             vec!["k".to_string(), parent_kind.to_string()],
             vec!["p".to_string(), target.target_pubkey_hex.clone()],
         ];
-        sign_verified_parts(key, COMMENT_KIND, created_at, tags, content)
+        (COMMENT_KIND, tags)
+    };
+    if let Some(bits) = pow_bits {
+        let pubkey = key.x_only_public_key();
+        let nonce_tag =
+            hkask_nostr_core::mine_nip13_nonce(&pubkey, created_at, kind, &tags, content, bits)
+                .ok_or(SignError::InvalidReply {
+                    reason: "pow_bits must be between 1 and 24",
+                })?;
+        tags.push(nonce_tag);
     }
+    sign_verified_parts(key, kind, created_at, tags, content)
 }
 
 /// Validated metadata for a NIP-23 `kind: 30023` long-form Markdown article

@@ -14,7 +14,9 @@ mod event;
 mod nip19;
 pub mod zaps;
 
-pub use event::{Event, EventError, event_id};
+pub use event::{
+    Event, EventError, MAX_NIP13_POW_BITS, event_id, leading_zero_bits, mine_nip13_nonce,
+};
 pub use nip19::{IdentifierError, decode_note, decode_npub, encode_note, encode_npub};
 pub use zaps::{
     NUTZAP_INFO_KIND, NUTZAP_KIND, ParsedNutzap, ParsedNutzapInfo, ParsedZapReceipt,

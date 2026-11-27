@@ -477,6 +477,10 @@ pub struct PublishNoteRequest {
     /// the quoted event (required when `quote_event_id` is set).
     #[serde(default)]
     pub quote_pubkey: Option<String>,
+    /// Optional NIP-13 proof-of-work difficulty (`1..=24` leading zero bits on
+    /// the signed event id) for spam-hardened relays.
+    #[serde(default)]
+    pub pow_bits: Option<u8>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -1612,13 +1616,23 @@ impl NostrClientServer {
                 }
             };
 
+            if let Some(bits) = request.pow_bits
+                && (bits == 0 || bits > hkask_nostr_core::MAX_NIP13_POW_BITS)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "pow_bits must be between 1 and {}",
+                    hkask_nostr_core::MAX_NIP13_POW_BITS
+                )));
+            }
+
             let signed = client
-                .sign_nostr_note_with_imeta_and_quote(
+                .sign_nostr_note_with_options(
                     &final_content,
                     request.created_at,
                     &targets,
                     &imeta_attachments,
                     quote_wire.as_ref(),
+                    request.pow_bits,
                 )
                 .await
                 .map_err(|error| {
@@ -2354,6 +2368,15 @@ impl NostrClientServer {
             let root_kind = request.root_kind.unwrap_or(1);
             let explicit_ts = request.created_at;
             let content = request.content;
+            let pow_bits = request.pow_bits;
+            if let Some(bits) = pow_bits
+                && (bits == 0 || bits > hkask_nostr_core::MAX_NIP13_POW_BITS)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "pow_bits must be between 1 and {}",
+                    hkask_nostr_core::MAX_NIP13_POW_BITS
+                )));
+            }
             self.publish_signed_event("reply", |ipc, now_secs, targets| async move {
                 ipc.sign_nostr_reply(hkask_ipc_wire::nostr_wire::NostrReplyWire {
                     created_at: explicit_ts.unwrap_or(now_secs),
@@ -2363,6 +2386,7 @@ impl NostrClientServer {
                     root_kind,
                     content,
                     relays: targets,
+                    pow_bits,
                 })
                 .await
             })
@@ -2776,6 +2800,10 @@ pub struct PublishReplyRequest {
     /// Optional Unix timestamp in seconds.
     #[serde(default)]
     pub created_at: Option<u64>,
+    /// Optional NIP-13 proof-of-work difficulty (`1..=24` leading zero bits on
+    /// the signed event id) for spam-hardened relays.
+    #[serde(default)]
+    pub pow_bits: Option<u8>,
 }
 
 #[tool_handler(router = Self::nostr_client_router())]

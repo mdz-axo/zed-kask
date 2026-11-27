@@ -26,7 +26,7 @@ pub use sign::{
     NUTZAP_KIND, PROFILE_KIND, ProfileMetadata, QuoteTarget, REACTION_KIND, RELAY_LIST_KIND,
     REPOST_KIND, ReplyTarget, SignError, ZAP_REQUEST_KIND, sign_article, sign_blossom_upload_auth,
     sign_deletion, sign_dm_relays, sign_event, sign_follows, sign_highlight, sign_list,
-    sign_list_with_preserved, sign_note_with_imeta, sign_note_with_imeta_and_quote, sign_nutzap,
-    sign_nutzap_info, sign_profile, sign_reaction, sign_relay_list, sign_reply, sign_repost,
-    sign_zap_request,
+    sign_list_with_preserved, sign_note_with_imeta, sign_note_with_imeta_and_quote,
+    sign_note_with_imeta_quote_and_pow, sign_nutzap, sign_nutzap_info, sign_profile, sign_reaction,
+    sign_relay_list, sign_reply, sign_reply_with_pow, sign_repost, sign_zap_request,
 };

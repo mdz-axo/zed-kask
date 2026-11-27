@@ -184,6 +184,60 @@ pub fn event_id(
     Sha256::digest(serialized.as_bytes()).into()
 }
 
+/// Maximum NIP-13 proof-of-work difficulty supported by `mine_nip13_nonce`.
+/// Capped at 24 bits (~16M expected hashes) so signing stays interactive.
+pub const MAX_NIP13_POW_BITS: u8 = 24;
+
+/// Count the number of leading zero bits in a 32-byte NIP-01 event id (NIP-13).
+pub fn leading_zero_bits(id: &[u8; 32]) -> u8 {
+    let mut bits = 0u8;
+    for &byte in id {
+        if byte == 0 {
+            bits = bits.saturating_add(8);
+        } else {
+            bits = bits.saturating_add(byte.leading_zeros() as u8);
+            break;
+        }
+    }
+    bits
+}
+
+/// Mine a NIP-13 `["nonce", "<counter>", "<target_bits>"]` tag so the resulting
+/// NIP-01 event id has at least `target_bits` leading zero bits.
+///
+/// Returns `None` if `target_bits == 0`, `target_bits > MAX_NIP13_POW_BITS`, or
+/// the bounded iteration cap is reached without finding a match.
+pub fn mine_nip13_nonce(
+    pubkey: &[u8; 32],
+    created_at: u64,
+    kind: u16,
+    base_tags: &[Vec<String>],
+    content: &str,
+    target_bits: u8,
+) -> Option<Vec<String>> {
+    if target_bits == 0 || target_bits > MAX_NIP13_POW_BITS {
+        return None;
+    }
+    let max_attempts = (1u64 << target_bits).saturating_mul(16).max(65_536);
+    let target_str = target_bits.to_string();
+    let mut tags: Vec<Vec<String>> = base_tags
+        .iter()
+        .filter(|t| t.first().map(String::as_str) != Some("nonce"))
+        .cloned()
+        .collect();
+    let nonce_idx = tags.len();
+    tags.push(vec!["nonce".to_string(), String::new(), target_str]);
+
+    for nonce in 0..max_attempts {
+        tags[nonce_idx][1] = nonce.to_string();
+        let id = event_id(pubkey, created_at, kind, &tags, content);
+        if leading_zero_bits(&id) >= target_bits {
+            return Some(tags.pop().expect("nonce tag present"));
+        }
+    }
+    None
+}
+
 fn tags_value(tags: &[Vec<String>]) -> Value {
     Value::Array(
         tags.iter()
@@ -203,4 +257,39 @@ fn lower_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
         return None;
     }
     hex::decode(text).ok()?.try_into().ok()
+}
+
+#[cfg(test)]
+mod nip13_tests {
+    use super::*;
+
+    #[test]
+    fn leading_zero_bits_counts_prefix_zeros() {
+        let mut id = [0u8; 32];
+        id[0] = 0x00;
+        id[1] = 0x0f;
+        assert_eq!(leading_zero_bits(&id), 12);
+        id[0] = 0x80;
+        assert_eq!(leading_zero_bits(&id), 0);
+        assert_eq!(leading_zero_bits(&[0u8; 32]), 255);
+    }
+
+    #[test]
+    fn mine_nip13_nonce_meets_target_and_rejects_out_of_range() {
+        let pubkey = [7u8; 32];
+        assert!(mine_nip13_nonce(&pubkey, 1_700_000_000, 1, &[], "hi", 0).is_none());
+        assert!(
+            mine_nip13_nonce(&pubkey, 1_700_000_000, 1, &[], "hi", MAX_NIP13_POW_BITS + 1)
+                .is_none()
+        );
+
+        let tag = mine_nip13_nonce(&pubkey, 1_700_000_000, 1, &[], "hello nip-13", 10)
+            .expect("mines 10-bit nonce");
+        assert_eq!(tag.len(), 3);
+        assert_eq!(tag[0], "nonce");
+        assert_eq!(tag[2], "10");
+
+        let id = event_id(&pubkey, 1_700_000_000, 1, &[tag], "hello nip-13");
+        assert!(leading_zero_bits(&id) >= 10);
+    }
 }

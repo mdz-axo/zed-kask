@@ -190,6 +190,9 @@ pub struct NostrReplyWire {
     pub content: String,
     #[serde(default)]
     pub relays: Vec<String>,
+    /// Optional NIP-13 PoW difficulty (`1..=24` leading zero bits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pow_bits: Option<u8>,
 }
 
 /// Wire payload for requesting an editor-signed NIP-09 `kind: 5` event deletion

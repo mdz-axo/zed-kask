@@ -41,6 +41,7 @@ pub(crate) enum NostrSignOperation {
         relays: Vec<String>,
         imeta: Vec<NostrMediaAttachment>,
         quote: Option<NostrQuoteWire>,
+        pow_bits: Option<u8>,
     },
     /// Sign a short-lived BUD-11 `kind: 24242` Blossom upload authorization token.
     BlossomUpload {
@@ -198,7 +199,19 @@ pub(crate) fn admit_note(
     relays: Vec<String>,
     imeta: Vec<NostrMediaAttachment>,
     quote: Option<NostrQuoteWire>,
+    pow_bits: Option<u8>,
 ) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if let Some(bits) = pow_bits
+        && (bits == 0 || bits > hkask_nostr_core::MAX_NIP13_POW_BITS)
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            format!(
+                "pow_bits must be between 1 and {}",
+                hkask_nostr_core::MAX_NIP13_POW_BITS
+            ),
+        ));
+    }
     let (content, created_at) = admit(grant, content, created_at)?;
     if imeta.len() > MAX_MEDIA_ATTACHMENTS {
         return Err(refusal(
@@ -249,6 +262,7 @@ pub(crate) fn admit_note(
         relays,
         imeta,
         quote,
+        pow_bits,
     })
 }
 
@@ -439,6 +453,17 @@ pub(crate) fn admit_reply(
         return Err(refusal(
             "InvalidArgument",
             format!("the reply is longer than {MAX_CONTENT_CHARS} characters"),
+        ));
+    }
+    if let Some(bits) = payload.pow_bits
+        && (bits == 0 || bits > hkask_nostr_core::MAX_NIP13_POW_BITS)
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            format!(
+                "pow_bits must be between 1 and {}",
+                hkask_nostr_core::MAX_NIP13_POW_BITS
+            ),
         ));
     }
     Ok(NostrSignOperation::Reply(payload.clone()))
@@ -758,6 +783,7 @@ pub(crate) fn sign_with_slots(
             relays: Vec::new(),
             imeta: Vec::new(),
             quote: None,
+            pow_bits: None,
         },
     )
 }
@@ -802,19 +828,23 @@ fn sign_operation_with_key(
             created_at,
             imeta,
             quote,
+            pow_bits,
             ..
-        } if imeta.is_empty() && quote.is_none() => hkask_nostr_signer::sign_event(
-            &key,
-            hkask_nostr_signer::NOTE_KIND,
-            *created_at,
-            content,
-        )
-        .map_err(|error| refusal("Generation", format!("signing failed: {error}")))?,
+        } if imeta.is_empty() && quote.is_none() && pow_bits.is_none() => {
+            hkask_nostr_signer::sign_event(
+                &key,
+                hkask_nostr_signer::NOTE_KIND,
+                *created_at,
+                content,
+            )
+            .map_err(|error| refusal("Generation", format!("signing failed: {error}")))?
+        }
         NostrSignOperation::Note {
             content,
             created_at,
             imeta,
             quote,
+            pow_bits,
             ..
         } => {
             let attachments: Vec<hkask_nostr_signer::ImetaAttachment> = imeta
@@ -833,12 +863,13 @@ fn sign_operation_with_key(
                 author_pubkey_hex: q.author_pubkey_hex.clone(),
                 relay_hint: q.relay_hint.clone(),
             });
-            hkask_nostr_signer::sign_note_with_imeta_and_quote(
+            hkask_nostr_signer::sign_note_with_imeta_quote_and_pow(
                 &key,
                 *created_at,
                 content,
                 &attachments,
                 quote_target.as_ref(),
+                *pow_bits,
             )
             .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
@@ -895,8 +926,14 @@ fn sign_operation_with_key(
                 target_pubkey_hex: reply.target_pubkey_hex.clone(),
                 root_kind: reply.root_kind,
             };
-            hkask_nostr_signer::sign_reply(&key, reply.created_at, &reply.content, &target)
-                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+            hkask_nostr_signer::sign_reply_with_pow(
+                &key,
+                reply.created_at,
+                &reply.content,
+                &target,
+                reply.pow_bits,
+            )
+            .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
         NostrSignOperation::Deletion(del) => hkask_nostr_signer::sign_deletion(
             &key,
@@ -1457,11 +1494,30 @@ pub(crate) async fn sign_operation_after_approval(
             .map_err(|error| refusal("Generation", format!("ephemeral key failed: {error}")))?;
         let template = sign_operation_with_key(&ephemeral_key, &operation)?;
         drop(ephemeral_key);
+        let mut tags = template.tags().to_vec();
+        let pow_bits = match &operation {
+            NostrSignOperation::Note { pow_bits, .. } => *pow_bits,
+            NostrSignOperation::Reply(reply) => reply.pow_bits,
+            _ => None,
+        };
+        if let Some(bits) = pow_bits {
+            tags.retain(|t| t.first().map(String::as_str) != Some("nonce"));
+            let nonce_tag = hkask_nostr_core::mine_nip13_nonce(
+                &pubkey_bytes,
+                template.created_at(),
+                template.kind(),
+                &tags,
+                template.content(),
+                bits,
+            )
+            .ok_or_else(|| refusal("InvalidArgument", "failed to mine NIP-13 nonce"))?;
+            tags.push(nonce_tag);
+        }
         let approved = crate::nostr_bunker::UnsignedApprovedEvent {
             pubkey_hex,
             created_at: template.created_at(),
             kind: template.kind(),
-            tags: template.tags().to_vec(),
+            tags,
             content: template.content().to_string(),
         };
         let signed = gpui_tokio::Tokio::spawn(cx, async move {
@@ -1659,6 +1715,7 @@ mod tests {
                 fallback_urls: Vec::new(),
             }],
             None,
+            None,
         )
         .expect("imeta note admitted");
         let note_event =
@@ -1691,6 +1748,7 @@ mod tests {
                 relays: Vec::new(),
                 imeta: Vec::new(),
                 quote: None,
+                pow_bits: None,
             },
             "",
             &mut async_cx,
@@ -1721,6 +1779,7 @@ mod tests {
                 relays: Vec::new(),
                 imeta: Vec::new(),
                 quote: None,
+                pow_bits: None,
             },
             EXAMPLE_NPUB,
             &mut async_cx,
@@ -1806,6 +1865,7 @@ mod tests {
             vec!["wss://relay.damus.io".to_string()],
             vec![local_att.clone()],
             None,
+            None,
         )
         .expect_err("loopback imeta URL must be refused when publishing to public relays");
         assert_eq!(public_err.code, "InvalidArgument");
@@ -1818,6 +1878,7 @@ mod tests {
                 Some(1_700_000_000),
                 vec!["ws://127.0.0.1:7447".to_string()],
                 vec![local_att],
+                None,
                 None,
             )
             .is_ok()

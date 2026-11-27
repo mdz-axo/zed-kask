@@ -325,6 +325,9 @@ pub struct InferenceParams {
     /// Optional NIP-10 quote target (`q` + `p` tags) for `SignNostrNote`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_quote: Option<crate::nostr_wire::NostrQuoteWire>,
+    /// Optional NIP-13 PoW difficulty (`1..=24` leading zero bits) for `SignNostrNote`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_pow_bits: Option<u8>,
     /// Expiration Unix timestamp for `SignBlossomUpload` (`BUD-11` `expiration` tag).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blossom_expiration: Option<u64>,

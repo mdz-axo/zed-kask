@@ -1040,6 +1040,7 @@ async fn dispatch(
                 params.nostr_relays.clone().unwrap_or_default(),
                 params.nostr_imeta.clone(),
                 params.nostr_quote.clone(),
+                params.nostr_pow_bits,
             ),
             InferenceMethod::SignBlossomUpload => crate::nostr_signing::admit_blossom_upload(
                 params.tool_grant.as_deref(),
