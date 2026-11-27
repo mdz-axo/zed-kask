@@ -19,7 +19,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use hyper::body::Incoming;
 use hyper::header::{
-    ACCEPT, CONNECTION, CONTENT_TYPE, HOST, HeaderValue, ORIGIN, SEC_WEBSOCKET_ACCEPT, UPGRADE,
+    ACCEPT, CACHE_CONTROL, CONNECTION, CONTENT_TYPE, HOST, HeaderValue, ORIGIN,
+    SEC_WEBSOCKET_ACCEPT, UPGRADE,
 };
 use hyper::server::conn::http1;
 use hyper::service::Service;
@@ -132,10 +133,12 @@ impl Service<Request<Incoming>> for Front {
             Decision::NotFound => text(StatusCode::NOT_FOUND, ""),
             Decision::RelayInfo => {
                 let mut response = Response::new(self.relay_info.clone());
-                response.headers_mut().insert(
+                let headers = response.headers_mut();
+                headers.insert(
                     CONTENT_TYPE,
                     HeaderValue::from_static("application/nostr+json"),
                 );
+                headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
                 response
             }
             Decision::Upgrade { accept_key } => match HeaderValue::from_str(&accept_key) {

@@ -21,6 +21,8 @@ use crate::admission::{DECISION_LOG_CAPACITY, Gate, REJECTED_KINDS, WebsocketPol
 use crate::config::{Config, is_secret_key_like, redact_sensitive_input};
 use crate::sync::{self, SyncError};
 
+/// The most concurrent WebSocket connections the local relay engine accepts.
+pub const MAX_CONNECTIONS: usize = 64;
 /// The most events one `nostr_relay_query` returns.
 pub const MAX_QUERY_EVENTS: usize = 100;
 /// Events returned when the caller sets no limit.
@@ -75,7 +77,8 @@ hkask_mcp_server::mcp_server!(
 );
 
 /// The NIP-11 document the accept layer serves. It states the relay's limits
-/// so a connecting app can read them.
+/// directly from enforced constants so advertised capabilities cannot drift
+/// from runtime behavior.
 pub fn relay_info_document() -> String {
     json!({
         "name": "zed-kask local relay",
@@ -83,7 +86,11 @@ pub fn relay_info_document() -> String {
         "software": "hkask-mcp-nostr-relay",
         "version": env!("CARGO_PKG_VERSION"),
         "supported_nips": SUPPORTED_NIPS,
-        "limitation": { "restricted_writes": true },
+        "limitation": {
+            "auth_required": false,
+            "payment_required": false,
+            "restricted_writes": true,
+        },
     })
     .to_string()
 }
@@ -548,7 +555,7 @@ pub async fn open_relay(config: Config, store_path: &Path) -> Result<RelayState,
     let gate = Arc::new(Gate::new(config.authors.clone()));
     let relay = LocalRelay::builder()
         .database(store.clone())
-        .max_connections(64)
+        .max_connections(MAX_CONNECTIONS)
         // The gate already refuses these kinds on both paths. The engine's
         // own blacklist is a second check on the websocket path.
         .blacklist_kinds(&REJECTED_KINDS)
@@ -745,6 +752,8 @@ mod tests {
     fn the_relay_info_document_states_the_write_restriction_and_claims_only_built_nips() {
         let document: serde_json::Value =
             serde_json::from_str(&relay_info_document()).expect("valid JSON");
+        assert_eq!(document["limitation"]["auth_required"], false);
+        assert_eq!(document["limitation"]["payment_required"], false);
         assert_eq!(document["limitation"]["restricted_writes"], true);
         assert_eq!(document["software"], "hkask-mcp-nostr-relay");
         assert_eq!(document["supported_nips"], json!(SUPPORTED_NIPS));

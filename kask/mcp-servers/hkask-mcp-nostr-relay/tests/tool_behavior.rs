@@ -96,8 +96,8 @@ async fn publish(url: &str, event: &Event) -> (usize, Vec<String>) {
     }
 }
 
-/// Send one raw HTTP request and return the response's status line and body.
-async fn raw_request(port: u16, request: String) -> (String, String) {
+/// Send one raw HTTP request and return the response's status line, header block, and body.
+async fn raw_response(port: u16, request: String) -> (String, String, String) {
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
         .await
         .expect("connects");
@@ -109,17 +109,19 @@ async fn raw_request(port: u16, request: String) -> (String, String) {
         .expect("reads");
     let text = String::from_utf8_lossy(&buffer[..read]).to_string();
     let status = text.lines().next().unwrap_or_default().to_string();
-    let body = text
-        .split("\r\n\r\n")
-        .nth(1)
-        .unwrap_or_default()
-        .to_string();
+    let (headers, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
     assert!(
         !text
             .to_ascii_lowercase()
             .contains("access-control-allow-origin"),
         "no response may carry Access-Control-Allow-Origin: {text}"
     );
+    (status, headers.to_string(), body.to_string())
+}
+
+/// Send one raw HTTP request and return the response's status line and body.
+async fn raw_request(port: u16, request: String) -> (String, String) {
+    let (status, _headers, body) = raw_response(port, request).await;
     (status, body)
 }
 
@@ -278,9 +280,17 @@ async fn the_listener_serves_a_relay_info_document_only_without_an_origin() {
             fx.port
         )
     };
-    let (status, body) = raw_request(fx.port, get("")).await;
+    let (status, headers, body) = raw_response(fx.port, get("")).await;
     assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("cache-control: no-store"),
+        "NIP-11 response must carry Cache-Control: no-store: {headers}"
+    );
     let document: serde_json::Value = serde_json::from_str(&body).expect("NIP-11 JSON");
+    assert_eq!(document["limitation"]["auth_required"], false);
+    assert_eq!(document["limitation"]["payment_required"], false);
     assert_eq!(document["limitation"]["restricted_writes"], true);
 
     let (status, _) = raw_request(fx.port, get("Origin: https://evil.example\r\n")).await;

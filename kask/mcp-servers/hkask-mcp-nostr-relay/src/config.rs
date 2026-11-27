@@ -90,8 +90,11 @@ fn domain_is_public(name: &str) -> bool {
 /// Accept a relay address for sync only if it is `wss://`, carries no
 /// credentials, and its host is not this machine or a private network.
 ///
-/// The check is on the literal host. A public name that resolves to a
-/// private address is not caught here.
+/// This startup check inspects the literal host; `sync::run_with` also
+/// resolves DNS before connecting and refuses any `wss://` relay whose
+/// resolved addresses include a non-public IP (note: `nostr-sdk`'s connector
+/// performs its own dial-time lookup, so a mid-handshake DNS rebind remains a
+/// residual transport limit).
 pub fn validate_sync_relay(raw: &str) -> Result<RelayUrl, RelayAddressError> {
     let url = RelayUrl::parse(raw.trim()).map_err(|_| RelayAddressError::Unparseable)?;
     let text = url.as_str();
