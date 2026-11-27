@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 pub(crate) const NIP46_KIND: u16 = 24_133;
 
 /// Maximum time to wait for the remote bunker to reply to `sign_event`.
-const BUNKER_RPC_TIMEOUT: Duration = Duration::from_secs(20);
+/// Set to 45 s so hardware/mobile NIP-46 signers whose on-screen approval
+/// window stays open for 30 s (e.g. Heartwood, Amber) do not time out mid-tap.
+const BUNKER_RPC_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Parsed, SSRF-validated NIP-46 `bunker://` connection configuration.
 #[derive(Debug, Clone)]
