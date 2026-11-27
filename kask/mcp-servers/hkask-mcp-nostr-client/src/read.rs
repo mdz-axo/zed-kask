@@ -464,6 +464,18 @@ impl Drop for Session {
     }
 }
 
+/// Clone a filter for client-side verification of relay answers.
+///
+/// Structural fields (`authors`, `ids`, `kinds`, `since`, `until`, tags) remain
+/// strictly enforced, while `search` is cleared because NIP-50 relays perform
+/// tokenized full-text matching and accept extensions (`observer:<hex>`,
+/// `include:spam`) that literal client-side substring matching would drop.
+fn filter_for_client_match(filter: &Filter) -> Filter {
+    let mut check = filter.clone();
+    check.search = None;
+    check
+}
+
 /// One relay's answer: the events kept, how many were dropped, and how the
 /// read ended.
 async fn read_slot(
@@ -488,6 +500,7 @@ async fn read_slot(
         }
     };
 
+    let client_filters: Vec<Filter> = filters.iter().map(filter_for_client_match).collect();
     let mut events: Vec<Event> = Vec::new();
     let mut dropped = 0usize;
     let ended = tokio::time::timeout(READ_TIMEOUT, async {
@@ -496,7 +509,7 @@ async fn read_slot(
                 Ok(event) => event,
                 Err(error) => return Ended::Error(error.to_string()),
             };
-            let asked_for = filters
+            let asked_for = client_filters
                 .iter()
                 .any(|filter| filter.match_event(&event, MatchEventOptions::new()));
             if !asked_for
@@ -543,4 +556,45 @@ pub fn wire_event(event: &Event, served_by: &[String]) -> WireEvent {
     );
     wire.served_by = served_by.to_vec();
     wire
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_match_keeps_structural_filters_while_allowing_nip50_tokenized_search() {
+        let author_hex = "2".repeat(64);
+        let other_hex = "4".repeat(64);
+        let author = PublicKey::from_hex(&author_hex).expect("author pk");
+
+        let mk_event = |id_ch: &str, pubkey: &str, kind: u16, content: &str| -> Event {
+            serde_json::from_value(json!({
+                "id": id_ch.repeat(64),
+                "pubkey": pubkey,
+                "created_at": 1_700_000_000u64,
+                "kind": kind,
+                "tags": [],
+                "content": content,
+                "sig": "3".repeat(128),
+            }))
+            .expect("parses test event")
+        };
+
+        let matching = mk_event("1", &author_hex, 1, "ContextVM bridges MCP over Nostr");
+        let wrong_kind = mk_event("5", &author_hex, 7, "+");
+        let wrong_author = mk_event("6", &other_hex, 1, "ContextVM bridges MCP over Nostr");
+
+        let filter = Filter::new().kind(Kind::TextNote).author(author).search(
+            "ContextVM observer:f063ef1d19c85c7b02a52f00a436d4b20e2b16180fe5f35a34b7f7325782d618",
+        );
+
+        // Raw match_event would reject because the NIP-50 observer token isn't literal content.
+        assert!(!filter.match_event(&matching, MatchEventOptions::new()));
+
+        let check = filter_for_client_match(&filter);
+        assert!(check.match_event(&matching, MatchEventOptions::new()));
+        assert!(!check.match_event(&wrong_kind, MatchEventOptions::new()));
+        assert!(!check.match_event(&wrong_author, MatchEventOptions::new()));
+    }
 }

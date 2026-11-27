@@ -547,6 +547,7 @@ impl Default for NostrViewer {
 enum SearchMode {
     Local,
     Nip50,
+    Nip50Wot,
     ScopedRelay,
 }
 
@@ -2431,6 +2432,57 @@ impl NostrViewer {
         ed
     }
 
+    fn run_scoped_relay_url(&mut self, relay_url: String, cx: &mut Context<Self>) {
+        let trimmed = relay_url.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        let epoch = self.search_request.begin();
+        cx.notify();
+        let feed_title = format!("Relay: {trimmed}");
+        let task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            FETCH_TOOL,
+            json!({ "relays": [trimmed], "kinds": [1, 9802, 30023], "limit": 50 }),
+        ) {
+            Ok(t) => t,
+            Err(err) => {
+                self.search_request.finish(epoch, Some(err));
+                cx.notify();
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result =
+                content_of(FETCH_TOOL, task.await).and_then(|content| {
+                    match parse_surfaced(&content, FeedOrigin::Conversation) {
+                        Some(Ok(Surfaced::Feed(mut feed))) => {
+                            feed.name = feed_title.into();
+                            Ok(feed)
+                        }
+                        Some(Err(err)) => Err(err),
+                        _ => Err(format!("{FETCH_TOOL} returned no list of events")),
+                    }
+                });
+            this.update(cx, |this, cx| {
+                let (feed, err) = match result {
+                    Ok(feed) => (Some(feed), None),
+                    Err(err) => (None, Some(err)),
+                };
+                if !this.search_request.finish(epoch, err) {
+                    return;
+                }
+                if let Some(feed) = feed {
+                    this.search_feed = Some(feed);
+                    this.selected = None;
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     fn run_search(&mut self, mode: SearchMode, cx: &mut Context<Self>) {
         let query = self
             .search_editor
@@ -2457,6 +2509,19 @@ impl NostrViewer {
                 FeedOrigin::Conversation,
                 format!("NIP-50 search: \"{query}\""),
             ),
+            SearchMode::Nip50Wot => {
+                let wot_query = match self.my_pubkey_hex(cx) {
+                    Some(hex) if !query.contains("observer:") => format!("{query} observer:{hex}"),
+                    _ => query.clone(),
+                };
+                (
+                    NOSTR_CLIENT_SERVER,
+                    FETCH_TOOL,
+                    json!({ "search": wot_query, "kinds": [1, 9802, 30023], "limit": 50 }),
+                    FeedOrigin::Conversation,
+                    format!("WoT search: \"{query}\""),
+                )
+            }
             SearchMode::ScopedRelay => {
                 let relays: Vec<String> = query
                     .split(',')
@@ -4584,6 +4649,16 @@ impl NostrViewer {
                                         })),
                                 )
                                 .child(
+                                    ui::Button::new("nostr-search-nip50-wot", "WoT")
+                                        .label_size(LabelSize::XSmall)
+                                        .tooltip(ui::Tooltip::text(
+                                            "NIP-50 search with observer:<your-pubkey> for WoT-ranked relays (e.g. search.brainstorm.world)",
+                                        ))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.run_search(SearchMode::Nip50Wot, cx);
+                                        })),
+                                )
+                                .child(
                                     ui::Button::new("nostr-search-scoped-relay", "Relay")
                                         .label_size(LabelSize::XSmall)
                                         .tooltip(ui::Tooltip::text(
@@ -4605,6 +4680,40 @@ impl NostrViewer {
                                     )
                                 }),
                         )
+                        .when(!KaskSettings::get_global(cx).nostr.seed_relays.is_empty(), |col| {
+                            let seed_relays =
+                                KaskSettings::get_global(cx).nostr.seed_relays.clone();
+                            col.child(
+                                h_flex()
+                                    .w_full()
+                                    .pt_0p5()
+                                    .gap_1()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .child(
+                                        Label::new("Relays:")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .children(seed_relays.into_iter().enumerate().map(
+                                        |(idx, url)| {
+                                            let label = host_of(&url);
+                                            let target = url.clone();
+                                            ui::Button::new(
+                                                ("nostr-relay-chip", idx),
+                                                label,
+                                            )
+                                            .label_size(LabelSize::XSmall)
+                                            .tooltip(ui::Tooltip::text(format!(
+                                                "Browse {url} exclusively (role: scoped)"
+                                            )))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.run_scoped_relay_url(target.clone(), cx);
+                                            }))
+                                        },
+                                    )),
+                            )
+                        })
                     })
                     .children(Self::request_line(&self.search_request, "Searching…"))
                     .child(Self::remarks(&feed.remarks))
