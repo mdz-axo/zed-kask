@@ -526,13 +526,14 @@ impl KanbanServer {
                     })
                     .collect(),
                 reasoning,
+                declared_assumptions,
             };
             respond(
                 self.service.goal_judge(gid, &goal_verdict, self.webid),
                 |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
                     verdict: verdict_value.as_str().to_string(),
-                    declared_assumptions,
+                    declared_assumptions: goal_verdict.declared_assumptions,
                 },
             )
         })

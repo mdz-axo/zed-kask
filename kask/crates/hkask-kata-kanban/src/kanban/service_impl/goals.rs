@@ -479,6 +479,9 @@ impl KanbanService {
         for result in &verdict.criterion_results {
             nonempty(&result.note, "criterion evidence note")?;
         }
+        for assumption in &verdict.declared_assumptions {
+            nonempty(assumption, "declared_assumptions entry")?;
+        }
         Ok(goal)
     }
     pub fn goal_close_native(

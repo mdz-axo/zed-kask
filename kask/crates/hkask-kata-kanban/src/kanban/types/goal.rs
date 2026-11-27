@@ -300,6 +300,12 @@ pub struct GoalVerdict {
     pub confidence: f64,
     pub criterion_results: Vec<CriterionJudgment>,
     pub reasoning: String,
+    /// Optional explicit assumptions declared alongside the worker verdict
+    /// (Notes on Architectural Grounding, Implication 18; fish-papers PDCA-1).
+    /// Validated non-blank by `KanbanService::goal_judge`; `goal_judge` remains
+    /// a read-only check (KK-17) so `Goal` and its `schema_version` are unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_assumptions: Vec<String>,
 }
 
 /// The artifact-locator rejection is a display message, not a dispatch

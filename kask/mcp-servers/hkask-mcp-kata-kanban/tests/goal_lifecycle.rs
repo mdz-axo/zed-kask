@@ -689,12 +689,19 @@ fn declaration_and_worker_progress_preserve_exact_criterion_obligations() {
             note: "Not working".into(),
         }],
         reasoning: "Observed failure".into(),
+        declared_assumptions: Vec::new(),
     };
     assert!(
         f.service.goal_judge(goal.id, &report, f.owner).is_err(),
         "done cannot contradict failed criteria"
     );
     report.verdict = GoalVerdictValue::Continue;
+    report.declared_assumptions = vec!["   ".into()];
+    assert!(
+        f.service.goal_judge(goal.id, &report, f.owner).is_err(),
+        "blank declared_assumptions entry must be rejected at the service layer"
+    );
+    report.declared_assumptions = vec!["verified against local fixture".into()];
     f.service
         .goal_judge(goal.id, &report, f.owner)
         .expect("honest progress");
@@ -732,6 +739,7 @@ fn an_accepted_judge_call_leaves_the_stored_goal_unchanged() {
             note: "Work remains".into(),
         }],
         reasoning: "Observed progress".into(),
+        declared_assumptions: Vec::new(),
     };
     f.advance(60);
     for _ in 0..3 {
@@ -922,6 +930,7 @@ fn acn_verdict_human_closure_boundary() {
             note: "All ACN loopback invariants passed".into(),
         }],
         reasoning: "ACN Layer 1-3 verdict passed; awaiting human PI closure".into(),
+        declared_assumptions: Vec::new(),
     };
 
     let judged = f

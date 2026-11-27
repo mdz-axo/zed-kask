@@ -601,15 +601,17 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
     DerivedConcept {
         term: "rubric",
         aliases: &["rubrics", "evaluation rubric", "target rubrics"],
-        identity: "a named, typed pass/fail criterion declared before measurement and verified by a deterministic check",
-        definition: "The Agentic Scientist's machine-checkable experiment criterion (Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist: Orchestrating Coding Agents for Automated Scientific (Co-)Discovery, arXiv:2610.18933, 2026): each declared experiment carries a rubric bundle — at least one metric rubric and at least one implementation rubric, with stable snake_case ids and concrete measurable descriptions — and each rubric's verification is a typed check (source_contains / not_contains / regex patterns, or a recorded harness report), assessed as passed / failed / not_assessed. In zed-kask it grounds the experimentation server's typed rubric block on experiment_propose and shares its verification vocabulary with the recorded-run evaluator kinds — one grammar from declaration to recorded run.",
+        identity: "a named, typed pass/fail criterion container declared before measurement and partitioned by Rubric.authority across deterministic checks, pinned AI judges, and named human signers",
+        definition: "The typed experiment criterion container (Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933, 2026; reconciled with Labra & Pfeifer, Notes on Architectural Grounding, 2026, and Karpowicz, arXiv:2506.06382 Thm 11): each declared experiment carries a rubric bundle — at least one metric rubric, at least one implementation or grounded_report rubric, and optional disqualifier rubrics naming Goodhart hard-voids — with stable snake_case ids and concrete measurable descriptions. Each rubric's assessment authority (deterministic, pinned_ai_judge, or named_human) partitions criteria across non-substitutable D, P, and Human PI layers: deterministic checks certify conformance to a decidable closure, pinned AI judges are strictly advisory and never sole authority for disqualifiers, and named human signers hold criteria authorship and final closure.",
         constituents: &[
             "metric rubric",
             "implementation rubric",
+            "disqualifier",
+            "procedural_trust",
             "verification",
             "assessment",
         ],
-        authority: "operator ruling 2026-10-15 (agentic-scientist-v3 integration, decision D3); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
+        authority: "operator ruling 2026-10-15 (agentic-scientist-v3 integration, decision D3) & operator ruling 2026-11-26 (fish-papers PDCA-2 reconciliation); Lange et al., arXiv:2610.18933 (2026); Karpowicz, arXiv:2506.06382 (2026); Labra & Pfeifer (2026)",
     },
     DerivedConcept {
         term: "ablation",

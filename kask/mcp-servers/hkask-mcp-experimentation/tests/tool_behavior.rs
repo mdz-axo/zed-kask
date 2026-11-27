@@ -213,6 +213,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
             selected_variant_id: Some(challenger_id.clone()),
             reject_reasons: Vec::new(),
             algedonic_reference: Some("algedonic 2026-09-30#1".to_string()),
+            rubric_outcomes: Vec::new(),
         }
     );
     assert_eq!(selection["status"], "resolved");
@@ -688,6 +689,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             selected_variant_id: None,
             reject_reasons: vec!["closed to test post-resolution refusal".to_string()],
             algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
         }))
         .await
         .expect("selection succeeds");
@@ -717,6 +719,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             selected_variant_id: None,
             reject_reasons: Vec::new(),
             algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
         }))
         .await
         .expect_err("selected without a variant rejected");
@@ -729,6 +732,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             selected_variant_id: None,
             reject_reasons: Vec::new(),
             algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
         }))
         .await
         .expect_err("rejected without reasons rejected");
@@ -1200,6 +1204,7 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
             reject_reasons: Vec::new(),
             algedonic_reference: None,
             scientific_outcome: Some("evidence_of_practical_equivalence".to_string()),
+            rubric_outcomes: Vec::new(),
         }
     );
     assert_eq!(
@@ -1229,6 +1234,7 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
             reject_reasons: Vec::new(),
             algedonic_reference: None,
             scientific_outcome: Some("inconclusive".to_string()),
+            rubric_outcomes: Vec::new(),
         }))
         .await
         .expect_err("both resolutions refused");
@@ -2049,6 +2055,7 @@ async fn acn_disqualifier_void_refusal() {
                 "disqualifier no_unattended_spend triggered: payout voided".to_string()
             ],
             algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
         }
     );
     assert_eq!(rejected["status"], "resolved");
@@ -2061,11 +2068,211 @@ async fn acn_disqualifier_void_refusal() {
             selected_variant_id: Some(baseline_id),
             reject_reasons: Vec::new(),
             algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
         }))
         .await
         .expect_err("voided experiment cannot be subsequently selected");
     assert!(
         bypass_err.to_string().contains("already resolved"),
         "{bypass_err}"
+    );
+}
+
+/// Fish-papers PDCA-1 (ADOPT-2 + ADOPT-3):
+/// 1) `kind: disqualifier` refuses `None` or `pinned_ai_judge` authority.
+/// 2) Affirmative `selection_record` refuses omission of any declared disqualifier.
+/// 3) Affirmative `selection_record` refuses any `triggered: true` disqualifier.
+/// 4) Clearing all declared disqualifiers (`triggered: false`) succeeds and persists `rubric_outcomes`.
+#[tokio::test]
+async fn sealed_disqualifier_blocks_omission_and_trigger_and_rejects_ai_judge_authority() {
+    use hkask_experimentation::types::{
+        DisqualifierOutcome, RUBRIC_AUTHORITY_DETERMINISTIC, RUBRIC_AUTHORITY_PINNED_AI_JUDGE,
+        RUBRIC_KIND_DISQUALIFIER,
+    };
+
+    let server = make_server();
+
+    // ADOPT-3: disqualifier with pinned_ai_judge authority is refused.
+    let mut ai_disq = proposal("skill");
+    ai_disq.rubrics.push(Rubric {
+        id: "no_goodhart_shortcut".to_string(),
+        description: "hard void on test bypass".to_string(),
+        kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+        verification: RubricVerification::NotContains {
+            spec: "BYPASS".to_string(),
+        },
+        authority: Some(RUBRIC_AUTHORITY_PINNED_AI_JUDGE.to_string()),
+    });
+    let err = server
+        .experiment_propose(Parameters(ai_disq))
+        .await
+        .expect_err("pinned_ai_judge cannot authorize a disqualifier");
+    assert_eq!(err.kind, McpErrorKind::InvalidArgument);
+
+    // ADOPT-3: disqualifier with None authority is refused.
+    let mut none_disq = proposal("skill");
+    none_disq.rubrics.push(Rubric {
+        id: "no_goodhart_shortcut".to_string(),
+        description: "hard void on test bypass".to_string(),
+        kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+        verification: RubricVerification::NotContains {
+            spec: "BYPASS".to_string(),
+        },
+        authority: None,
+    });
+    let err = server
+        .experiment_propose(Parameters(none_disq))
+        .await
+        .expect_err("untagged disqualifier must be refused");
+    assert_eq!(err.kind, McpErrorKind::InvalidArgument);
+
+    // Valid deterministic disqualifier seals cleanly.
+    let mut valid = proposal("skill");
+    valid.rubrics.push(Rubric {
+        id: "no_goodhart_shortcut".to_string(),
+        description: "hard void on test bypass".to_string(),
+        kind: RUBRIC_KIND_DISQUALIFIER.to_string(),
+        verification: RubricVerification::NotContains {
+            spec: "BYPASS".to_string(),
+        },
+        authority: Some(RUBRIC_AUTHORITY_DETERMINISTIC.to_string()),
+    });
+    let exp_id = invoke_tool!(server, experiment_propose, valid)["experiment"]["id"]
+        .as_str()
+        .expect("exp id")
+        .to_string();
+    let baseline_id = register_variant_with_role(
+        &server,
+        &exp_id,
+        "baseline",
+        None,
+        Some("baseline"),
+    )
+    .await["variant"]["id"]
+        .as_str()
+        .expect("baseline id")
+        .to_string();
+    invoke_tool!(
+        server,
+        fitness_record,
+        FitnessRecordRequest {
+            experiment_id: exp_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["base-run-1".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.5})),
+            seal_id: None,
+            declared_assumptions: Vec::new(),
+        }
+    );
+    let seal_id = invoke_tool!(
+        server,
+        experiment_seal,
+        ExperimentSealRequest {
+            experiment_id: exp_id.clone(),
+            baseline_variant_id: baseline_id.clone(),
+            baseline_pass_rate: Some(0.5),
+            scientific_headroom: None,
+        }
+    )["seal"]["id"]
+        .as_str()
+        .expect("seal id")
+        .to_string();
+    let challenger_id =
+        register_variant_with_role(&server, &exp_id, "challenger", None, Some("challenger")).await
+            ["variant"]["id"]
+            .as_str()
+            .expect("challenger id")
+            .to_string();
+    invoke_tool!(
+        server,
+        fitness_record,
+        FitnessRecordRequest {
+            experiment_id: exp_id.clone(),
+            variant_id: challenger_id.clone(),
+            runs: vec!["chal-run-1".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.9})),
+            seal_id: Some(seal_id),
+            declared_assumptions: Vec::new(),
+        }
+    );
+
+    // ADOPT-2: omitting rubric_outcomes refuses affirmative selection.
+    let omitted_err = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: exp_id.clone(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
+            selected_variant_id: Some(challenger_id.clone()),
+            reject_reasons: Vec::new(),
+            algedonic_reference: None,
+            rubric_outcomes: Vec::new(),
+        }))
+        .await
+        .expect_err("omitted disqualifier outcome must block selection");
+    assert_eq!(omitted_err.kind, McpErrorKind::FailedPrecondition);
+
+    // ADOPT-2: triggered disqualifier refuses affirmative selection.
+    let triggered_err = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: exp_id.clone(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
+            selected_variant_id: Some(challenger_id.clone()),
+            reject_reasons: Vec::new(),
+            algedonic_reference: None,
+            rubric_outcomes: vec![DisqualifierOutcome {
+                rubric_id: "no_goodhart_shortcut".to_string(),
+                triggered: true,
+                evidence_ref: Some("chal-run-1".to_string()),
+            }],
+        }))
+        .await
+        .expect_err("triggered disqualifier must block selection");
+    assert_eq!(triggered_err.kind, McpErrorKind::FailedPrecondition);
+
+    // ADOPT-2: clearing every declared disqualifier succeeds and persists rubric_outcomes.
+    let resolved = invoke_tool!(
+        server,
+        selection_record,
+        SelectionRecordRequest {
+            experiment_id: exp_id.clone(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
+            selected_variant_id: Some(challenger_id),
+            reject_reasons: Vec::new(),
+            algedonic_reference: Some("algedonic 2026-11-26#1".to_string()),
+            rubric_outcomes: vec![DisqualifierOutcome {
+                rubric_id: "no_goodhart_shortcut".to_string(),
+                triggered: false,
+                evidence_ref: Some("chal-run-1".to_string()),
+            }],
+        }
+    );
+    assert_eq!(resolved["status"], "resolved");
+    assert_eq!(
+        resolved["selection"]["rubric_outcomes"],
+        serde_json::json!([{
+            "rubric_id": "no_goodhart_shortcut",
+            "triggered": false,
+            "evidence_ref": "chal-run-1"
+        }])
+    );
+
+    let lineage = invoke_tool!(
+        server,
+        lineage_read,
+        LineageReadRequest {
+            artifact_ref: exp_id,
+        }
+    );
+    assert_eq!(
+        lineage["selections"][0]["rubric_outcomes"][0]["rubric_id"],
+        "no_goodhart_shortcut"
+    );
+    assert_eq!(
+        lineage["selections"][0]["rubric_outcomes"][0]["triggered"],
+        false
     );
 }

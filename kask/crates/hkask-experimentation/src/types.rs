@@ -215,6 +215,17 @@ pub fn validate_rubrics(rubrics: &[Rubric]) -> Result<(), ExperimentationError> 
         {
             return Err(ExperimentationError::UnknownRubricAuthority(auth.clone()));
         }
+        if rubric.kind == RUBRIC_KIND_DISQUALIFIER
+            && !matches!(
+                rubric.authority.as_deref(),
+                Some(RUBRIC_AUTHORITY_DETERMINISTIC | RUBRIC_AUTHORITY_NAMED_HUMAN)
+            )
+        {
+            return Err(ExperimentationError::InvalidDisqualifierAuthority(
+                rubric.id.clone(),
+                rubric.authority.clone(),
+            ));
+        }
     }
     if !rubrics.iter().any(|r| r.kind == RUBRIC_KIND_METRIC) {
         return Err(ExperimentationError::RubricsMissingKind(RUBRIC_KIND_METRIC));
@@ -354,6 +365,22 @@ pub struct FitnessRecord {
     pub created_at: String,
 }
 
+/// Declared outcome for one `kind: disqualifier` rubric at selection time
+/// (fish-papers PDCA-1 / ADOPT-2). Every sealed disqualifier must be accounted
+/// for on affirmative resolutions (`selected`, `corroborated`,
+/// `evidence_of_practical_equivalence`); any triggered disqualifier voids
+/// affirmative selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DisqualifierOutcome {
+    /// The `id` of a declared `kind: disqualifier` rubric on this experiment.
+    pub rubric_id: String,
+    /// Whether the disqualifier fired (`true` voids affirmative selection).
+    pub triggered: bool,
+    /// Optional run or harness artifact reference backing this assessment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ref: Option<String>,
+}
+
 /// A selection fossil — selected and rejected both retained (§P8.7-Q4).
 #[derive(Debug, Clone, Serialize)]
 pub struct SelectionRecord {
@@ -368,6 +395,9 @@ pub struct SelectionRecord {
     /// `None` for legacy `selected`/`rejected` selections; the calibration
     /// record keys on this field, never on reject-reason text.
     pub scientific_outcome: Option<String>,
+    /// Recorded outcomes for declared `kind: disqualifier` rubrics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rubric_outcomes: Vec<DisqualifierOutcome>,
     pub created_at: String,
 }
 
@@ -529,6 +559,24 @@ pub enum ExperimentationError {
     UnknownRubricKind(String),
     #[error("rubric authority must be one of {}; got {:?}", RUBRIC_AUTHORITIES.join(", "), .0)]
     UnknownRubricAuthority(String),
+    #[error(
+        "disqualifier rubric {0:?} requires authority 'deterministic' or 'named_human' (probabilistic pinned_ai_judge or untagged authority cannot hard-void); got {1:?}"
+    )]
+    InvalidDisqualifierAuthority(String, Option<String>),
+    #[error(
+        "affirmative resolution requires rubric_outcomes covering every declared disqualifier rubric — missing: {0:?}"
+    )]
+    DisqualifierOutcomeMissing(Vec<String>),
+    #[error(
+        "affirmative resolution refused: disqualifier rubric(s) triggered: {0:?} — resolve as rejected or void"
+    )]
+    DisqualifierTriggered(Vec<String>),
+    #[error(
+        "rubric_outcomes references {0:?}, which is not a declared disqualifier rubric on this experiment"
+    )]
+    UnknownDisqualifierOutcome(String),
+    #[error("duplicate rubric_outcomes entry for disqualifier rubric {0:?}")]
+    DuplicateDisqualifierOutcome(String),
     #[error("duplicate rubric id {0:?} — rubric ids must be unique and stable")]
     DuplicateRubricId(String),
     #[error(

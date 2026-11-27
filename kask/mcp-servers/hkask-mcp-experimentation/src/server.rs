@@ -25,9 +25,9 @@ use serde::Deserialize;
 
 use hkask_experimentation::store::ExperimentationStore;
 use hkask_experimentation::types::{
-    ExperimentStatus, ExperimentationError, LAYERS, Prediction, Rubric, SCIENTIFIC_OUTCOMES,
-    ScientificHeadroom, VARIANT_ROLE_CHALLENGER, VARIANT_ROLES, VERDICTS, validate_design_spec,
-    validate_rubrics,
+    DisqualifierOutcome, ExperimentStatus, ExperimentationError, LAYERS, Prediction, Rubric,
+    SCIENTIFIC_OUTCOMES, ScientificHeadroom, VARIANT_ROLE_CHALLENGER, VARIANT_ROLES, VERDICTS,
+    validate_design_spec, validate_rubrics,
 };
 
 hkask_mcp_server::mcp_server!(
@@ -61,6 +61,9 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::RubricsMissingKind(_)
         | ExperimentationError::UnknownRubricKind(_)
         | ExperimentationError::UnknownRubricAuthority(_)
+        | ExperimentationError::InvalidDisqualifierAuthority(..)
+        | ExperimentationError::UnknownDisqualifierOutcome(_)
+        | ExperimentationError::DuplicateDisqualifierOutcome(_)
         | ExperimentationError::DuplicateRubricId(_)
         | ExperimentationError::RubricIdInvalid(_)
         | ExperimentationError::UnknownVariantRole(_)
@@ -85,7 +88,9 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::ExperimentNotSealed(_)
         | ExperimentationError::SealCitationMissing(..)
         | ExperimentationError::NoHeadroom(_)
-        | ExperimentationError::SealFitnessMissing => {
+        | ExperimentationError::SealFitnessMissing
+        | ExperimentationError::DisqualifierOutcomeMissing(_)
+        | ExperimentationError::DisqualifierTriggered(_) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
         ExperimentationError::Database(_) | ExperimentationError::Serialization(_) => {
@@ -301,6 +306,12 @@ pub struct SelectionRecordRequest {
     #[serde(default)]
     #[schemars(schema_with = "optional_outcome_schema")]
     pub scientific_outcome: Option<String>,
+    /// Recorded outcomes for declared `kind: disqualifier` rubrics. Required on
+    /// affirmative resolutions (`selected`, `corroborated`,
+    /// `evidence_of_practical_equivalence`) whenever the experiment declares
+    /// disqualifier rubrics; any triggered disqualifier voids selection.
+    #[serde(default)]
+    pub rubric_outcomes: Vec<DisqualifierOutcome>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -560,6 +571,7 @@ impl ExperimentationServer {
             reject_reasons,
             algedonic_reference,
             scientific_outcome,
+            rubric_outcomes,
         }): Parameters<SelectionRecordRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "selection_record", async {
@@ -668,13 +680,14 @@ impl ExperimentationServer {
             }
             let (record, experiment) = self
                 .store
-                .record_selection(
+                .record_selection_with_outcomes(
                     &experiment_id,
                     &token,
                     selected_variant_id.as_deref(),
                     &reject_reasons,
                     algedonic_reference.as_deref(),
                     scientific_outcome.as_deref(),
+                    &rubric_outcomes,
                 )
                 .map_err(map_experimentation_error)?;
             Ok(crate::ontology::annotate(

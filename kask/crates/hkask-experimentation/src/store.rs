@@ -19,11 +19,13 @@ use hkask_storage::database::value::{DbRow, DbValue};
 use sha2::{Digest, Sha256};
 
 use crate::types::{
-    ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
-    FinalEvaluationRecord, FitnessRecord, Prediction, Rubric, SCIENTIFIC_OUTCOME_REJECTED,
-    SCIENTIFIC_OUTCOMES, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, ScientificHeadroom,
-    SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES,
-    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    DisqualifierOutcome, ExperimentHealth, ExperimentRecord, ExperimentationError,
+    ExperimentationHealthSnapshot, FinalEvaluationRecord, FitnessRecord, Prediction,
+    RUBRIC_KIND_DISQUALIFIER, Rubric, SCIENTIFIC_OUTCOME_CORROBORATED,
+    SCIENTIFIC_OUTCOME_EQUIVALENCE, SCIENTIFIC_OUTCOME_REJECTED, SCIENTIFIC_OUTCOMES,
+    STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, ScientificHeadroom, SealRecord,
+    SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES, VERDICT_REJECTED,
+    VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text. `?Sized` admits slice
@@ -141,6 +143,7 @@ fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, ExperimentationErr
         reject_reasons: row.get_json(4)?,
         algedonic_reference: optional_text(row, 5),
         scientific_outcome: optional_text(row, 7),
+        rubric_outcomes: row.get_json(8)?,
         created_at: row.get_str(6)?.to_string(),
     })
 }
@@ -251,7 +254,8 @@ impl ExperimentationStore {
                  reject_reasons TEXT NOT NULL, \
                  algedonic_reference TEXT, \
                  created_at TEXT NOT NULL, \
-                 scientific_outcome TEXT \
+                 scientific_outcome TEXT, \
+                 rubric_outcomes TEXT NOT NULL DEFAULT '[]' \
              ); \
             CREATE TABLE IF NOT EXISTS seals (\
                  id TEXT PRIMARY KEY, \
@@ -284,6 +288,16 @@ impl ExperimentationStore {
         if !has_assumptions {
             driver.execute(
                 "ALTER TABLE fitness_records ADD COLUMN declared_assumptions TEXT NOT NULL DEFAULT '[]'",
+                &[],
+            )?;
+        }
+        let selection_cols = driver.query("PRAGMA table_info(selection_records)", &[])?;
+        let has_rubric_outcomes = selection_cols
+            .iter()
+            .any(|row| row.get_str(1).ok() == Some("rubric_outcomes"));
+        if !has_rubric_outcomes {
+            driver.execute(
+                "ALTER TABLE selection_records ADD COLUMN rubric_outcomes TEXT NOT NULL DEFAULT '[]'",
                 &[],
             )?;
         }
@@ -1137,6 +1151,28 @@ impl ExperimentationStore {
         algedonic_reference: Option<&str>,
         scientific_outcome: Option<&str>,
     ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
+        self.record_selection_with_outcomes(
+            experiment_id,
+            verdict,
+            selected_variant_id,
+            reject_reasons,
+            algedonic_reference,
+            scientific_outcome,
+            &[],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_selection_with_outcomes(
+        &self,
+        experiment_id: &str,
+        verdict: &str,
+        selected_variant_id: Option<&str>,
+        reject_reasons: &[String],
+        algedonic_reference: Option<&str>,
+        scientific_outcome: Option<&str>,
+        rubric_outcomes: &[DisqualifierOutcome],
+    ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
             return Err(ExperimentationError::ExperimentResolved(
@@ -1196,11 +1232,67 @@ impl ExperimentationStore {
                 ));
             }
         }
+        // Fish-papers PDCA-1 / ADOPT-2: bind declared disqualifier rubrics to
+        // affirmative resolutions so omission or triggered disqualifiers cannot
+        // silently pass selection.
+        let declared_disqualifiers: Vec<&str> = experiment
+            .rubrics
+            .iter()
+            .filter(|r| r.kind == RUBRIC_KIND_DISQUALIFIER)
+            .map(|r| r.id.as_str())
+            .collect();
+        let mut seen_outcomes = std::collections::HashSet::new();
+        for outcome in rubric_outcomes {
+            if outcome.rubric_id.trim().is_empty() {
+                return Err(ExperimentationError::Empty("rubric_outcomes.rubric_id"));
+            }
+            if !declared_disqualifiers.contains(&outcome.rubric_id.as_str()) {
+                return Err(ExperimentationError::UnknownDisqualifierOutcome(
+                    outcome.rubric_id.clone(),
+                ));
+            }
+            if !seen_outcomes.insert(outcome.rubric_id.as_str()) {
+                return Err(ExperimentationError::DuplicateDisqualifierOutcome(
+                    outcome.rubric_id.clone(),
+                ));
+            }
+            if let Some(ref evidence) = outcome.evidence_ref
+                && evidence.trim().is_empty()
+            {
+                return Err(ExperimentationError::BlankOptional(
+                    "rubric_outcomes.evidence_ref",
+                ));
+            }
+        }
+        let is_affirmative = verdict == VERDICT_SELECTED
+            || matches!(
+                scientific_outcome,
+                Some(SCIENTIFIC_OUTCOME_CORROBORATED | SCIENTIFIC_OUTCOME_EQUIVALENCE)
+            );
+        if is_affirmative && !declared_disqualifiers.is_empty() {
+            let missing: Vec<String> = declared_disqualifiers
+                .iter()
+                .filter(|id| !seen_outcomes.contains(*id))
+                .map(|id| (*id).to_string())
+                .collect();
+            if !missing.is_empty() {
+                return Err(ExperimentationError::DisqualifierOutcomeMissing(missing));
+            }
+            let triggered: Vec<String> = rubric_outcomes
+                .iter()
+                .filter(|o| o.triggered)
+                .map(|o| o.rubric_id.clone())
+                .collect();
+            if !triggered.is_empty() {
+                return Err(ExperimentationError::DisqualifierTriggered(triggered));
+            }
+        }
         let id = format!("sel_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
         // Serialized before the closure: the closure's error type is DbError,
         // so the ExperimentationError-producing column serialization happens here.
         let reject_reasons_column = value_column(&reject_reasons)?;
+        let rubric_outcomes_column = value_column(&rubric_outcomes)?;
         // The insert and the resolve flip are ONE transaction (§P8.9 follow-up,
         // 2026-10-01): the conditional UPDATE is the authoritative
         // first-selection gate — a concurrent selection that committed first
@@ -1213,8 +1305,8 @@ impl ExperimentationStore {
             tx.execute(
                 "INSERT INTO selection_records \
                  (id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-                  algedonic_reference, created_at, scientific_outcome) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                  algedonic_reference, created_at, scientific_outcome, rubric_outcomes) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 &[
                     DbValue::Text(id.clone()),
                     DbValue::Text(experiment_id.to_string()),
@@ -1224,6 +1316,7 @@ impl ExperimentationStore {
                     text_or_null(algedonic_reference),
                     DbValue::Text(created_at.clone()),
                     text_or_null(scientific_outcome),
+                    DbValue::Text(rubric_outcomes_column.clone()),
                 ],
             )?;
             let resolved = tx.execute(
@@ -1260,6 +1353,7 @@ impl ExperimentationStore {
             reject_reasons: reject_reasons.to_vec(),
             algedonic_reference: algedonic_reference.map(str::to_string),
             scientific_outcome: scientific_outcome.map(str::to_string),
+            rubric_outcomes: rubric_outcomes.to_vec(),
             created_at,
         };
         Ok((record, updated))
@@ -1271,7 +1365,7 @@ impl ExperimentationStore {
     ) -> Result<Vec<SelectionRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-             algedonic_reference, created_at, scientific_outcome \
+             algedonic_reference, created_at, scientific_outcome, rubric_outcomes \
              FROM selection_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
